@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/tasks.schema.json",
+  "title": "Codex MVP Tasks DAG",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "meta",
+    "dag"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": [
+        "version",
+        "mode",
+        "purpose",
+        "architecture",
+        "execution_loop",
+        "reports",
+        "gates",
+        "stop_condition"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "const": "dag_execution"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_loop": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reports": {
+          "type": "object",
+          "required": [
+            "scope",
+            "format",
+            "stages"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "scope": {
+              "type": "string"
+            },
+            "format": {
+              "const": "docs/07_test_spec.md#6 TestReport"
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "static",
+                  "unit",
+                  "contract",
+                  "api",
+                  "integration",
+                  "replay",
+                  "snapshot",
+                  "e2e",
+                  "acceptance"
+                ]
+              }
+            }
+          }
+        },
+        "gates": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/gate"
+          }
+        },
+        "stop_condition": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/task_node"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "string",
+      "pattern": "^ACC-STOP-00[1-9]$|^ACC-STOP-010$"
+    },
+    "task_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "status",
+        "source",
+        "acceptance_gate",
+        "priority",
+        "test_scope",
+        "depends_on",
+        "description",
+        "acceptance_criteria",
+        "failure_criteria"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "passed",
+            "task_blocked"
+          ]
+        },
+        "source": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "acceptance_gate": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/gate"
+            },
+            {
+              "const": "none"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/gate"
+                  },
+                  {
+                    "const": "none"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "priority": {
+          "enum": [
+            "acceptance_gate_failures",
+            "api_contract_failures",
+            "data_model_violations",
+            "test_failures",
+            "ui_failures",
+            "refactor_tasks"
+          ]
+        },
+        "test_scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "static",
+              "unit",
+              "contract",
+              "api",
+              "integration",
+              "replay",
+              "snapshot",
+              "e2e"
+            ]
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+          }
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "failure_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "active_state": {
+          "enum": [
+            "none",
+            "PLAN",
+            "IMPLEMENT",
+            "TEST",
+            "REVIEW",
+            "FIX",
+            "RE_TEST",
+            "SUMMARIZE"
+          ]
+        },
+        "last_updated_state": {
+          "enum": [
+            "INIT",
+            "LOAD_TASKS",
+            "PLAN",
+            "IMPLEMENT",
+            "TEST",
+            "REVIEW",
+            "FIX",
+            "RE_TEST",
+            "SUMMARIZE",
+            "ACCEPTANCE",
+            "ITERATE",
+            "TASK_BLOCKED",
+            "WORKFLOW_BLOCKED",
+            "ENV_BLOCKED",
+            "DONE",
+            "none"
+          ]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence": {
+          "$ref": "#/$defs/report_path_or_none"
+        },
+        "test_report": {
+          "$ref": "#/$defs/report_path_or_none"
+        },
+        "plan_report": {
+          "$ref": "#/$defs/report_path_or_none"
+        },
+        "intentionally_out_of_scope": {
+          "type": "boolean"
+        },
+        "blocker": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "report_path_or_none": {
+      "oneOf": [
+        {
+          "const": "none"
+        },
+        {
+          "type": "string",
+          "pattern": "^reports/.+\\.json$"
+        }
+      ]
+    }
+  }
+}

@@ -13,7 +13,7 @@ API 只暴露 UI 必需能力：
 - 手动刷新 RSS。
 - 添加 / 删除 / 启用 / 停用 RSS 源。
 
-API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`。
+API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`。
 
 ## 2. API Conventions（接口约定）
 
@@ -122,7 +122,7 @@ type NewsItem = {
   title: string;
   original_title: string;
   source_name: string;
-  source_url: string;
+  original_url: string;
   published_at: string;
   score: number;
   status: NewsStatus;
@@ -150,15 +150,18 @@ type NewsDetailItem = NewsItem & {
 };
 ```
 
+`summary_zh` and `content_zh` are optional in the structural TypeScript shape only because they are omitted for non-translated states. A translated detail response must include both fields as non-empty strings.
+
 Detail field rules:
 
 - If `status = "translated"`:
+  - `summary_zh` is required.
   - `content_zh` is required.
-  - `summary_zh` is optional.
 - If `status != "translated"`:
   - `summary_zh` MUST NOT exist.
   - `content_zh` MUST NOT exist.
 - API enforcement rule:
+  - When `status = "translated"`, `summary_zh` and `content_zh` MUST be non-empty strings.
   - When `status != "translated"`, `summary_zh` and `content_zh` MUST be omitted.
   - They MUST NOT appear in the JSON response as `null`, empty string, or placeholder value.
 
@@ -172,7 +175,7 @@ Field mapping:
 | `summary_zh` | `news_item.summary_zh`, only when `status = translated` |
 | `content_zh` | `news_item.content_zh`, only on detail response and only when `status = translated` |
 | `source_name` | `source.name` |
-| `source_url` | `news_item.original_url` |
+| `original_url` | `news_item.original_url` |
 | `published_at` | `news_item.published_at` |
 | `score` | `news_item.score` |
 | `status` | derived API/UI status |
@@ -181,7 +184,7 @@ Display field language rules:
 
 - `title`: Chinese when translated title exists; otherwise fallback to `original_title`.
 - `original_title`: original source title and may be non-Chinese.
-- `summary_zh`: optional, but if returned it must be Chinese and must never contain raw RSS summary.
+- `summary_zh`: required for translated detail responses, returned only for translated list/detail responses, must be Chinese, and must never contain raw RSS summary.
 - `content_zh`: only returned in translated detail responses, must be Chinese, and must never contain raw article content.
 - API must never return `content_raw` or `content_full`.
 
@@ -221,7 +224,19 @@ type SourceItem = {
 };
 ```
 
-### 3.7 HomeData
+`deleted_at` is an internal source tombstone field and MUST NOT be returned by Source APIs.
+
+### 3.7 RefreshResponse
+
+```ts
+type RefreshResponse = {
+  refreshed_at: string | null;
+};
+```
+
+`refreshed_at` is the completed refresh timestamp. It is `null` only when a concurrent refresh is rejected before any successful refresh has completed.
+
+### 3.8 HomeData
 
 ```ts
 type HomeData = {
@@ -269,7 +284,7 @@ Response:
         "title": "AI startup raises new funding",
         "original_title": "AI startup raises new funding",
         "source_name": "TechCrunch",
-        "source_url": "https://example.com/news/1",
+        "original_url": "https://example.com/news/1",
         "published_at": "2026-06-28T08:00:00Z",
         "score": 82,
         "status": "ready"
@@ -281,7 +296,7 @@ Response:
         "title": "新的 AI 模型发布",
         "original_title": "New AI model released",
         "source_name": "OpenAI Blog",
-        "source_url": "https://example.com/news/2",
+        "original_url": "https://example.com/news/2",
         "published_at": "2026-06-28T07:00:00Z",
         "score": 96,
         "status": "translated"
@@ -320,7 +335,7 @@ Response:
     "summary_zh": "这是一条中文摘要。",
     "content_zh": "这是一篇中文正文。",
     "source_name": "OpenAI Blog",
-    "source_url": "https://example.com/news/2",
+    "original_url": "https://example.com/news/2",
     "published_at": "2026-06-28T07:00:00Z",
     "score": 96,
     "status": "translated"
@@ -343,9 +358,12 @@ Processing rule:
 - Refresh is idempotent.
 - If refresh is already running, API must not trigger a second concurrent refresh.
 - If refresh is already running, API must return `200`.
-- If refresh is already running, response must contain last known `refreshed_at`.
+- If refresh is already running, response must contain the last successful `refreshed_at`.
+- If refresh is already running and no successful refresh has completed yet, response must contain `refreshed_at: null`.
 - Does not create a task ID.
 - Does not expose queue, worker, retry, or progress APIs.
+
+Response type: `RefreshResponse`.
 
 Response:
 
@@ -367,7 +385,7 @@ None.
 
 Data rule:
 
-- Return all RSS sources.
+- Return only RSS sources where `deleted_at IS NULL`.
 - Sort by `created_at ASC`.
 - Return `SourceItem[]`.
 
@@ -405,7 +423,7 @@ Validation:
 
 - `name` is required and must not be empty.
 - `rss_url` is required and must be a valid URL.
-- Duplicate `rss_url` returns `409`.
+- Duplicate `rss_url` returns `409`, including a URL that exists on a deleted source tombstone.
 - New source uses `is_enabled = true`.
 - New source uses `fetch_frequency = "twice_daily"`.
 
@@ -449,9 +467,9 @@ type UpdateSourceRequest = {
 Validation:
 
 - `is_enabled` is required.
-- Return `404` if source does not exist.
+- Return `404` if source does not exist or has `deleted_at IS NOT NULL`.
 - Return `409` if the update would result in invalid source configuration.
-- MVP invalid configuration includes disabling all sources in the system.
+- MVP invalid configuration includes leaving zero sources where `deleted_at IS NULL AND is_enabled = 1`.
 
 Response:
 
@@ -482,11 +500,13 @@ Path:
 
 Behavior:
 
-- MVP delete is implemented as disabling the source: `is_enabled = 0`.
+- MVP delete is implemented as source tombstone: set `is_enabled = 0` and `deleted_at` to the business UTC timestamp from the injected clock.
+- Return `409` and do not update the row if deleting the source would leave zero sources where `deleted_at IS NULL AND is_enabled = 1`.
 - Disabling a source does not affect existing news items.
 - Historical data remains visible in all APIs.
 - Only future ingestion is stopped.
-- Return `404` if source does not exist.
+- Return `404` if source does not exist or already has `deleted_at IS NOT NULL`.
+- Deleted sources are omitted from `GET /api/sources`.
 
 Response:
 

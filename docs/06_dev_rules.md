@@ -2,7 +2,7 @@
 
 ## 0. Global Hard Constraints（全局硬规则）
 
-- API 响应不得包含 `content_raw`、`content_full`、完整正文、完整 prompt，否则数据泄漏检查必须失败。
+- API 响应不得包含 `content_raw`、`content_full`、`deleted_at`、raw article body、fallback raw text、完整 prompt，否则数据泄漏检查必须失败；`GET /api/news/{id}` 在 `status = translated` 时返回 `content_zh` 是唯一允许的完整正文展示出口。
 - 日志不得包含超过 `1024` 字符的正文类字段，否则必须在写日志前裁剪。
 - `pipeline_state` 只能由 backend pipeline service 写入，否则 code review 必须拒绝该变更。
 - `status` 只能由 API 层按 `05_api_contract.md` 投影，否则不得写入数据库。
@@ -45,6 +45,8 @@
 - 字段缺失必须按 `03_ui_spec.md` 不渲染，不得补默认文案。
 - 列表渲染必须使用稳定 `id` 作为 key，否则刷新后 DOM 复用会错位。
 - 表单提交中必须禁用重复点击，否则 RSS 源可能重复创建。
+- `03_ui_spec.md#6.1` 的 Final Unit Rule 禁止拆业务 UI 子组件，但不禁止拆文件。为满足单文件 `300` 行限制，允许拆分 CSS 文件、API client、DTO/type 文件、test fixture、route/page 文件和不渲染 UI 的私有纯函数 helper。
+- 禁止通过拆分 `NewsCardHeader`、`NewsCardMeta`、`ArticleHeader`、`BaseButton`、`BaseCard`、`components/ui` 或 `shared/ui` 等方式绕过 Final Unit Rule。
 
 ## 3. Backend Rules（FastAPI）
 
@@ -72,6 +74,7 @@
 - 翻译成功必须写入 `title_zh`、`summary_zh`、`content_zh`。
 - 翻译失败不得写入部分中文字段，否则 API status 投影会错误。
 - Source 禁用只能停止未来抓取，不得删除历史新闻。
+- Source 删除必须使用 soft tombstone：设置 `is_enabled = 0` 和 `deleted_at`，不得物理删除 source row 或历史新闻。
 - API 不得更新 pipeline 字段，否则用户请求会绕过处理流程。
 
 ## 5. LLM Interaction Rules（LLM 调用规范）
@@ -80,16 +83,17 @@
 - LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `score`。
 - LLM translation 输出必须按 JSON schema 校验，否则不得写入中文字段。
 - If LLM output fails JSON schema validation, classify as `validation_llm_error`, not `llm_error`.
-- 无效 LLM response 必须记录为 `llm` 错误，否则不得进入数据库。
-- LLM retry max = `2`，超过后必须标记 `llm` 错误。
-- If LLM scoring or translation fails after retry max, `pipeline_state` must remain unchanged and item must be marked as `llm_error`.
+- 无效 LLM response 必须在 `processing_log` 中记录为 `llm` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
+- LLM retry max = `2`，超过后必须写入失败 `processing_log`。
+- If LLM scoring or translation fails after retry max, `pipeline_state` must remain unchanged; scoring failure must not advance the item, and translation failure must set `has_translate_failed = 1` without writing partial Chinese fields.
+- Missing title or original URL is deterministic input validation and may assign `score = 0` without an LLM call; invalid, timeout, or schema-invalid LLM output must not be converted into a successful `score = 0`.
 - LLM prompt 变更必须有测试 fixture 更新，否则输出契约无法验证。
 - LLM prompt 不得包含完整 `content_full` 之外的敏感配置，否则日志和错误处理会泄漏。
 - LLM mock 必须覆盖 scoring 和 translation，否则 pipeline 测试会依赖外部服务。
 
 ## 6. Error Handling Rules（错误处理规范）
 
-- 所有异常必须归类为 `network`、`parsing`、`llm`、`database`、`validation`、`unknown`。
+- 所有异常必须归类为 `network`、`parsing`、`llm`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
 - 禁止 silent fail，任何失败必须写入 `processing_log` 或应用日志。
 - API validation error 必须返回结构化 error，否则前端无法稳定处理。
 - RSS 解析失败必须归类为 `parsing`，否则源质量无法判断。
@@ -97,7 +101,7 @@
 - 未知异常必须转换为 `unknown` 并隐藏内部细节。
 - 捕获异常后不得继续写入成功状态，否则数据会假成功。
 - 禁止裸 `except` 后只返回默认值，否则真实错误会被吞掉。
-- 错误 message 不得包含完整正文、prompt、token，否则敏感内容会进入响应。
+- 错误 message 不得包含 raw article body、fallback raw text、prompt、token，否则敏感内容会进入响应。
 - 同一错误分类必须使用固定 code，否则前端无法稳定处理。
 
 ## 7. Logging Rules（日志规范）
@@ -106,7 +110,7 @@
 - 日志必须包含对象 ID、stage、UTC timestamp，否则排障查询无法定位记录。
 - 失败日志必须包含错误分类，否则无法统计失败来源。
 - 成功日志不得包含超过 `1KB` 的字段，否则必须裁剪。
-- 禁止打印 `content_raw`、`content_full`、完整正文或完整 prompt。
+- 禁止打印 `content_raw`、`content_full`、raw article body、fallback raw text 或完整 prompt。
 - In debug mode only, full prompt logging is allowed but must not persist to production storage.
 - 日志可以记录 URL 和标题，但标题长度必须裁剪到 `300` 字符以内。
 - 刷新开始和结束必须记录日志，否则手动刷新无法回放。
@@ -135,7 +139,7 @@
 - `GET /api/news/{id}` 必须测试非 `translated` 不返回 `content_zh`。
 - `POST /api/refresh` 必须测试重复调用不会启动并发刷新。
 - `POST /api/sources` 必须测试重复 RSS URL 返回 `409`。
-- `PATCH /api/sources/{id}` 必须测试禁止关闭全部源。
+- `PATCH /api/sources/{id}` 必须测试禁止关闭最后一个 `deleted_at IS NULL AND is_enabled = 1` 的 source。
 - 每个核心 pipeline step 必须可 mock，否则测试会依赖真实 RSS、网页和 LLM。
 - MVP Critical Path Test 必须覆盖 `RSS → ingest → score → fetch → translate → API`。
 - `pipeline_state` transitions must be tested as a strict finite state machine: `raw → scored → fetched`。

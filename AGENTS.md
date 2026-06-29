@@ -8,6 +8,7 @@ Codex must use:
 
 - `workflows.md` for workflow state transitions.
 - `tasks.md` for task queue and task status.
+- `harness.md` for local harness commands and report paths.
 - `docs/01_prd.md` through `docs/08_acceptance.md` for product, architecture, UI, data, API, development, test and acceptance truth.
 
 ## Command Rule

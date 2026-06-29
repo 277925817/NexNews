@@ -25,7 +25,10 @@ Source of truth:
 | API contract | `docs/05_api_contract.md` |
 | Development rules | `docs/06_dev_rules.md` |
 | Test execution | `docs/07_test_spec.md` |
+| Harness command interface | `harness.md` |
 | Stop gate | `docs/08_acceptance.md` |
+
+Operational runbook: `docs/09_harness_runbook.md` is a procedure guide for Codex sessions. It is not a higher-priority source of truth.
 
 MVP task source:
 
@@ -33,6 +36,18 @@ MVP task source:
 - If `tasks.md` is missing, Codex must create it from unresolved implementation gaps, failed test stages, and failed acceptance gates.
 - A task is complete only when its scoped tests pass and it does not cause any acceptance regression.
 - Tasks with `acceptance_gate: none` are workflow housekeeping tasks only. They are ignored by acceptance gate coverage and cannot satisfy any `ACC-STOP-*` gate.
+
+`tasks.md` may use the MVP YAML DAG shape. In that shape:
+
+- `dag.nodes[*]` are the canonical task records.
+- `id` is the task id used by the workflow.
+- `source`, `acceptance_gate` and `test_scope` may be arrays; a scalar value is treated as a one-item array.
+- `acceptance_gate: ["ACC-STOP-001", "..."]` means the task may provide coverage for every listed gate only after the task is `passed` and has evidence and a test report.
+- `test_scope: ["unit", "integration"]` means every listed stage is required for that task-scoped run.
+- `acceptance` is a full-workflow gate-evaluation stage only. It is not valid in a task-scoped `test_scope`, and `python3 scripts/run_harness.py --stage acceptance --task-id ...` must fail with structured evidence.
+- `depends_on` is a hard readiness gate: a task is actionable only when every dependency is `passed`.
+- `plan_report` stores the persisted task plan path created during `PLAN`.
+- `SUMMARIZE` updates the matching YAML node fields in `tasks.md`; it must not rewrite the task queue into another format.
 
 Minimal task record format:
 
@@ -43,14 +58,44 @@ Minimal task record format:
 - source: docs/01_prd.md | docs/02_arch.md | docs/03_ui_spec.md | docs/04_data_model.md | docs/05_api_contract.md | docs/06_dev_rules.md | docs/07_test_spec.md | docs/08_acceptance.md
 - acceptance_gate: ACC-STOP-001 | ACC-STOP-002 | ... | none
 - priority: acceptance_gate_failures | api_contract_failures | data_model_violations | test_failures | ui_failures | refactor_tasks
-- test_scope: static | unit | contract | api | integration | replay | snapshot | e2e | acceptance
+- test_scope: static | unit | contract | api | integration | replay | snapshot | e2e
 - active_state: none | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | SUMMARIZE
 - last_updated_state: INIT | LOAD_TASKS | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | SUMMARIZE | ACCEPTANCE | ITERATE | TASK_BLOCKED | WORKFLOW_BLOCKED | ENV_BLOCKED | DONE | none
 - attempts: 0
 - evidence: path/to/report.json
 - test_report: path/to/test-report.json
+- plan_report: path/to/plan-report.json
 - intentionally_out_of_scope: false
 - blocker: none
+```
+
+Task plans must be persisted as machine-readable reports before implementation:
+
+```json
+{
+  "schema_ref": "workflows.md#TaskPlanReport",
+  "schema_version": "v1",
+  "task_id": "TASK-000",
+  "scope": "smallest implementation slice for the selected task",
+  "files": ["path/to/file"],
+  "test_stages": ["static"],
+  "test_commands": ["python3 scripts/run_harness.py --stage static --task-id TASK-000 --report-dir reports"],
+  "rollback_boundary": "files and behavior that may be reverted together",
+  "acceptance_gate_impact": ["ACC-STOP-001"],
+  "timestamp": "ISO8601"
+}
+```
+
+`TaskPlanReport` path:
+
+```text
+reports/tasks/<task_id>/plan.json
+```
+
+Machine-checkable JSON Schema:
+
+```text
+schemas/task_plan_report.schema.json
 ```
 
 ## 2. State Machine Definition（核心）
@@ -139,8 +184,9 @@ If a task exceeds retry limit:
 ### 2.3 Determinism Rules
 
 - Task order must be stable: sort by `task_priority_order`, then by task id ascending inside the same priority bucket. The tie-breaker must always be `task_id` ascending.
+- If `tasks.md` contains DAG dependencies, `LOAD_TASKS` must first filter out tasks whose `depends_on` tasks are not `passed`; blocked dependencies do not make the dependent task actionable.
 - If a task lacks `priority`, `LOAD_TASKS` must derive it with one deterministic rule: failed acceptance gate mapping first; otherwise failed test stage order; otherwise canonical doc order `docs/01_prd.md -> docs/08_acceptance.md`; otherwise `refactor_tasks`. Do not use semantic guessing or multi-source fallback.
-- For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
+- For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `plan_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
 - Test stage order must follow `docs/07_test_spec.md#2.13`: `static -> unit -> contract -> api -> integration -> replay -> snapshot -> e2e`.
 - Each test stage must start from clean isolated state.
 - Tests and acceptance must use fixture, mock and fixed clock.
@@ -156,7 +202,7 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | Workflow starts, or Codex resumes an unfinished workflow. |
-| actions | Read `docs/01_prd.md` to `docs/08_acceptance.md`; detect available local commands; verify workspace can run local tests; check whether `tasks.md` exists. |
+| actions | Read `docs/01_prd.md` to `docs/08_acceptance.md` and `harness.md`; detect available local commands; verify workspace can run local tests; check whether `tasks.md` exists. |
 | exit condition | Required source documents are readable and workflow inputs are known. |
 | failure handling | If a required source document is missing or unreadable, enter `WORKFLOW_BLOCKED`. If local test commands cannot run because the local environment is unavailable, enter `ENV_BLOCKED`. If local test commands are missing but can be implemented in the repo, create tasks according to `docs/07_test_spec.md`. |
 
@@ -174,9 +220,9 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | A `pending` or previously failed task is selected. |
-| actions | Read the task source documents; identify files likely to change; define smallest implementation slice; define expected test stage and acceptance gate impact. |
-| exit condition | A deterministic task plan exists with scope, files, test commands/stages and rollback boundary. |
-| failure handling | If scope cannot be derived from documents, mark the task `task_blocked` with the missing decision and enter `TASK_BLOCKED`. |
+| actions | Read the task source documents; identify files likely to change; define smallest implementation slice; define expected test stage and acceptance gate impact; persist `TaskPlanReport` to `reports/tasks/<task_id>/plan.json`; update the task node `plan_report` field with that path. |
+| exit condition | A deterministic task plan exists with scope, files, test commands/stages and rollback boundary, and the `TaskPlanReport` is parseable. |
+| failure handling | If scope cannot be derived from documents, mark the task `task_blocked` with the missing decision and enter `TASK_BLOCKED`. If the plan report cannot be written or parsed, enter `WORKFLOW_BLOCKED`. |
 
 ### IMPLEMENT
 
@@ -185,7 +231,7 @@ If a task exceeds retry limit:
 | entry condition | `PLAN` produced a scoped implementation plan. |
 | actions | Modify only files required by the task; preserve unrelated user changes; keep implementation aligned with `docs/06_dev_rules.md`; update contract docs when behavior changes. |
 | exit condition | Code or documentation changes for the task are complete and ready for local tests. |
-| failure handling | If implementation exposes a contract conflict, stop coding that slice and return to `PLAN`. If the conflict is between documents, apply the priority order from `docs/06_dev_rules.md`. |
+| failure handling | If `plan_report` is missing or malformed, return to `PLAN`. If implementation exposes a contract conflict, stop coding that slice and return to `PLAN`. If the conflict is between documents, apply the priority order from `docs/06_dev_rules.md`. |
 
 ### TEST
 
@@ -193,7 +239,7 @@ If a task exceeds retry limit:
 | --- | --- |
 | entry condition | `IMPLEMENT` completed or `RE_TEST` requires a full affected stage run. |
 | actions | Run runtime/data verification only: execute tests defined by `docs/07_test_spec.md` in deterministic order. Stop downstream stages on first failed stage, mark those downstream stages as `SKIPPED`, persist partial structured `TestReport` objects matching `docs/07_test_spec.md#6`, and target only the failed stage for the next fix. `SKIPPED` stages do not count toward `PASS`; a skipped required stage is acceptance failure. |
-| exit condition | Required scoped tests pass, or the first failing stage emits a structured failure report. A pass requires every stage declared for the run to execute, every mandatory assertion defined for that stage in `docs/07_test_spec.md` to execute, no skipped required assertion, and at least one machine-verified assertion per active stage. An active stage is a stage with mandatory assertions in the current run scope. Behavior-only stages with no mandatory assertions may pass only as structured non-assertion evidence and cannot by themselves satisfy an acceptance gate. `100%` total assertion coverage is a soft target, not a hard PASS condition. |
+| exit condition | Required scoped tests pass, or the first failing stage emits a structured failure report. A task-scoped pass requires every stage declared for that task run to execute, every mandatory assertion that belongs to the current task/stage scope to execute, no skipped required assertion in that scope, and at least one machine-verified assertion per active stage. An active stage is a stage with mandatory assertions in the current run scope. Behavior-only stages with no mandatory assertions may pass only as structured non-assertion evidence and cannot by themselves satisfy an acceptance gate. The complete mandatory assertion catalog is enforced only by full-stage materialization and workflow `ACCEPTANCE`. `100%` total assertion coverage is a soft target, not a hard PASS condition. |
 | failure handling | If tests fail, route by `stage`, `failure_type`, `error_category`, `node` and `trace_id`, then enter `FIX`. If reports are missing or invalid, treat this as `ACC-STOP-001` failure and enter `FIX`. |
 
 ### REVIEW
@@ -237,7 +283,7 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task is `passed` or `task_blocked`, no task is `pending` or `in_progress`, and no task has `active_state` in `FIX` or `RE_TEST`. |
-| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence. This is where gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, `evidence` exists and `test_report` exists. `task_blocked` tasks must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
+| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing full-stage reports under `reports/stages/<stage>.json`. This is where gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, `evidence` exists and `test_report` exists. `task_blocked` tasks must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
 | exit condition | Every gate has status `PASS`, `FAIL`, `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, and `STOP_ALLOWED` has been computed. |
 | failure handling | If any gate is `FAIL` or `UNKNOWN`, enter `ITERATE` with the failed or unproven gate evidence. If a task-local unresolved blocker prevents a gate from being proven, enter `TASK_BLOCKED`. If workflow metadata, task records or report generation logic are inconsistent, enter `WORKFLOW_BLOCKED`. If the local environment cannot execute required verification, enter `ENV_BLOCKED`. Missing evidence is a failed gate unless the evidence generator itself is unavailable. |
 
@@ -363,15 +409,18 @@ This follows `docs/07_test_spec.md#2.14`.
 All test and acceptance results must produce machine-readable evidence:
 
 - Test reports must follow `docs/07_test_spec.md#6`.
+- Harness commands and report paths must follow `harness.md`.
 - Acceptance gate reports must map to `ACC-STOP-001` through `ACC-STOP-010`.
 - Missing report means failure.
 - Invalid schema means failure.
 - `failed`, `flaky` or `skipped` required reports mean failure.
 - Every stage declared for the run must execute. Acceptance and full-regression runs must execute all stages in `test_stage_order`.
+- Full-regression materialization runs the required product stages without `--task-id` and writes `reports/stages/static.json` through `reports/stages/e2e.json`. Task-scoped runs write only `reports/tasks/<task_id>/<stage>.json` and must not be used as substitutes for full-stage stop evidence.
 - On first stage failure, downstream stages must be marked `SKIPPED`, not `NOT_RUN`, omitted or treated as `PASS`.
-- `SKIPPED` stages do not count toward `PASS`. If `stage in docs/07_test_spec.md.required_stages`, `SKIPPED == FAIL` for acceptance and blocks `STOP_ALLOWED`, whether the skip was produced by `TEST` or `RE_TEST`.
+- `SKIPPED` stages do not count toward `PASS`. If `stage` is in the required stages defined by `docs/07_test_spec.md#2.13`, `SKIPPED == FAIL` for acceptance and blocks `STOP_ALLOWED`, whether the skip was produced by `TEST` or `RE_TEST`.
 - Partial reports from the failed run must be persisted and must identify the single failed stage that becomes the next fix target.
 - Every mandatory assertion defined in `docs/07_test_spec.md` for the executed active stage must execute.
+- Every mandatory assertion ID defined in `docs/07_test_spec.md#2.16` must appear with `status = passed` in allowed full-stage or ACC-STOP evidence before `STOP_ALLOWED = true`.
 - Skipped required assertions are failure, not neutral evidence.
 - Each active stage must contain at least one machine-verified assertion.
 - Behavior-only stages with no mandatory assertions must emit structured non-assertion evidence and cannot alone satisfy an acceptance gate.
@@ -386,7 +435,7 @@ Codex must:
 - Define the change isolation boundary before editing.
 - Fix the smallest failing unit first.
 - Keep the fix inside the declared change isolation boundary.
-- `FIX` may only modify files explicitly listed in both `plan.files` and the structured failure report referenced files. If that intersection is empty, return to `PLAN` or enter `TASK_BLOCKED`; do not widen the fix boundary.
+- `FIX` may only modify files explicitly listed in both the current `plan_report.files` and the structured failure report `referenced_files`. If `plan_report` is missing, unreadable or malformed, return to `PLAN`. If the structured failure report lacks a parseable `referenced_files` array, enter `WORKFLOW_BLOCKED`. If the intersection is empty after a valid plan report and valid `referenced_files` are loaded, return to `PLAN` or enter `TASK_BLOCKED`; do not widen the fix boundary.
 - Preserve unrelated user changes.
 - Do not modify unrelated modules.
 - Do not modify already passed test areas unless the root cause evidence proves they are the source of the failure.
@@ -456,14 +505,16 @@ The workflow may enter `DONE` only when all conditions are true:
 - No task is `pending` or `in_progress`.
 - No task has `active_state` in `FIX` or `RE_TEST`.
 - No required report is `failed`, `flaky` or `skipped`.
-- No required stage is `SKIPPED`; if `stage in docs/07_test_spec.md.required_stages`, `SKIPPED` is acceptance failure regardless of whether it came from `TEST` or `RE_TEST`.
+- No required stage is `SKIPPED`; if `stage` is in the required stages defined by `docs/07_test_spec.md#2.13`, `SKIPPED` is acceptance failure regardless of whether it came from `TEST` or `RE_TEST`.
 - No required gate is `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`.
 - No task mapped to a required acceptance gate remains unresolved as `task_blocked`.
 - No required gate is satisfied by `TASK_BLOCKED`, `WORKFLOW_BLOCKED`, `ENV_BLOCKED` or missing mandatory assertions.
 - No required assertion is skipped in stop evidence.
+- No mandatory assertion ID from `docs/07_test_spec.md#2.16` is missing, failed, flaky, skipped, duplicated with conflicting results, attached to the wrong stage or proven only by a task-scoped report.
 - Behavior-only evidence without active assertions cannot be the sole evidence for a required acceptance gate.
 - No API/UI/log/report leak is detected.
 - All acceptance evidence is structured, parseable and mapped to the required gates.
+- `STOP_ALLOWED = true` may be produced only by the workflow `ACCEPTANCE` state running the full acceptance command without `--task-id`.
 - Code, docs, tests and generated reports are consistent with `docs/03_ui_spec.md`, `docs/04_data_model.md`, `docs/05_api_contract.md`, `docs/06_dev_rules.md` and `docs/07_test_spec.md`.
 
 Blocked is not a successful stop condition.
@@ -522,6 +573,7 @@ while True:
                 "attempts": 0,
                 "evidence": "none",
                 "test_report": "none",
+                "plan_report": "none",
                 "intentionally_out_of_scope": False,
                 "blocker": "none",
             },
@@ -565,12 +617,27 @@ while True:
             task.blocker = plan.blocker
             state = "TASK_BLOCKED"
         else:
-            state = "IMPLEMENT"
+            plan_report = persist_task_plan_report(
+                task_id=task.id,
+                plan=plan,
+                path=f"reports/tasks/{task.id}/plan.json",
+            )
+            if plan_report.parseable:
+                task.plan_report = plan_report.path
+                update_tasks_md(task, fields=["plan_report"])
+                state = "IMPLEMENT"
+            else:
+                record_workflow_blocker("task_plan_report_invalid")
+                state = "WORKFLOW_BLOCKED"
 
     elif state == "IMPLEMENT":
         task.active_state = "IMPLEMENT"
         task.last_updated_state = "IMPLEMENT"
-        apply_scoped_changes(plan)
+        plan_report = load_task_plan_report(task.plan_report)
+        if not plan_report.parseable:
+            state = "PLAN"
+            continue
+        apply_scoped_changes(plan_report)
         state = "TEST"
 
     elif state == "TEST":
@@ -588,7 +655,7 @@ while True:
             )
             treat_skipped_required_stages_as_failure(
                 test_result.reports,
-                required_stage_source="docs/07_test_spec.md.required_stages",
+                required_stage_source="docs/07_test_spec.md#2.13",
             )
             test_result.fix_target_stage = test_result.failed_stage
         persist_test_reports(test_result.reports)
@@ -598,7 +665,9 @@ while True:
             minimum_assertions_per_stage=1,
             minimum_assertions_scope="active_stage",
             assertion_catalog="docs/07_test_spec.md",
-            require_all_mandatory_assertions=True,
+            require_scope_mandatory_assertions=True,
+            required_assertion_scope="task_declared_scope",
+            require_all_mandatory_assertions=False,
             assertion_coverage_target_percent=100,
             enforce_assertion_coverage_target=False,
             allow_behavior_only_stages=True,
@@ -644,12 +713,22 @@ while True:
             task.blocker = "retry_limit_exceeded"
             state = "TASK_BLOCKED"
         else:
+            plan_report = load_task_plan_report(task.plan_report)
+            if not plan_report.parseable:
+                state = "PLAN"
+                continue
             task.root_cause_hypothesis = build_root_cause_hypothesis(
                 evidence=task.failure.structured_report_ref,
             )
+            if not has_parseable_referenced_files(
+                task.failure.structured_report_ref,
+            ):
+                record_workflow_blocker("failure_report_missing_referenced_files")
+                state = "WORKFLOW_BLOCKED"
+                continue
             task.change_isolation_boundary = define_change_isolation_boundary(
                 allowed_files=intersection(
-                    plan.files,
+                    plan_report.files,
                     task.failure.structured_report_ref.referenced_files,
                 ),
                 on_empty="return_to_PLAN_or_TASK_BLOCKED",
@@ -657,7 +736,7 @@ while True:
             apply_smallest_fix(task.failure)
             assert_only_files_changed(
                 files=intersection(
-                    plan.files,
+                    plan_report.files,
                     task.failure.structured_report_ref.referenced_files,
                 ),
             )
@@ -674,7 +753,7 @@ while True:
             )
             treat_skipped_required_stages_as_failure(
                 retest_result.reports,
-                required_stage_source="docs/07_test_spec.md.required_stages",
+                required_stage_source="docs/07_test_spec.md#2.13",
             )
             retest_result.fix_target_stage = retest_result.failed_stage
         persist_test_reports(retest_result.reports)
@@ -684,7 +763,9 @@ while True:
             minimum_assertions_per_stage=1,
             minimum_assertions_scope="active_stage",
             assertion_catalog="docs/07_test_spec.md",
-            require_all_mandatory_assertions=True,
+            require_scope_mandatory_assertions=True,
+            required_assertion_scope="task_declared_scope",
+            require_all_mandatory_assertions=False,
             assertion_coverage_target_percent=100,
             enforce_assertion_coverage_target=False,
             allow_behavior_only_stages=True,
@@ -739,10 +820,18 @@ while True:
     elif state == "ACCEPTANCE":
         tasks_snapshot = load_tasks("tasks.md")
         tasks_hash_before = hash_file("tasks.md")
-        acceptance = run_08_acceptance_gate(
-            source="docs/08_acceptance.md",
+        acceptance = run_harness_command(
+            command=[
+                "python3",
+                "scripts/run_harness.py",
+                "--stage",
+                "acceptance",
+                "--report-dir",
+                "reports",
+            ],
             tasks_snapshot=tasks_snapshot,
             require_full_gate_validation=True,
+            forbid_task_id=True,
         )
         persist_acceptance_reports(acceptance.reports)
         tasks_hash_after = hash_file("tasks.md")
@@ -759,7 +848,7 @@ while True:
             and task_blocked_tasks_have_acceptance_gate_none(tasks_snapshot)
             and no_required_stage_is_skipped(
                 acceptance.reports,
-                required_stage_source="docs/07_test_spec.md.required_stages",
+                required_stage_source="docs/07_test_spec.md#2.13",
             )
         ):
             state = "DONE"

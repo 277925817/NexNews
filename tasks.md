@@ -1,44 +1,77 @@
 meta:
-  version: tasks_mvp@v6
+  version: tasks_mvp@v7
   mode: dag_execution
   purpose: "stable executable MVP product task system"
   architecture: "single FastAPI app + React/Vite SPA + SQLite"
   execution_loop: "plan -> implement -> test -> fix -> review"
   task_policy:
-    definition_only: true
-    runner_external: true
+    definition_only: false
+    runner_external: false
     no_task_run_verify_fix_dsl: true
-    no_report_per_task: true
+    reports_required_for_gate_tasks: true
+    task_state_fields: "workflow defaults from workflows.md#minimal-task-record-format"
+    plan_report: "PLAN writes reports/tasks/<task_id>/plan.json and records the path in dag.nodes[*].plan_report"
+    dag_node_record: "dag.nodes[*] is the canonical workflow task record; array source/acceptance_gate/test_scope fields are normalized by workflows.md"
   reports:
-    scope: "stage_level"
-    format: "stage + result + failing_area"
+    scope: "task_and_stage_level"
+    format: "docs/07_test_spec.md#6 TestReport"
     stages:
-      - static_unit
-      - pipeline_test
-      - api_test
-      - ui_test
-      - integration_test
+      - static
+      - unit
+      - contract
+      - api
+      - integration
+      - replay
+      - snapshot
+      - e2e
       - acceptance
   gates:
-    - id: G1
-      name: "pipeline correctness"
-      maps_to: ["ACC-STOP-002", "ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-008"]
-    - id: G2
-      name: "api correctness"
-      maps_to: ["ACC-STOP-004"]
-    - id: G3
-      name: "ui correctness"
-      maps_to: ["ACC-STOP-006"]
-    - id: G4
-      name: "no leak and no forbidden fields"
-      maps_to: ["ACC-STOP-001", "ACC-STOP-009", "ACC-STOP-010"]
-  stop_condition: "G1, G2, G3, G4 pass and docs/08_acceptance.md STOP_ALLOWED = true"
+    - "ACC-STOP-001"
+    - "ACC-STOP-002"
+    - "ACC-STOP-003"
+    - "ACC-STOP-004"
+    - "ACC-STOP-005"
+    - "ACC-STOP-006"
+    - "ACC-STOP-007"
+    - "ACC-STOP-008"
+    - "ACC-STOP-009"
+    - "ACC-STOP-010"
+  stop_condition: "ACC-STOP-001 through ACC-STOP-010 pass and docs/08_acceptance.md STOP_ALLOWED = true"
   retry_policy:
-    max_retry: 2
+    max_retry: 3
     fallback: "record failing_area + isolate owner task + retry"
 
 dag:
   nodes:
+    - id: TASK-000
+      name: "Harness contract repair"
+      layer: "L0: Bootstrap"
+      type: ["docs", "test"]
+      status: "pending"
+      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static"]
+      depends_on: []
+      description: "Repair the document-level harness contract and create the first runnable local harness command surface before product implementation begins."
+      inputs:
+        - "Harness command surface from harness.md."
+        - "TestReport contract from docs/07_test_spec.md#6."
+        - "Stop gate contract from docs/08_acceptance.md."
+      outputs:
+        - "scripts/run_harness.py accepts every harness stage."
+        - "Stage and gate reports have deterministic structured failure output before product tests exist."
+        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, and schemas/tasks.schema.json exist."
+        - "STOP_ALLOWED report has a documented stop-decision shape."
+      acceptance_criteria:
+        - "Every harness stage command writes a machine-readable report to the documented report paths."
+        - "TASK-000 static validation checks schema files are parseable and validates tasks.md plus generated harness reports against those schemas."
+        - "Non-acceptance stages without implemented assertions fail with structured TestReport evidence, not missing files or free-form logs."
+        - "Acceptance evaluates missing or failed stage reports as failed gates and writes STOP_ALLOWED = false."
+        - "static stage result = pass for harness contract repair."
+      failure_criteria:
+        - "FAIL if this task implements product DB schema, pipeline behavior, API behavior, UI screens, external CI, or live dependency access."
+
     - id: TASK-001
       name: "Repo runtime skeleton"
       layer: "L0: Bootstrap"
@@ -48,20 +81,22 @@ dag:
       acceptance_gate: ["ACC-STOP-008", "ACC-STOP-010"]
       priority: "refactor_tasks"
       test_scope: ["static"]
-      depends_on: []
-      description: "Create only the minimal repository structure and runnable app shells for FastAPI backend and React/Vite frontend."
+      depends_on: ["TASK-000"]
+      description: "Replace legacy Flask/static-page traction with only the minimal repository structure and runnable app shells for FastAPI backend and React/Vite frontend."
       inputs:
         - "FastAPI backend requirement."
         - "React/Vite frontend requirement."
       outputs:
         - "Backend entrypoint imports without side effects."
         - "Frontend entrypoint exists and can be loaded by Vite."
+        - "Legacy root static page and Flask dependency no longer define the MVP runtime."
       acceptance_criteria:
         - "backend entrypoint exists."
         - "frontend entrypoint exists."
-        - "static_unit stage result = pass for repo runtime skeleton."
+        - "static stage result = pass for repo runtime skeleton."
       failure_criteria:
         - "FAIL if this task implements DB schema, fixtures, product pipeline, API behavior, or UI screens."
+        - "FAIL if Flask or the legacy root index.html remains the active MVP runtime surface."
 
     - id: TASK-002A
       name: "DB schema constraints"
@@ -72,7 +107,7 @@ dag:
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-005"]
       priority: "data_model_violations"
       test_scope: ["static", "unit"]
-      depends_on: ["TASK-001"]
+      depends_on: ["TASK-021"]
       description: "Create only the SQLite MVP schema, constraints, and indexes."
       inputs:
         - "SQLite table contract from docs/04_data_model.md."
@@ -82,9 +117,11 @@ dag:
       acceptance_criteria:
         - "Application table set equals source, news_item, processing_log."
         - "source.rss_url and news_item.canonical_url are UNIQUE."
+        - "source.deleted_at exists as nullable soft-delete tombstone."
         - "news_item.pipeline_state accepts only raw, scored, fetched."
         - "processing_log enforces exactly one owner: source_id or news_item_id."
-        - "static_unit stage result = pass for DB schema constraints."
+        - "processing_log is a required core table; crawl rows require source_id and score/fetch/translate rows require news_item_id."
+        - "static stage result = pass for DB schema constraints."
       failure_criteria:
         - "FAIL if this task implements DB init hook, seed logic, fixtures, mocks, pipeline behavior, API behavior, or UI screens."
         - "FAIL if excluded tables or fields exist: rss_source, news_task, translation_status, content_source, title_domain_hash, is_ready, display_mode, category table."
@@ -110,7 +147,7 @@ dag:
         - "Init hook creates the schema from TASK-002A in an empty SQLite database."
         - "Default source seed count is 7 on first init and unchanged on second init."
         - "Seed rows satisfy source table constraints."
-        - "static_unit stage result = pass for DB init hook and seed."
+        - "static stage result = pass for DB init hook and seed."
       failure_criteria:
         - "FAIL if this task changes schema design, constraints, indexes, fixtures, mocks, pipeline behavior, API behavior, or UI screens."
 
@@ -130,13 +167,15 @@ dag:
       outputs:
         - "Local dev config points to SQLite and fixture/mock providers."
         - "Fixture RSS, article HTML, LLM scoring, LLM translation, source, and fixed clock data exist."
+        - "Harness stage commands consume fixture/mock inputs created by this task."
         - "Tests can run without live RSS, live webpage, live LLM, production DB, or current system time."
       acceptance_criteria:
         - "Fixture set includes RSS success/failure/duplicate cases."
         - "Mock set includes scoring valid/invalid/timeout cases."
         - "Mock set includes translation valid/invalid/timeout/partial cases."
         - "Fixed clock includes 09:00, 18:00, and non-trigger cases."
-        - "static_unit stage result = pass for local config fixtures mocks."
+        - "Fixture and mock versions are present in harness reports."
+        - "static stage result = pass for local config fixtures mocks."
       failure_criteria:
         - "FAIL if this task implements DB schema, pipeline business logic, API behavior, or UI screens."
 
@@ -162,7 +201,7 @@ dag:
         - "Fixture with 2 RSS items produces 2 normalized input objects."
         - "Only is_enabled = 1 sources are ingested."
         - "Malformed/failing source writes processing_log success = 0 and does not block other sources."
-        - "pipeline_test stage result = pass for ingest."
+        - "integration stage result = pass for ingest."
       failure_criteria:
         - "FAIL if ingest calls live RSS URLs or writes scored/fetched state."
 
@@ -189,7 +228,7 @@ dag:
         - "Valid score is numeric and within 0-100."
         - "Missing title or original_link scores 0."
         - "Invalid scoring JSON retries at most 2 times."
-        - "pipeline_test stage result = pass for score."
+        - "integration stage result = pass for score."
       failure_criteria:
         - "FAIL if tests call live LLM or scoring writes fetched state."
 
@@ -216,7 +255,7 @@ dag:
         - "score = 59 sets is_selected = 0."
         - "is_selected does not change pipeline_state."
         - "Duplicate canonical_url count in news_item/displayable output <= 1."
-        - "pipeline_test stage result = pass for filter."
+        - "integration stage result = pass for filter."
       failure_criteria:
         - "FAIL if filter uses selected/ready/translated as database pipeline_state."
 
@@ -243,7 +282,7 @@ dag:
         - "Fetch failure with content_raw fallback still reaches fetched."
         - "Fetch failure with no content_raw is not displayable."
         - "processing_log(stage = fetch) records success/failure."
-        - "pipeline_test stage result = pass for fetch."
+        - "integration stage result = pass for fetch."
       failure_criteria:
         - "FAIL if tests access live webpages or fetch unselected items."
 
@@ -270,7 +309,7 @@ dag:
         - "Valid translation writes non-empty title_zh, summary_zh, content_zh."
         - "Invalid translation writes 0 zh fields."
         - "Translation does not mutate pipeline_state beyond fetched."
-        - "pipeline_test stage result = pass for translate."
+        - "integration stage result = pass for translate."
       failure_criteria:
         - "FAIL if category_zh is persisted/exposed or tests call live LLM."
 
@@ -293,7 +332,7 @@ dag:
         - "Run summary includes started_at and finished_at."
         - "Run summary includes source_success_count and source_failure_count."
         - "Run summary includes rss_item_count, new_item_count, scored_item_count, selected_item_count, fetched_item_count, translated_item_count, and failure details."
-        - "pipeline_test stage result = pass for pipeline run record."
+        - "integration stage result = pass for pipeline run record."
       failure_criteria:
         - "FAIL if this task implements trigger scheduling, API response shaping, UI behavior, or duplicate pipeline business logic."
 
@@ -306,24 +345,24 @@ dag:
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["integration"]
-      depends_on: ["TASK-003"]
-      description: "Emit manual and scheduled refresh signals only; it does not create persistent state, run summaries, or pipeline step logic."
+      depends_on: ["TASK-009"]
+      description: "Coordinate manual and scheduled refresh execution using fixed-clock triggers and concurrency guards; the refresh path runs the complete MVP pipeline through existing pipeline services."
       inputs:
         - "Fixed clock cases for 09:00, 18:00, and non-trigger time."
       outputs:
-        - "Manual refresh signal."
-        - "Scheduled refresh signal for 09:00 and 18:00 fixed-clock cases."
-        - "Concurrent refresh signal rejection state."
+        - "Manual refresh execution request."
+        - "Scheduled refresh execution for 09:00 and 18:00 fixed-clock cases."
+        - "Concurrent refresh rejection state."
       acceptance_criteria:
-        - "Manual trigger emits exactly one refresh_requested signal."
-        - "09:00 and 18:00 each emit one scheduled refresh signal."
-        - "Non-trigger time emits zero scheduled refresh signals."
-        - "Concurrent refresh signal does not emit a second refresh_requested signal."
-        - "Trigger layer contains no RSS parsing, LLM scoring, filtering, fetching, translation, or run summary aggregation."
-        - "Trigger layer MUST NOT produce ANY persistent state."
-        - "pipeline_test stage result = pass for refresh trigger signal."
+        - "Manual trigger executes exactly one complete refresh flow."
+        - "09:00 and 18:00 each execute one scheduled refresh flow under fixed clock."
+        - "Non-trigger time executes zero scheduled refresh flows."
+        - "Concurrent refresh does not start a second pipeline run."
+        - "Trigger layer delegates RSS parsing, LLM scoring, filtering, fetching, translation, and run summary facts to pipeline services."
+        - "Trigger layer writes no extra task/queue/progress state beyond required processing_log evidence."
+        - "integration stage result = pass for refresh trigger signal."
       failure_criteria:
-        - "FAIL if trigger layer writes DB rows, processing logs, files, run records, summaries, scheduler state, external worker state, queue state, progress endpoint, live time assertions, or duplicate pipeline logic."
+        - "FAIL if trigger layer implements duplicate pipeline logic, exposes task/queue/progress state, or uses live time assertions."
 
     - id: TASK-011
       name: "API home"
@@ -346,7 +385,7 @@ dag:
         - "latest_news sorts by published_at DESC."
         - "top_ranked_news length <= 10 and sorts by score DESC, published_at DESC."
         - "Response contains no forbidden internal fields."
-        - "api_test stage result = pass for home."
+        - "api stage result = pass for home."
       failure_criteria:
         - "FAIL if API returns raw English body/summary or layout-column metadata."
 
@@ -370,7 +409,7 @@ dag:
         - "ready and translation_failed details omit summary_zh and content_zh."
         - "Missing or non-displayable item returns 404 error envelope."
         - "Response contains no forbidden internal fields."
-        - "api_test stage result = pass for news detail."
+        - "api stage result = pass for news detail."
       failure_criteria:
         - "FAIL if non-translated detail returns raw body, null content_zh, or placeholder content."
 
@@ -386,16 +425,16 @@ dag:
       depends_on: ["TASK-002B", "TASK-003"]
       description: "Implement GET/POST/PATCH/DELETE /api/sources for RSS source management."
       inputs:
-        - "Valid, duplicate, empty, invalid, local, private, disable-all, and missing-source cases."
+        - "Valid, duplicate, duplicate-deleted, empty, invalid, local, private, disable-all, missing-source, and deleted-source cases."
       outputs:
         - "SourceItem list/create/update responses and 204 delete."
       acceptance_criteria:
-        - "GET /api/sources returns SourceItem[] sorted by created_at ASC."
+        - "GET /api/sources returns only non-deleted SourceItem[] sorted by created_at ASC."
         - "POST valid public RSS URL returns 201."
-        - "Invalid/local/private/duplicate source requests return stable errors and do not insert rows."
-        - "PATCH rejects disabling all sources with 409."
-        - "DELETE disables source, returns 204 with no body, and preserves historical news."
-        - "api_test stage result = pass for sources."
+        - "Invalid/local/private/duplicate source requests return stable errors and do not insert rows, including duplicate URLs from deleted tombstones."
+        - "PATCH rejects disabling the last non-deleted enabled source with 409 and returns 404 for deleted sources."
+        - "DELETE soft-deletes source with is_enabled = 0 and deleted_at, returns 204 with no body, hides the source from GET /api/sources, and preserves historical news."
+        - "api stage result = pass for sources."
       failure_criteria:
         - "FAIL if delete physically removes historical news_item rows."
 
@@ -409,17 +448,17 @@ dag:
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
       depends_on: ["TASK-010"]
-      description: "Implement POST /api/refresh as the API boundary for manual refresh signal."
+      description: "Implement POST /api/refresh as the API boundary for the complete manual refresh flow."
       inputs:
-        - "Refresh trigger signal."
+        - "Complete refresh flow from TASK-010."
         - "Concurrent refresh fixture case."
       outputs:
-        - "Refresh response with refreshed_at only."
+        - "Refresh response with refreshed_at only, where refreshed_at may be string or null."
       acceptance_criteria:
-        - "POST /api/refresh returns 200 with data.refreshed_at."
-        - "Concurrent refresh does not emit a second refresh signal."
+        - "POST /api/refresh returns 200 with data.refreshed_at as string after completion or null for concurrent rejection before any successful refresh."
+        - "Concurrent refresh does not start a second pipeline run."
         - "Response exposes no task, queue, worker, retry, progress, run summary, processing logs, or internal fields."
-        - "api_test stage result = pass for refresh."
+        - "api stage result = pass for refresh."
       failure_criteria:
         - "FAIL if refresh endpoint exposes run summary, processing logs, progress endpoints, or pipeline internals."
 
@@ -443,7 +482,7 @@ dag:
         - "ready and translation_failed cards show original_title/status and render 0 summary_zh/content_zh nodes."
         - "HighScoreList shows <= 10 items and no summaries."
         - "Refresh button disables as 刷新中 and reloads GET /api/home after refresh succeeds."
-        - "ui_test stage result = pass for home."
+        - "integration stage result = pass for home."
       failure_criteria:
         - "FAIL if Home UI reads database/internal fields or adds unlisted interactions."
 
@@ -457,7 +496,7 @@ dag:
       priority: "ui_failures"
       test_scope: ["integration"]
       depends_on: ["TASK-012", "TASK-015"]
-      description: "Implement ArticleView for translated reading, ready polling, translation_failed state, original link, and 404."
+      description: "Implement ArticleView for translated reading, ready polling, translation_failed state, original_url link, and 404."
       inputs:
         - "NewsDetailItem mock responses for translated, ready, translation_failed, and 404."
       outputs:
@@ -465,9 +504,9 @@ dag:
       acceptance_criteria:
         - "Translated ArticleView renders title, original_title, source, published_at, score, and content_zh."
         - "ready ArticleView polls detail endpoint and renders no English body."
-        - "translation_failed ArticleView renders failure state and original link, with 0 content_zh nodes."
+        - "translation_failed ArticleView renders failure state and original_url link, with 0 content_zh nodes."
         - "404 renders 新闻不存在或不可展示."
-        - "ui_test stage result = pass for article."
+        - "integration stage result = pass for article."
       failure_criteria:
         - "FAIL if ArticleView directly jumps to original site instead of internal route."
 
@@ -483,15 +522,17 @@ dag:
       depends_on: ["TASK-013", "TASK-015"]
       description: "Implement RSS source configuration page using mocked source API responses."
       inputs:
-        - "SourceItem list, create success, validation error, duplicate error, delete success, and delete 404 responses."
+        - "SourceItem list, create success, validation error, duplicate error, duplicate-deleted error, enable/disable success, disable-all error, delete success, and delete 404 responses."
       outputs:
-        - "Source page, SourceForm, and SourceRow."
+        - "Source page, SourceForm, and SourceRow with enable/disable/delete controls."
       acceptance_criteria:
-        - "Source list renders all sources."
+        - "Source list renders all non-deleted sources."
         - "Empty form disables submit; invalid URL shows inline error."
         - "Create success clears inputs and reloads list."
+        - "Enable/disable success updates row state."
+        - "Disabling the last enabled source shows structured API error."
         - "Delete success visually removes the row."
-        - "ui_test stage result = pass for sources."
+        - "integration stage result = pass for sources."
       failure_criteria:
         - "FAIL if UI exposes advanced settings, task progress, retry controls, or processing logs."
 
@@ -510,7 +551,7 @@ dag:
         - "Clean temporary SQLite database."
         - "RSS, article HTML, LLM, source, and fixed-clock fixtures."
       outputs:
-        - "Pipeline creates scored, selected, fetched, translated, and translation_failed DB facts."
+        - "Pipeline creates scored/fetched pipeline_state facts, is_selected facts, Chinese translation field facts, and has_translate_failed failure facts."
         - "Partial source/fetch/translation failures remain isolated in DB facts."
       acceptance_criteria:
         - "Full pipeline creates at least 1 displayable DB item."
@@ -518,7 +559,7 @@ dag:
         - "Duplicate canonical_url appears once in DB displayable query."
         - "processing_log contains DB facts for crawl, score, fetch, and translate success/failure."
         - "No live RSS, live webpage, live LLM, production DB, or current system time is used."
-        - "integration_test stage result = pass for pipeline only."
+        - "integration stage result = pass for pipeline only."
       failure_criteria:
         - "FAIL if pipeline integration asserts API response shape, frontend DOM, trigger behavior, run summary correctness, or manual visual judgment."
 
@@ -546,7 +587,7 @@ dag:
         - "Duplicate canonical_url appears once through API."
         - "Detail API returns content_zh only for translated item."
         - "API JSON contains no forbidden internal fields."
-        - "integration_test stage result = pass for API only."
+        - "integration stage result = pass for API only."
       failure_criteria:
         - "FAIL if API integration asserts frontend DOM, pipeline internals, DB schema details, or manual visual judgment."
 
@@ -574,43 +615,146 @@ dag:
         - "ArticleView renders content_zh only for translated detail."
         - "Source UI create/delete states work against API payloads."
         - "Rendered DOM contains no forbidden internal fields."
-        - "integration_test stage result = pass for UI only."
+        - "integration stage result = pass for UI only."
       failure_criteria:
         - "FAIL if UI integration asserts DB state, API implementation internals, pipeline internals, or manual visual judgment."
 
     - id: TASK-021
-      name: "MVP acceptance"
+      name: "Acceptance evaluator implementation"
       layer: "Acceptance Layer"
       type: ["test"]
       status: "pending"
-      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
-      acceptance_gate:
-        - "ACC-STOP-001"
-        - "ACC-STOP-002"
-        - "ACC-STOP-003"
-        - "ACC-STOP-004"
-        - "ACC-STOP-005"
-        - "ACC-STOP-006"
-        - "ACC-STOP-007"
-        - "ACC-STOP-008"
-        - "ACC-STOP-009"
-        - "ACC-STOP-010"
-      priority: "acceptance_gate_failures"
-      test_scope: ["acceptance"]
-      depends_on: ["TASK-009", "TASK-018", "TASK-019", "TASK-020"]
-      description: "Evaluate four MVP gates from stage-level evidence and map them to docs/08_acceptance.md STOP_ALLOWED."
+      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "test_failures"
+      test_scope: ["static", "unit"]
+      depends_on: ["TASK-000", "TASK-003"]
+      description: "Implement and test the local acceptance evaluator without making it the final stop gate task."
       inputs:
-        - "Stage-level results: static_unit, pipeline_test, api_test, ui_test, integration_test."
-        - "Gate mapping from meta.gates."
+        - "Gate mapping from docs/08_acceptance.md."
+        - "Harness report paths from harness.md."
+        - "Schema files from schemas/."
       outputs:
-        - "G1-G4 pass/fail."
-        - "ACC-STOP-001 through ACC-STOP-010 mapped pass/fail."
-        - "STOP_ALLOWED value."
+        - "scripts/run_harness.py --stage acceptance --report-dir reports reads existing full-stage reports and emits ACC-STOP reports plus STOP_ALLOWED.json."
+        - "Task-scoped acceptance command fails with structured TestReport evidence."
+        - "Acceptance evaluator never creates, replaces, or skips required product stage reports."
       acceptance_criteria:
-        - "G1 pipeline correctness = pass."
-        - "G2 api correctness = pass."
-        - "G3 ui correctness = pass."
-        - "G4 no leak and no forbidden fields = pass."
-        - "STOP_ALLOWED = true."
+        - "Acceptance evaluator validates TestReport and StopDecisionReport schema files."
+        - "Acceptance evaluator validates docs/07_test_spec.md#2.16 mandatory assertion catalog coverage from full-stage and ACC-STOP reports."
+        - "Acceptance evaluator validates the traceability matrix mapping assertion_id -> gate -> owner task -> stage -> expected report path."
+        - "Acceptance command without --task-id consumes reports/stages/static.json through reports/stages/e2e.json."
+        - "Acceptance command with --task-id fails as an invalid task-scoped gate evaluation."
+        - "Acceptance evaluator enforces live dependency scan, forbidden field scan, non-goal endpoint/UI scan, wrong-stage/conflicting mandatory assertion detection, and skipped-stage stop failure."
+        - "STOP_ALLOWED can become true only when workflow ACCEPTANCE runs full gate evaluation and all required gates are PASS."
       failure_criteria:
-        - "FAIL if acceptance introduces new product or CI infrastructure tasks instead of reopening the owning failed task."
+        - "FAIL if TASK-021 claims product behavior gate coverage for ACC-STOP-002 through ACC-STOP-007 or ACC-STOP-009."
+        - "FAIL if TASK-021 accepts missing, skipped, flaky, wrong-stage, conflict-duplicated, or task-scoped-only mandatory assertion IDs."
+        - "FAIL if TASK-021 runs product stages, synthesizes passing stage reports, or makes task-scoped acceptance valid."
+
+    - id: TASK-022
+      name: "Replay deterministic stage"
+      layer: "Verification Layer"
+      type: ["test"]
+      status: "pending"
+      source: ["docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
+      priority: "test_failures"
+      test_scope: ["replay"]
+      depends_on: ["TASK-018"]
+      description: "Implement the replay stage owner that proves fixture, mock, seed, and fixed-clock pipeline outputs are deterministic across repeated runs."
+      inputs:
+        - "Pipeline-only integration path from TASK-018."
+        - "Fixture, mock, seed, and fixed-clock versions."
+      outputs:
+        - "reports/tasks/TASK-022/replay.json with TestReport v2 evidence."
+        - "Replay stage owner logic that TASK-025 can run later without --task-id to produce reports/stages/replay.json."
+        - "Replay evidence contains matching data_hash values for repeated deterministic runs."
+      acceptance_criteria:
+        - "Replay runs the same fixture/mock/clock inputs at least twice from clean isolated state."
+        - "Replay output hashes match exactly."
+        - "Replay report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
+        - "replay stage result = pass for deterministic replay."
+      failure_criteria:
+        - "FAIL if replay uses real time, live RSS, live webpages, live LLM, production DB, or manual judgment."
+
+    - id: TASK-023
+      name: "Snapshot regression stage"
+      layer: "Verification Layer"
+      type: ["test"]
+      status: "pending"
+      source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
+      priority: "test_failures"
+      test_scope: ["snapshot"]
+      depends_on: ["TASK-019", "TASK-020"]
+      description: "Implement the snapshot stage owner for API JSON, DB schema, public schema, and React DOM regression artifacts."
+      inputs:
+        - "API integration responses from TASK-019."
+        - "UI integration render states from TASK-020."
+        - "DB schema and public API/schema artifacts."
+      outputs:
+        - "reports/tasks/TASK-023/snapshot.json with TestReport v2 evidence."
+        - "Snapshot stage owner logic that TASK-025 can run later without --task-id to produce reports/stages/snapshot.json."
+        - "Snapshot artifacts bound to fixture/mock/data versions."
+      acceptance_criteria:
+        - "GET /api/home, GET /api/news/{id}, DB schema, public API/schema, and key React DOM snapshots are compared."
+        - "Snapshot diffs are empty unless the task scope explicitly includes snapshot updates and matching contract documents changed."
+        - "Snapshot report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
+        - "snapshot stage result = pass for regression snapshots."
+      failure_criteria:
+        - "FAIL if snapshot approval depends on manual judgment, hidden local files, live data, or untracked fixture changes."
+
+    - id: TASK-024
+      name: "E2E deterministic stage"
+      layer: "Verification Layer"
+      type: ["test"]
+      status: "pending"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
+      priority: "test_failures"
+      test_scope: ["e2e"]
+      depends_on: ["TASK-022", "TASK-023"]
+      description: "Implement the deterministic end-to-end stage from clean SQLite database through refresh, API projection, and UI render."
+      inputs:
+        - "Clean temporary SQLite database."
+        - "Fixture RSS, article HTML, LLM mocks, source fixtures, fixed clock, replay proof, and snapshots."
+      outputs:
+        - "reports/tasks/TASK-024/e2e.json with TestReport v2 evidence."
+        - "E2E stage owner logic that TASK-025 can run later without --task-id to produce reports/stages/e2e.json."
+        - "End-to-end evidence for full pipeline, API output, UI render, isolation, and leak scan."
+      acceptance_criteria:
+        - "E2E run loads fixtures, executes full pipeline, verifies API output, and verifies UI render from clean isolated state."
+        - "E2E run emits no live dependency access and no forbidden public-surface fields."
+        - "E2E report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
+        - "e2e stage result = pass for deterministic full run."
+      failure_criteria:
+        - "FAIL if e2e relies on current system time, live network, production DB, manual screenshots, or replaces replay/snapshot stage evidence."
+
+    - id: TASK-025
+      name: "Full stage report materialization"
+      layer: "Verification Layer"
+      type: ["test"]
+      status: "pending"
+      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "test_failures"
+      test_scope: ["static", "unit"]
+      depends_on: ["TASK-018", "TASK-019", "TASK-020", "TASK-021", "TASK-022", "TASK-023", "TASK-024"]
+      description: "Implement the full-regression materialization path that runs every required product stage without --task-id before final workflow acceptance."
+      inputs:
+        - "Implemented stage owners for static, unit, contract, api, integration, replay, snapshot, and e2e."
+        - "Harness command surface from harness.md."
+      outputs:
+        - "Full-stage commands write reports/stages/static.json, unit.json, contract.json, api.json, integration.json, replay.json, snapshot.json, and e2e.json."
+        - "Task-scoped reports remain under reports/tasks/<task_id>/<stage>.json and are never copied into reports/stages/."
+      acceptance_criteria:
+        - "Full-regression materialization runs required stages in docs/07_test_spec.md#2.13 order without --task-id."
+        - "Every full-stage report conforms to schemas/test_report.schema.json and docs/07_test_spec.md#6."
+        - "Every mandatory assertion ID required for full-stage evidence is emitted by the owning stage report with the correct stage and visibility."
+        - "Full-stage materialization preserves traceability matrix ownership and expected report paths for every mandatory assertion ID."
+        - "Downstream stages are marked skipped after the first failed full-stage run and cannot satisfy STOP_ALLOWED."
+        - "Full-stage materialization runs live dependency, forbidden field, non-goal endpoint/UI, wrong-stage/conflict, and skipped-stage stop-failure checks before final acceptance."
+        - "Final acceptance consumes these existing stage-level reports and does not synthesize, replace, or skip replay, snapshot, or e2e evidence."
+      failure_criteria:
+        - "FAIL if any task-scoped report is used as a substitute for reports/stages/<stage>.json."
+        - "FAIL if full-regression materialization runs acceptance or writes ACC-STOP reports."

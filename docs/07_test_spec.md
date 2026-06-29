@@ -6,7 +6,7 @@
 - 验证翻译字段只通过 `title_zh`、`summary_zh`、`content_zh` 映射到 API/UI。
 - 验证 API contract 不破坏 `05_api_contract.md`。
 - 验证 UI 只按 `NewsItem` / `NewsListItem` / `NewsDetailItem` 渲染。
-- 验证 API/UI 不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`。
+- 验证 API/UI 不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`。
 
 ### 1.1 Pipeline Graph Awareness
 - 系统按 DAG 测试，不只按线性链路测试。
@@ -71,7 +71,7 @@ isolation: strict_mock
 - Translation mapper：固定翻译 JSON → 中文字段。
 - API projector：内部对象 → `NewsListItem` / `NewsDetailItem`。
 - API status projector：`title_zh`、`summary_zh`、`content_zh`、`has_translate_failed` → `ready | translated | translation_failed`。
-- Error classifier：异常 → `network | parsing | llm | database | validation | unknown`，LLM schema validation failure → `validation_llm_error`。
+- Error classifier：异常 → `network | parsing | llm | validation_llm_error | database | validation | timeout | unknown`，LLM schema validation failure → `validation_llm_error`。
 - Log sanitizer：正文、prompt、token、密钥字段裁剪或移除。
 
 ### 2.2 Contract Test（API 契约）
@@ -83,7 +83,7 @@ isolation: strict_mock
 - 所有成功响应必须使用 `{ "data": ... }` envelope；`204` 必须无 body。
 - 所有错误响应必须使用 `{ "error": { "code": "...", "message": "..." } }`。
 - API response 字段必须使用 `snake_case`，ID 必须以 string 返回，timestamp 必须为 ISO 8601 UTC。
-- API response 必须拒绝 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、完整 prompt 和内部 DB model 字段。
+- API response 必须拒绝 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`、旧字段名 `source_url`、完整 prompt 和内部 DB model 字段。
 - DB schema contract 必须校验 `source`、`news_item`、`processing_log` 表、字段、约束和索引。
 - Test report contract 必须通过 JSON Schema 校验。
 
@@ -94,11 +94,11 @@ isolation: strict_mock
 - `204` 响应必须无 body。
 - `GET /api/home` 必须返回 `latest_news` 和 `top_ranked_news`。
 - `GET /api/news/{id}` 必须返回可展示 `NewsDetailItem`。
-- `POST /api/refresh` 必须返回 `refreshed_at`。
-- `GET /api/sources` 必须返回按 `created_at ASC` 排序的 `SourceItem[]`。
+- `POST /api/refresh` 必须返回 `refreshed_at: string | null`。
+- `GET /api/sources` 必须返回按 `created_at ASC` 排序的未删除 `SourceItem[]`。
 - `POST /api/sources` 必须测试成功创建、缺少 name、空 name、缺少 rss_url、非法 URL、本地/私有地址、重复 URL。
-- `PATCH /api/sources/{id}` 必须测试启用、停用、source 不存在、禁止关闭全部 source。
-- `DELETE /api/sources/{id}` 必须测试 `204` 无 body、source 不存在返回 `404`、历史新闻仍可见。
+- `PATCH /api/sources/{id}` 必须测试启用、停用、source 不存在、source 已删除、禁止关闭最后一个未删除且启用的 source。
+- `DELETE /api/sources/{id}` 必须测试 `204` 无 body、source 不存在或已删除返回 `404`、历史新闻仍可见、删除后配置列表隐藏该 source。
 - API response 不得出现非法内部字段。
 - Non-goal APIs 必须不存在：user/login/search/category/comment/favorite/share/task progress/retry/admin/versioning。
 
@@ -117,7 +117,7 @@ isolation: strict_mock
 - 保存关键 React DOM snapshot。
 - 保存 DB schema snapshot 和 public OpenAPI/schema snapshot。
 - 每次 pipeline run 后比对 JSON / DOM diff。
-- Snapshot diff 必须为空或有显式批准。
+- Snapshot diff 必须为空，或由同一 task 中的契约文档变更和结构化 snapshot approval evidence 共同批准；不得依赖人工口头判断、隐藏本地文件或未追踪 fixture。
 
 ### 2.6 Pipeline Replay Test
 - RSS ingestion 必须可 replay。
@@ -128,6 +128,7 @@ isolation: strict_mock
 ### 2.7 LLM Prompt Regression Test
 - Prompt template 必须有 snapshot。
 - Prompt 变更必须触发 test diff。
+- Prompt diff 必须为空，或由同一 task 中的 LLM contract/fixture 变更和结构化 prompt approval evidence 共同批准。
 - Mock LLM response 必须通过 schema validation。
 - 固定 fixture 下 score distribution 必须稳定。
 
@@ -180,6 +181,10 @@ isolation: strict_mock
 
 ### 2.13 Test Execution Orchestration
 - Test stages must run in deterministic order: `static → unit → contract → api → integration → replay → snapshot → e2e`。
+- Required stages for acceptance are exactly: `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot`, `e2e`.
+- `acceptance` is a harness gate-evaluation stage. It runs after required stages, consumes their reports, and emits ACC-STOP reports plus `STOP_ALLOWED.json`; it is not one of the required product verification stages.
+- `acceptance` must run only as a full-stage command without `--task-id`; task-scoped acceptance is invalid and must emit structured failure evidence.
+- Stage commands and report paths are defined by `harness.md`.
 - Each stage must start from clean isolated state。
 - Stage failure must stop downstream execution。
 - No shared global state across stages。
@@ -197,6 +202,133 @@ isolation: strict_mock
 - Snapshot test max time: `10s`。
 - Full E2E max time: `60s`。
 - Timeout must fail with `timeout` category。
+
+### 2.16 Mandatory Assertion Catalog
+
+Harness stage reports must prove coverage through stable assertion IDs, not prose-only claims.
+
+Assertion ID format:
+
+```text
+A-<stage>-<gate>-<slug>
+```
+
+Rules:
+
+- `stage` MUST be one of `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot`, `e2e`, or `acceptance`.
+- `gate` MUST be one `ACC-STOP-001` through `ACC-STOP-010`.
+- `slug` MUST be lowercase ASCII words joined by `-`.
+- Every mandatory catalog row below MUST appear in at least one full-stage or ACC-STOP report before `STOP_ALLOWED = true`.
+- A mandatory assertion is covered only when an assertion with the exact `id` appears with `status = passed`, non-empty `expected`, non-empty `actual`, parseable `diff`, and correct `visibility`.
+- Task-scoped reports may prove task progress but cannot replace full-stage mandatory assertion coverage.
+- Task-scoped reports MUST execute only the mandatory assertion IDs that belong to the current task/stage scope; missing out-of-scope mandatory IDs fail only full-stage materialization or workflow acceptance.
+- Each required `ACC-STOP-*` gate MUST have at least one mandatory assertion row in this catalog.
+- Acceptance MUST fail `ACC-STOP-001` when any mandatory assertion ID is missing, skipped, flaky, failed, duplicated with conflicting results, or attached to the wrong stage.
+
+Mandatory catalog:
+
+| Assertion id | Stage | Gate | Visibility | Required proof |
+| --- | --- | --- | --- | --- |
+| `A-static-ACC-STOP-010-architecture-boundaries` | static | ACC-STOP-010 | report_metadata | Project structure, import boundaries, non-goal files and documented contracts align. |
+| `A-static-ACC-STOP-009-forbidden-public-fields` | static | ACC-STOP-009 | report_metadata | Static scan finds no forbidden internal fields in API/UI public surfaces. |
+| `A-unit-ACC-STOP-003-rss-normalize-dedupe` | unit | ACC-STOP-003 | internal_evidence | RSS parser and canonical URL dedupe are deterministic. |
+| `A-unit-ACC-STOP-007-llm-schema-validation` | unit | ACC-STOP-007 | internal_evidence | Scoring and translation mock responses pass schema validation and invalid outputs are rejected. |
+| `A-unit-ACC-STOP-005-state-machine` | unit | ACC-STOP-005 | internal_evidence | `pipeline_state` transitions only `raw -> scored -> fetched`; `is_selected` does not mutate state. |
+| `A-contract-ACC-STOP-004-api-shapes` | contract | ACC-STOP-004 | public_surface | Every documented endpoint response matches `05_api_contract.md` and unknown fields fail. |
+| `A-contract-ACC-STOP-005-db-schema` | contract | ACC-STOP-005 | internal_evidence | SQLite application schema matches `04_data_model.md` tables, fields, constraints and indexes. |
+| `A-api-ACC-STOP-002-source-management` | api | ACC-STOP-002 | public_surface | Source CRUD, soft delete, duplicate URL, private URL and last-enabled-source behavior pass. |
+| `A-api-ACC-STOP-004-refresh-contract` | api | ACC-STOP-004 | public_surface | `POST /api/refresh` returns only `refreshed_at` and exposes no task/progress/run-summary fields. |
+| `A-api-ACC-STOP-009-api-leak-scan` | api | ACC-STOP-009 | public_surface | API JSON leak scan has zero forbidden fields and zero sensitive content matches. |
+| `A-integration-ACC-STOP-003-full-pipeline` | integration | ACC-STOP-003 | internal_evidence | Fixture pipeline produces displayable news through RSS, score, fetch, translate and API projection. |
+| `A-integration-ACC-STOP-006-ui-render-contract` | integration | ACC-STOP-006 | public_surface | UI renders translated, ready, failed, loading, empty and not-found states from DTOs only. |
+| `A-replay-ACC-STOP-008-deterministic-replay` | replay | ACC-STOP-008 | report_metadata | Two clean runs with same fixture/mock/clock produce matching hashes. |
+| `A-snapshot-ACC-STOP-004-public-snapshots` | snapshot | ACC-STOP-004 | public_surface | API JSON, DOM, DB schema and public schema snapshots match or carry structured approval evidence. |
+| `A-e2e-ACC-STOP-008-clean-run-isolation` | e2e | ACC-STOP-008 | report_metadata | E2E run uses only fixture/mock/fixed clock/temp SQLite and no live dependency. |
+| `A-acceptance-ACC-STOP-001-mandatory-catalog-covered` | acceptance | ACC-STOP-001 | report_metadata | Acceptance confirms every mandatory assertion ID is present and passed in allowed reports. |
+| `A-static-ACC-STOP-001-test-report-schema-contract` | static | ACC-STOP-001 | report_metadata | TestReport, StopDecisionReport, TaskPlanReport and task DAG schemas are parseable and self-consistent. |
+| `A-acceptance-ACC-STOP-001-stop-decision-schema` | acceptance | ACC-STOP-001 | report_metadata | `STOP_ALLOWED.json` conforms to `docs/08_acceptance.md#5.1` and contains only relative `generated_from_reports` paths. |
+| `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | acceptance | ACC-STOP-001 | report_metadata | Acceptance rejects task-scoped gate evaluation and task-scoped reports as substitutes for full-stage stop evidence. |
+| `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 7 documented default sources once. |
+| `A-api-ACC-STOP-002-source-crud-errors` | api | ACC-STOP-002 | public_surface | Source create, update and delete APIs return documented success and structured error responses for invalid, duplicate, private, deleted and missing source cases. |
+| `A-api-ACC-STOP-002-source-tombstone-history` | api | ACC-STOP-002 | public_surface | Source delete uses soft tombstone behavior, hides the source from configuration API and preserves historical news visibility. |
+| `A-integration-ACC-STOP-003-scheduler-fixed-clock` | integration | ACC-STOP-003 | internal_evidence | Fixed clock cases trigger scheduled refresh at 09:00 and 18:00 and do not trigger at non-scheduled times. |
+| `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold fixture proves score 60 is selected and score 59 is not API/UI visible. |
+| `A-integration-ACC-STOP-003-fetch-fallback` | integration | ACC-STOP-003 | internal_evidence | Fetch success, extraction failure with RSS fallback and no-content failure produce the documented displayability outcomes. |
+| `A-integration-ACC-STOP-003-translation-failure-isolated` | integration | ACC-STOP-003 | internal_evidence | Translation failure does not write partial Chinese fields and does not block other items. |
+| `A-api-ACC-STOP-004-home-detail-behavior` | api | ACC-STOP-004 | public_surface | Home and detail endpoints enforce sorting, 30-day ranking, translated detail fields and structured 404 behavior. |
+| `A-api-ACC-STOP-004-non-goal-endpoints-absent` | api | ACC-STOP-004 | public_surface | User, login, search, category, comment, favorite, share, task progress, retry, admin and versioning endpoints are absent. |
+| `A-static-ACC-STOP-005-pipeline-write-boundary` | static | ACC-STOP-005 | internal_evidence | Only backend pipeline services can write `pipeline_state` or compute `is_selected`. |
+| `A-contract-ACC-STOP-005-forbidden-data-fields` | contract | ACC-STOP-005 | internal_evidence | DB schema excludes old/non-goal tables and fields including `translation_status`, `content_source`, `is_ready` and `display_mode`. |
+| `A-unit-ACC-STOP-005-translation-facts` | unit | ACC-STOP-005 | internal_evidence | Translation success and failure facts derive only from Chinese fields, `has_translate_failed` cache and `processing_log`. |
+| `A-integration-ACC-STOP-006-ui-forbidden-rendering` | integration | ACC-STOP-006 | public_surface | Ready and translation-failed UI states render no `summary_zh`, `content_zh`, raw English summary or raw English body. |
+| `A-integration-ACC-STOP-006-ui-allowed-interactions` | integration | ACC-STOP-006 | public_surface | UI click behavior is limited to the whitelist in `docs/03_ui_spec.md#5.0`. |
+| `A-snapshot-ACC-STOP-006-layout-visual-contract` | snapshot | ACC-STOP-006 | public_surface | Home layout, NewsCard density, skeleton dimensions and ArticleView reading width match the UI spec. |
+| `A-unit-ACC-STOP-007-llm-request-shapes` | unit | ACC-STOP-007 | internal_evidence | Scoring and translation requests contain exactly the documented structured JSON input fields. |
+| `A-unit-ACC-STOP-007-llm-retry-failure-policy` | unit | ACC-STOP-007 | internal_evidence | Invalid, timeout and schema-invalid LLM outputs retry at most twice and do not write successful business fields. |
+| `A-integration-ACC-STOP-008-live-dependency-blocked` | integration | ACC-STOP-008 | report_metadata | Harness blocks or fails any RSS, webpage, LLM, production DB or wall-clock dependency access during verification. |
+| `A-replay-ACC-STOP-008-fixture-version-hash` | replay | ACC-STOP-008 | report_metadata | Replay reports include fixture version, mock version, fixed clock and stable data hashes for repeated runs. |
+| `A-unit-ACC-STOP-009-log-sanitizer` | unit | ACC-STOP-009 | internal_evidence | Log sanitizer removes or truncates raw body, fallback text, prompt, secret and token-like values before persistence. |
+| `A-integration-ACC-STOP-009-ui-dom-leak-scan` | integration | ACC-STOP-009 | public_surface | UI DOM leak scan finds zero forbidden internal fields and zero sensitive content matches. |
+| `A-acceptance-ACC-STOP-009-report-leak-scan` | acceptance | ACC-STOP-009 | report_metadata | Acceptance scans public-surface reports for forbidden fields and internal-evidence reports for sensitive value leaks. |
+| `A-static-ACC-STOP-010-contract-doc-sync` | static | ACC-STOP-010 | report_metadata | API, data, UI and report contract changes are reflected in their authoritative documents. |
+| `A-static-ACC-STOP-010-non-goal-files-absent` | static | ACC-STOP-010 | report_metadata | Repository contains no active MVP implementation for documented non-goal capabilities. |
+
+### 2.17 Mandatory Assertion Traceability Matrix
+
+The matrix below is machine-checkable by the static harness. Each mandatory assertion ID from section 2.16 MUST appear exactly once here.
+
+Rules:
+
+- `Gate` MUST match the gate encoded in the assertion ID and the mandatory catalog row.
+- `Owner task` MUST exist in `tasks.md` and include the same gate in its `acceptance_gate` list.
+- `Stage` MUST match the stage encoded in the assertion ID and the mandatory catalog row.
+- `Expected report path` MUST be `reports/stages/<stage>.json` for product stages and `reports/acceptance/<gate>.json` for acceptance-stage assertions.
+
+| Assertion id | Gate | Owner task | Stage | Expected report path |
+| --- | --- | --- | --- | --- |
+| `A-static-ACC-STOP-010-architecture-boundaries` | ACC-STOP-010 | TASK-001 | static | reports/stages/static.json |
+| `A-static-ACC-STOP-009-forbidden-public-fields` | ACC-STOP-009 | TASK-020 | static | reports/stages/static.json |
+| `A-unit-ACC-STOP-003-rss-normalize-dedupe` | ACC-STOP-003 | TASK-004 | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-007-llm-schema-validation` | ACC-STOP-007 | TASK-008 | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-005-state-machine` | ACC-STOP-005 | TASK-002A | unit | reports/stages/unit.json |
+| `A-contract-ACC-STOP-004-api-shapes` | ACC-STOP-004 | TASK-019 | contract | reports/stages/contract.json |
+| `A-contract-ACC-STOP-005-db-schema` | ACC-STOP-005 | TASK-002A | contract | reports/stages/contract.json |
+| `A-api-ACC-STOP-002-source-management` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-004-refresh-contract` | ACC-STOP-004 | TASK-014 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-009-api-leak-scan` | ACC-STOP-009 | TASK-019 | api | reports/stages/api.json |
+| `A-integration-ACC-STOP-003-full-pipeline` | ACC-STOP-003 | TASK-018 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-006-ui-render-contract` | ACC-STOP-006 | TASK-020 | integration | reports/stages/integration.json |
+| `A-replay-ACC-STOP-008-deterministic-replay` | ACC-STOP-008 | TASK-022 | replay | reports/stages/replay.json |
+| `A-snapshot-ACC-STOP-004-public-snapshots` | ACC-STOP-004 | TASK-023 | snapshot | reports/stages/snapshot.json |
+| `A-e2e-ACC-STOP-008-clean-run-isolation` | ACC-STOP-008 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-acceptance-ACC-STOP-001-mandatory-catalog-covered` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-static-ACC-STOP-001-test-report-schema-contract` | ACC-STOP-001 | TASK-000 | static | reports/stages/static.json |
+| `A-acceptance-ACC-STOP-001-stop-decision-schema` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-api-ACC-STOP-002-default-source-seed` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
+| `A-api-ACC-STOP-002-source-crud-errors` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-002-source-tombstone-history` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
+| `A-integration-ACC-STOP-003-scheduler-fixed-clock` | ACC-STOP-003 | TASK-010 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-threshold-selection` | ACC-STOP-003 | TASK-006 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-fetch-fallback` | ACC-STOP-003 | TASK-007 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-translation-failure-isolated` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
+| `A-api-ACC-STOP-004-home-detail-behavior` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-004-non-goal-endpoints-absent` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
+| `A-static-ACC-STOP-005-pipeline-write-boundary` | ACC-STOP-005 | TASK-002A | static | reports/stages/static.json |
+| `A-contract-ACC-STOP-005-forbidden-data-fields` | ACC-STOP-005 | TASK-002A | contract | reports/stages/contract.json |
+| `A-unit-ACC-STOP-005-translation-facts` | ACC-STOP-005 | TASK-018 | unit | reports/stages/unit.json |
+| `A-integration-ACC-STOP-006-ui-forbidden-rendering` | ACC-STOP-006 | TASK-020 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-006-ui-allowed-interactions` | ACC-STOP-006 | TASK-020 | integration | reports/stages/integration.json |
+| `A-snapshot-ACC-STOP-006-layout-visual-contract` | ACC-STOP-006 | TASK-023 | snapshot | reports/stages/snapshot.json |
+| `A-unit-ACC-STOP-007-llm-request-shapes` | ACC-STOP-007 | TASK-005 | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-007-llm-retry-failure-policy` | ACC-STOP-007 | TASK-005 | unit | reports/stages/unit.json |
+| `A-integration-ACC-STOP-008-live-dependency-blocked` | ACC-STOP-008 | TASK-003 | integration | reports/stages/integration.json |
+| `A-replay-ACC-STOP-008-fixture-version-hash` | ACC-STOP-008 | TASK-022 | replay | reports/stages/replay.json |
+| `A-unit-ACC-STOP-009-log-sanitizer` | ACC-STOP-009 | TASK-008 | unit | reports/stages/unit.json |
+| `A-integration-ACC-STOP-009-ui-dom-leak-scan` | ACC-STOP-009 | TASK-020 | integration | reports/stages/integration.json |
+| `A-acceptance-ACC-STOP-009-report-leak-scan` | ACC-STOP-009 | TASK-023 | acceptance | reports/acceptance/ACC-STOP-009.json |
+| `A-static-ACC-STOP-010-contract-doc-sync` | ACC-STOP-010 | TASK-025 | static | reports/stages/static.json |
+| `A-static-ACC-STOP-010-non-goal-files-absent` | ACC-STOP-010 | TASK-001 | static | reports/stages/static.json |
 
 ## 3. 核心测试用例
 
@@ -218,7 +350,7 @@ isolation: strict_mock
 - Scheduler 不得依赖真实系统时间；测试必须注入 clock。
 - `POST /api/refresh` 必须立即执行 crawl、score、filter、fetch、translate 和 API 可见性刷新。
 - `POST /api/refresh` 必须幂等；重复 refresh 不得创建重复 `news_item`。
-- 并发 refresh 被拒绝时不得启动第二个 pipeline run，必须返回 `200` 和 last known `refreshed_at`。
+- 并发 refresh 被拒绝时不得启动第二个 pipeline run，必须返回 `200` 和 last successful `refreshed_at`；如果尚无成功 refresh，必须返回 `refreshed_at: null`。
 - Refresh start、finish 和 concurrent rejection 必须写入日志或 `processing_log`，且不得泄漏正文或 prompt。
 
 ### 3.2 LLM 评分
@@ -258,19 +390,22 @@ isolation: strict_mock
 - `GET /api/home` 不得返回 layout column 描述。
 - `GET /api/news/{id}` 对不存在 ID 返回结构化 `404`。
 - `GET /api/news/{id}` 对不可展示 item 返回结构化 `404`。
+- `GET /api/news/{id}` 对 `translated` item 必须返回非空 `summary_zh` 和 `content_zh`。
 - `GET /api/news/{id}` 对 `ready` / `translation_failed` 不返回 `summary_zh`、`content_zh`。
 - `POST /api/refresh` 并发调用不触发第二次执行，仍返回 `200`。
 - `POST /api/refresh` 无 request body，不返回 task ID、queue、worker、retry 或 progress 字段。
-- `GET /api/sources` 返回所有 source，按 `created_at ASC` 排序。
+- `GET /api/sources` 返回 `deleted_at IS NULL` 的 source，按 `created_at ASC` 排序。
 - `POST /api/sources` 成功返回 `201`、`is_enabled = true`、`fetch_frequency = twice_daily`。
 - `POST /api/sources` 空 name、空 rss_url、非法 URL、本地地址和私有地址返回结构化 `400`，且数据库不新增记录。
-- `POST /api/sources` 重复 RSS URL 返回 `409`。
+- `POST /api/sources` 重复 RSS URL 返回 `409`，包括已删除 source tombstone 上的同一 URL。
 - `PATCH /api/sources/{id}` 成功返回更新后的 `SourceItem`。
 - `PATCH /api/sources/{id}` source 不存在返回 `404`。
-- `PATCH /api/sources/{id}` 禁止关闭全部源，返回 `409`。
-- `DELETE /api/sources/{id}` 返回 `204` 且无 body。
-- `DELETE /api/sources/{id}` source 不存在返回 `404`。
-- `DELETE /api/sources/{id}` 以禁用实现，历史新闻仍通过 API 可见，未来 ingestion 停止。
+- `PATCH /api/sources/{id}` source 已删除返回 `404`。
+- `PATCH /api/sources/{id}` 禁止关闭最后一个 `deleted_at IS NULL AND is_enabled = 1` 的 source，返回 `409`。
+- `DELETE /api/sources/{id}` 在不会关闭最后一个 `deleted_at IS NULL AND is_enabled = 1` 的 source 时返回 `204` 且无 body。
+- `DELETE /api/sources/{id}` 如果会关闭最后一个 `deleted_at IS NULL AND is_enabled = 1` 的 source，返回 `409` 且不更新数据库。
+- `DELETE /api/sources/{id}` source 不存在或已删除返回 `404`。
+- `DELETE /api/sources/{id}` 以 soft tombstone 实现，设置 `is_enabled = 0` 和 `deleted_at`，历史新闻仍通过 API 可见，未来 ingestion 停止。
 - 所有 API response 必须通过非法字段黑名单检查。
 - 所有 endpoint 必须覆盖成功用例和至少一个错误用例。
 - 所有错误用例必须断言稳定 `error.code`。
@@ -278,7 +413,7 @@ isolation: strict_mock
 ### 3.5 UI 层
 - NewsCard 正确渲染标题、来源、时间、评分、状态。
 - HighScoreList 使用与 News Feed 相同的 `NewsListItem` shape。
-- ArticleView 在 `translated` 时渲染 `content_zh`。
+- ArticleView 在 `translated` 时渲染 `summary_zh` 和 `content_zh`。
 - ArticleView 在 `ready` / `translation_failed` 时不渲染 `summary_zh`、`content_zh`。
 - 空字段不 crash，不自动补默认文案，不用其他字段替代。
 - NewsCard 点击和 Title 点击必须进入同一个 ArticleView。
@@ -298,18 +433,20 @@ isolation: strict_mock
 ### 3.6 数据模型与持久化层
 - SQLite application schema 必须只保留 MVP 核心表：`source`、`news_item`、`processing_log`；SQLite 内部表不计入应用表集合。
 - `source.rss_url` 必须唯一；`source.is_enabled` 必须可索引。
+- `source.deleted_at` 必须存在，用作 source soft tombstone；未删除时为空。
 - `news_item.canonical_url` 必须唯一。
 - `news_item.pipeline_state` 只允许 `raw`、`scored`、`fetched`。
 - `pipeline_state = scored` 必须满足 `score IS NOT NULL`。
 - `is_selected` 必须由 threshold 计算，不得作为 pipeline 状态。
 - `content_raw` 保存 RSS 摘要或原始内容；`content_full` 只保存抓取全文。
 - 不得保存 `content_source`、`title_domain_hash`、`translation_status`、`is_ready`、`display_mode`、独立任务队列表或多语言表。
-- `processing_log` 必须满足 `source_id` 与 `news_item_id` 恰好一个非空。
+- `processing_log` 是必需核心表，必须满足 `source_id` 与 `news_item_id` 恰好一个非空。
 - `processing_log.stage` 只允许 `crawl`、`score`、`fetch`、`translate`。
+- `processing_log(stage = crawl)` 必须关联 `source_id`；`score`、`fetch`、`translate` 必须关联 `news_item_id`。
 - `processing_log` 不驱动任务调度；它只记录处理结果。
-- 删除或禁用 source 后，历史 `news_item` 必须保留。
+- 删除或禁用 source 后，历史 `news_item` 必须保留；删除 source 后 `GET /api/sources` 不再返回该 source。
 - 所有 DB timestamp 必须为 ISO 8601 UTC string。
-- 必须验证 `news_item.source_id`、`news_item.pipeline_state`、`news_item.published_at`、`news_item.score`、`processing_log(source_id, stage)`、`processing_log(news_item_id, stage, success)`、`processing_log.created_at` 索引存在。
+- 必须验证 `news_item.source_id`、`news_item.pipeline_state`、`news_item.published_at`、`news_item.score`、`processing_log(source_id, stage)`、`processing_log(news_item_id, stage, success)`、`processing_log.trace_id`、`processing_log.created_at` 索引存在。
 
 ### 3.7 内容抓取层
 - 原文页面可访问且能抽取正文时，必须写入 `content_full`。
@@ -319,14 +456,14 @@ isolation: strict_mock
 - 抓取成功或兜底成功后，`pipeline_state` 必须更新为 `fetched`。
 
 ### 3.8 错误处理、日志与可观测性
-- 所有异常必须归类为 `network`、`parsing`、`llm`、`database`、`validation`、`unknown`。
+- 所有异常必须归类为 `network`、`parsing`、`llm`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
 - LLM schema validation failure 必须归类为 `validation_llm_error`。
 - 禁止 silent fail；失败必须写入 `processing_log` 或应用日志。
 - RSS 解析失败必须归类为 `parsing`。
 - 网络超时必须归类为 `network`。
 - 未知异常必须转换为 `unknown`，不得暴露内部细节。
 - 捕获异常后不得继续写入成功状态。
-- 错误 message 不得包含完整正文、prompt、token 或密钥。
+- 错误 message 不得包含 raw article body、fallback raw text、prompt、token 或密钥。
 - 日志标题字段必须裁剪到 `300` 字符以内；正文类字段必须裁剪到 `1024` 字符以内。
 - 业务日志不得使用 `print`。
 - 所有 pipeline step 必须产生包含对象 ID、stage、UTC timestamp、trace_id 的日志或 `processing_log`。
@@ -435,8 +572,8 @@ isolation: strict_mock
 - 性能：100 条 RSS item 的 parse + dedupe + mock scoring 在本地 SQLite 下必须在 5 秒内完成。
 - 稳定性：LLM 连续失败后 item 不得假成功进入 translated UI。
 - 数据一致性：API 返回字段必须与 UI 渲染字段一致。
-- 数据泄漏：API response 中不得出现 `content_raw`、`content_full`、完整 prompt。
-- 数据泄漏：日志、测试报告、错误响应不得出现完整正文、完整 prompt、密钥、token。
+- 数据泄漏：API response 中不得出现 `content_raw`、`content_full`、`deleted_at`、完整 prompt。
+- 数据泄漏：日志、测试报告、错误响应不得出现 raw article body、fallback raw text、完整 prompt、密钥、token。
 - 幂等性：重复 refresh 不得创建重复新闻。
 - 可维护性：静态合规测试必须阻止未记录 endpoint、未记录 UI 行为、未记录组件和跨层字段泄漏。
 - 安全性：RSS URL validation 必须拒绝本地地址、私有地址、非 `http/https` URL。
@@ -463,32 +600,38 @@ isolation: strict_mock
 ```yaml
 test_report_contract:
   ref: 07_test_spec.md#6
-  version: v1
+  version: v2
 ```
 
 All test executions MUST output machine-readable structured reports. The report is the only supported interface for CI parsing, AI automatic repair, failure routing, and traceability consumption.
+
+The machine-checkable JSON Schema for this contract lives at `schemas/test_report.schema.json`. The prose contract in this section remains authoritative when schema and prose conflict, and schema changes must update this section in the same task.
 
 Each test case or stage-level result MUST emit one `TestReport` object:
 
 ```json
 {
   "schema_ref": "07_test_spec.md#6",
-  "schema_version": "v1",
+  "schema_version": "v2",
   "test_id": "...",
-  "stage": "static | unit | contract | api | integration | replay | snapshot | e2e",
+  "stage": "static | unit | contract | api | integration | replay | snapshot | e2e | acceptance",
   "status": "passed | failed | flaky | skipped",
   "failure_type": "api | scheduler | integration | contract | data_model | ui | observability | leak | null",
-  "error_category": "network | parsing | llm | validation_llm_error | database | validation | unknown | null",
+  "error_category": "network | parsing | llm | validation_llm_error | database | validation | timeout | unknown | null",
   "trace_id": "...",
   "fixture_set": "...",
   "mock_set": "...",
   "clock_source": "...",
   "fixture_version": "...",
   "mock_version": "...",
+  "referenced_files": ["path/to/file"],
+  "data_hash": "sha256:...",
+  "artifact_paths": ["reports/path.json"],
   "assertions": [
     {
       "id": "...",
       "type": "api_response | db_state | side_effect | pipeline_output | llm_io | ui_render | report_schema | log_record | isolation",
+      "visibility": "public_surface | internal_evidence | report_metadata",
       "status": "passed | failed | flaky | skipped",
       "expected": {},
       "actual": {},
@@ -505,7 +648,7 @@ Each test case or stage-level result MUST emit one `TestReport` object:
   "expected": {},
   "actual": {},
   "diff": {},
-  "node": "static | source | RSS | scheduler | score | filter | fetch | translate | DB | API | UI",
+  "node": "harness | acceptance | static | source | RSS | scheduler | score | filter | fetch | translate | DB | API | UI",
   "timestamp": "ISO8601"
 }
 ```
@@ -513,9 +656,10 @@ Each test case or stage-level result MUST emit one `TestReport` object:
 Field rules:
 
 - `schema_ref` MUST equal `07_test_spec.md#6`.
-- `schema_version` MUST equal `v1`.
+- `schema_version` MUST equal `v2`.
 - `test_id` MUST be stable across runs and unique within the test suite.
 - `stage` MUST match the orchestration stages defined in section 2.13.
+- `stage = acceptance` is allowed only for gate-evaluation reports written under `reports/stages/acceptance.json` or `reports/acceptance/ACC-STOP-*.json`.
 - `status` MUST use only the documented values; failed retry results MUST be reported as `flaky` only when a retry passes.
 - `failure_type` MUST use this closed enum for `failed` and `flaky` reports: `api`、`scheduler`、`integration`、`contract`、`data_model`、`ui`、`observability`、`leak`.
 - `failure_type` MUST be `null` for `passed` and `skipped` reports.
@@ -523,16 +667,25 @@ Field rules:
 - `error_category` MUST use the categories from `06_dev_rules.md` when the result comes from an exception or validation failure; otherwise it MAY be `null`.
 - `trace_id` MUST connect the report to pipeline logs and failure details.
 - `fixture_set` and `mock_set` MUST be present for all acceptance tests.
-- `fixture_set` and `mock_set` MUST match the release gate policy for `ACC-MVP-*` reports.
+- `fixture_set` and `mock_set` MUST match the release gate policy for `ACC-STOP-*` reports.
 - `clock_source` MUST be present for all acceptance tests.
-- `clock_source` MUST match the release gate policy for `ACC-MVP-*` reports.
-- `ACC-MVP-*` tests MUST use `fixed_clock_fixture@v1` as the only time source.
-- `ACC-MVP-*` tests MUST NOT read wall clock time, system time, current process time, or network time as an assertion input.
+- `clock_source` MUST match the release gate policy for `ACC-STOP-*` reports.
+- `ACC-STOP-*` tests MUST use `fixed_clock_fixture@v1` as the only time source.
+- `ACC-STOP-*` tests MUST NOT read wall clock time, system time, current process time, or network time as an assertion input.
 - `fixture_version` and `mock_version` MUST be present for all deterministic tests.
-- `assertions` MUST be present and non-empty for all `ACC-MVP-*` reports.
+- `referenced_files` MUST be present and MUST be an array of repository-relative paths involved in the assertion, failure, or owning harness logic.
+- For `failed` and `flaky` reports, `referenced_files` MUST be non-empty so `workflows.md#5.4` can compute a deterministic fix boundary.
+- `data_hash` MUST be present and MUST be a stable `sha256:` hash of the deterministic fixture/mock/report input facts used by the report.
+- `artifact_paths` MUST be present and MUST be an array of repository-relative or report-directory-relative evidence artifacts written by the run.
+- `assertions` MUST be present and non-empty for all `ACC-STOP-*` reports.
 - Each assertion MUST include `id`、`type`、`status`、`expected`、`actual` and `diff`.
 - Assertion `type` MUST use the closed enum in section 6.2.
-- `ACC-MVP-*` report `status` MUST be `passed` only when every assertion has `status = passed`.
+- Each assertion MUST include `visibility`.
+- Assertion `visibility` MUST be one of `public_surface`、`internal_evidence` or `report_metadata`.
+- `public_surface` means API JSON, UI DOM, user-visible error response, or user-visible logs and MUST use strict forbidden-field scanning.
+- `internal_evidence` means DB/schema/state evidence needed for acceptance; it MAY name internal fields such as `pipeline_state` or `is_selected`, but MUST NOT include raw article bodies, full prompts, secrets, tokens, or正文片段超过 `1024` 字符.
+- `report_metadata` means harness/report bookkeeping fields and MUST NOT include product payload bodies or prompts.
+- `ACC-STOP-*` report `status` MUST be `passed` only when every assertion has `status = passed`.
 - Leak assertions MUST include `leak_detection`.
 - `leak_detection.method` MUST equal `structured_field_scan`.
 - `leak_detection.target` MUST be one of `api_json`、`ui_dom`、`logs`、`test_report`.
@@ -540,13 +693,15 @@ Field rules:
 - `expected`, `actual`, and `diff` MUST be valid JSON objects; empty objects are allowed only when no assertion diff exists.
 - `node` MUST identify the isolated pipeline node most responsible for the result.
 - `timestamp` MUST be an ISO 8601 UTC string.
-- `ACC-MVP-*` report `timestamp` MUST be derived from `clock_source`.
+- `ACC-STOP-*` report `timestamp` MUST be derived from `clock_source`.
 
 Output rules:
 
 - CI MUST persist the full report collection as JSON.
 - Human-readable logs MAY be generated from the structured report, but MUST NOT be the source of truth.
-- Report fields MUST NOT contain `content_raw`、`content_full`、完整 prompt、密钥或超过 `1024` 字符的正文片段。
+- Report fields MUST NOT contain完整 prompt、密钥、token、secret 或超过 `1024` 字符的正文片段。
+- Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed` or `deleted_at`.
+- Report fields with assertion `visibility = internal_evidence` MAY contain internal field names required to prove DB/schema/state facts, but MUST NOT contain raw field values that are full article bodies, full prompts, secrets, or token-like credentials.
 - Failure routing MUST use `stage`、`failure_type`、`error_category`、`node` and `trace_id`, not free-form error text.
 - AI automatic repair MUST consume this report contract before reading raw logs.
 
@@ -591,21 +746,36 @@ assertion_policy:
   extension: FORBIDDEN
 ```
 
+### 6.3 Assertion Visibility Schema
+
+```yaml
+assertion_visibility:
+  - public_surface
+  - internal_evidence
+  - report_metadata
+visibility_policy:
+  schema: CLOSED_ENUM
+  public_surface: "strict forbidden-field scan applies"
+  internal_evidence: "internal DB/schema/state field names allowed, sensitive values forbidden"
+  report_metadata: "harness bookkeeping only, product payload bodies forbidden"
+```
+
 ## 7. 验收标准
 - Static compliance tests pass。
 - 所有 API tests pass。
 - Contract tests 100% pass。
 - DB schema contract tests 100% pass。
 - 核心链路 integration test 100% pass。
-- Golden snapshot diff 必须为空或有显式批准。
+- Golden snapshot diff 必须为空，或由结构化 snapshot approval evidence 证明与同一 task 的契约文档变更一致。
 - Pipeline replay test 输出必须完全一致。
-- LLM prompt snapshot diff 必须有显式批准。
+- LLM prompt snapshot diff 必须为空，或由结构化 prompt approval evidence 证明与同一 task 的 LLM contract/fixture 变更一致。
 - Test pyramid ratio 不得被 snapshot / integration test 反向压倒。
 - Flaky quarantine 必须为空或有明确 owner。
 - Test report collection 必须符合 `Test Report Contract`。
 - Test report collection 必须覆盖 `static`、`unit`、`contract`、`api`、`integration`、`replay`、`snapshot`、`e2e` stage。
 - Test failure 必须输出 fixture version 和 data hash。
 - Test execution 必须按 orchestration order 执行。
+- Test execution command surface and report paths must match `harness.md`.
 - Test failure 必须先报告最高优先级 failure。
 - Timeout failure 必须使用 `timeout` category。
 - Test failure 必须包含 `trace_id`、fixture version、mock version、expected vs actual diff。
@@ -613,7 +783,7 @@ assertion_policy:
 - End-to-end deterministic run 必须 pass。
 - UI tests 无 crash。
 - `GET /api/home` 和 `GET /api/news/{id}` 不暴露非法字段。
-- `translated` item 必须有中文正文详情。
+- `translated` detail item 必须有中文摘要和中文正文详情。
 - `ready` / `translation_failed` item 必须省略中文摘要和中文正文。
 - LLM mock tests 和 RSS fixture tests 不访问外部网络。
 - 重复 RSS item 不产生重复展示新闻。

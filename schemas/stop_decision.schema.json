@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/stop_decision.schema.json",
+  "title": "Codex Harness StopDecisionReport v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ref",
+    "schema_version",
+    "STOP_ALLOWED",
+    "gate_status",
+    "passed_gates",
+    "failed_gates",
+    "blocked_gates",
+    "unknown_gates",
+    "generated_from_reports",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_ref": {
+      "const": "08_acceptance.md#5.1"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "STOP_ALLOWED": {
+      "type": "boolean"
+    },
+    "gate_status": {
+      "type": "object",
+      "minProperties": 10,
+      "maxProperties": 10,
+      "patternProperties": {
+        "^ACC-STOP-00[1-9]$|^ACC-STOP-010$": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "UNKNOWN",
+            "TASK_BLOCKED",
+            "WORKFLOW_BLOCKED",
+            "ENV_BLOCKED"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "passed_gates": {
+      "$ref": "#/$defs/gate_list"
+    },
+    "failed_gates": {
+      "$ref": "#/$defs/gate_list"
+    },
+    "blocked_gates": {
+      "$ref": "#/$defs/gate_list"
+    },
+    "unknown_gates": {
+      "$ref": "#/$defs/gate_list"
+    },
+    "generated_from_reports": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(reports/)?acceptance/ACC-STOP-00[1-9]\\.json$|^(reports/)?acceptance/ACC-STOP-010\\.json$"
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "gate_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^ACC-STOP-00[1-9]$|^ACC-STOP-010$"
+      }
+    }
+  }
+}

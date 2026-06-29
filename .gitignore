@@ -10,3 +10,4 @@ __pycache__/
 *.pem
 *.key
 rss.sqlite3*
+reports/

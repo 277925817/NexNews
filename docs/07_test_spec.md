@@ -30,7 +30,7 @@ Coverage rule:
 
 Conflict rule:
 
-- 当 `01_prd.md` 与 `04_data_model.md`、`05_api_contract.md` 或 `06_dev_rules.md` 冲突时，测试必须按 `06_dev_rules.md` 的 Rule Priority Order 执行。
+- 当 `01_prd.md` 与 `04_data_model.md`、`05_api_contract.md` 或 `06_dev_rules.md` 冲突时，测试必须按 `06_dev_rules.md` 的 Rule Priority Order 执行当前可执行契约，同时把被冲突影响的 PRD 验收项记录为 PRD coverage 或 document-consistency failure；测试不得静默遗漏、弱化或替换 PRD 核心需求。
 - `status = ready | translated | translation_failed` 只作为 API/UI projection 测试，不作为数据库生命周期字段测试。
 - 数据库流程状态只测试 `pipeline_state = raw | scored | fetched`。
 - 测试不得要求实现 `news_task`、`rss_source`、`translation_status`、`content_source`、`title_domain_hash` 等已被 `04_data_model.md` 或 `05_api_contract.md` 排除的旧设计。
@@ -680,6 +680,15 @@ Each test case or stage-level result MUST emit one `TestReport` object:
   "clock_source": "...",
   "fixture_version": "...",
   "mock_version": "...",
+  "commands": ["python3 scripts/run_harness.py --stage unit --report-dir reports"],
+  "case_count": 12,
+  "passed_count": 12,
+  "failed_count": 0,
+  "skipped_count": 0,
+  "pass_rate": 1.0,
+  "failure_reasons": [],
+  "repair_status": "not_required | unresolved | fixed | blocked",
+  "regression_detected": false,
   "referenced_files": ["path/to/file"],
   "data_hash": "sha256:...",
   "artifact_paths": ["reports/path.json"],
@@ -729,6 +738,13 @@ Field rules:
 - `ACC-STOP-*` tests MUST use `fixed_clock_fixture@v1` as the only time source.
 - `ACC-STOP-*` tests MUST NOT read wall clock time, system time, current process time, or network time as an assertion input.
 - `fixture_version` and `mock_version` MUST be present for all deterministic tests.
+- `commands` MUST list the exact command or commands that produced the report.
+- `case_count` MUST equal the total number of machine-checkable cases or assertions counted for the report.
+- `passed_count`、`failed_count` and `skipped_count` MUST describe the case outcomes included in `case_count`.
+- `pass_rate` MUST be a number from `0` to `1` and equal `passed_count / case_count` when `case_count > 0`.
+- `failure_reasons` MUST list stable machine-readable failure reasons or failed assertion ids; it MUST be empty when there is no failure.
+- `repair_status` MUST be `not_required`、`unresolved`、`fixed` or `blocked`.
+- `regression_detected` MUST be `true` when the run found a regression in previously completed behavior, and `false` otherwise.
 - `referenced_files` MUST be present and MUST be an array of repository-relative paths involved in the assertion, failure, or owning harness logic.
 - For `failed` and `flaky` reports, `referenced_files` MUST be non-empty so `workflows.md#5.4` can compute a deterministic fix boundary.
 - `data_hash` MUST be present and MUST be a stable `sha256:` hash of the deterministic fixture/mock/report input facts used by the report.

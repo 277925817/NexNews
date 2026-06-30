@@ -18,6 +18,7 @@ from backend.app.services.pipeline import run_fixture_refresh
 
 
 FIXED_NOW = "2026-06-28T09:00:00Z"
+TOP_RANKED_WINDOW_START = "2026-05-29T09:00:00Z"
 ROOT_DIR = Path(__file__).resolve().parents[2]
 INDEX_HTML = ROOT_DIR / "index.html"
 DEFAULT_DB_PATH = ROOT_DIR / "rss.sqlite3"
@@ -216,9 +217,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         ).fetchall()
         top_rows = db().execute(
             displayable_news_query(
+                extra_where="AND news_item.published_at >= ?",
                 order_by="news_item.score DESC, news_item.published_at DESC"
             )
-            + " LIMIT 10"
+            + " LIMIT 10",
+            (TOP_RANKED_WINDOW_START,),
         ).fetchall()
         return data_response(
             {

@@ -35,6 +35,10 @@ acceptance_gate:
     - 01_prd.md
     - 02_arch.md
 
+  prd_preservation_policy:
+    primary_requirement_source: 01_prd.md
+    rule: higher-priority executable contracts may refine PRD details, but any clear PRD core requirement that is omitted, weakened or replaced must fail PRD coverage and block STOP_ALLOWED until the documents are repaired
+
   deterministic_inputs:
     fixture_set: mvp_acceptance_fixture@v1
     mock_set: mvp_mock@v1

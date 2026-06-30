@@ -26,14 +26,22 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         ORDER BY canonical_url ASC
         """
     ).fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 12
 
     by_guid = {row["rss_guid"]: row for row in rows}
-    assert set(by_guid) == {
+    assert set(by_guid) >= {
         "fixture-low-59",
         "fixture-threshold-60",
         "fixture-translated-96",
         "fixture-translate-partial",
+        "fixture-rank-95",
+        "fixture-rank-94",
+        "fixture-rank-93",
+        "fixture-rank-92",
+        "fixture-rank-91",
+        "fixture-rank-90",
+        "fixture-rank-89",
+        "fixture-old-high-99",
     }
 
     threshold = by_guid["fixture-threshold-60"]
@@ -78,8 +86,8 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         """
     ).fetchall()
     assert any(row["stage"] == "crawl" and row["success"] == 0 for row in log_rows)
-    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 4
-    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 3
+    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 12
+    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 11
     assert any(
         row["stage"] == "translate"
         and row["success"] == 0
@@ -91,7 +99,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     repeated_count = conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()[
         "count"
     ]
-    assert repeated_count == 4
+    assert repeated_count == 12
 
 
 def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_path):
@@ -104,13 +112,23 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     latest_titles = [item["original_title"] for item in home["latest_news"]]
     ranked_scores = [item["score"] for item in home["top_ranked_news"]]
 
-    assert latest_titles == [
+    assert latest_titles[:10] == [
         "Threshold AI agent reaches production",
         "New AI model released",
         "AI translation mock emits partial output",
+        "AI safety benchmark reaches enterprise pilots",
+        "Open model eval suite adds agent tasks",
+        "AI chip scheduler cuts inference latency",
+        "Research lab publishes multimodal tool use benchmark",
+        "AI data pipeline validates synthetic QA traces",
+        "Small language model improves retrieval planning",
+        "AI observability tool traces prompt regressions",
     ]
     assert "Low signal AI funding rumor" not in latest_titles
-    assert ranked_scores == [96, 75, 60]
+    assert ranked_scores == [96, 95, 94, 93, 92, 91, 90, 89, 75, 60]
+    assert "Older AI milestone outside ranking window" not in [
+        item["original_title"] for item in home["top_ranked_news"]
+    ]
 
     for item in home["latest_news"] + home["top_ranked_news"]:
         assert "pipeline_state" not in item

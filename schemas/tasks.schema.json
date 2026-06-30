@@ -190,10 +190,14 @@
         },
         "priority": {
           "enum": [
+            "test_failures",
+            "critical_bugs",
+            "security_risks",
+            "blocking_risks",
+            "prd_core_flow_gaps",
             "acceptance_gate_failures",
             "api_contract_failures",
             "data_model_violations",
-            "test_failures",
             "ui_failures",
             "refactor_tasks"
           ]
@@ -264,6 +268,7 @@
             "REVIEW",
             "FIX",
             "RE_TEST",
+            "FIX_OPTIMIZE",
             "SUMMARIZE"
           ]
         },
@@ -277,6 +282,7 @@
             "REVIEW",
             "FIX",
             "RE_TEST",
+            "FIX_OPTIMIZE",
             "SUMMARIZE",
             "ACCEPTANCE",
             "ITERATE",
@@ -298,6 +304,9 @@
           "$ref": "#/$defs/report_path_or_none"
         },
         "plan_report": {
+          "$ref": "#/$defs/report_path_or_none"
+        },
+        "summary_report": {
           "$ref": "#/$defs/report_path_or_none"
         },
         "intentionally_out_of_scope": {

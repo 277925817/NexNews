@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/round_summary_report.schema.json",
+  "title": "Codex RoundSummaryReport v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ref",
+    "schema_version",
+    "task_id",
+    "completed_work",
+    "prd_items",
+    "changed_files",
+    "test_results",
+    "issues_found_and_fixed",
+    "current_system_completion",
+    "remaining_gaps_and_risks",
+    "next_round_goal",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_ref": {
+      "const": "workflows.md#RoundSummaryReport"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+    },
+    "completed_work": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "prd_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "test_results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "status",
+          "report",
+          "commands",
+          "case_count",
+          "passed_count",
+          "failed_count",
+          "skipped_count",
+          "pass_rate",
+          "failure_reasons",
+          "repair_status",
+          "regression_detected"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "static",
+              "unit",
+              "contract",
+              "api",
+              "integration",
+              "replay",
+              "snapshot",
+              "e2e"
+            ]
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped",
+              "flaky",
+              "blocked"
+            ]
+          },
+          "report": {
+            "type": "string",
+            "pattern": "^reports/.+\\.json$"
+          },
+          "commands": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "case_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "passed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pass_rate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "failure_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "repair_status": {
+            "enum": [
+              "not_required",
+              "unresolved",
+              "fixed",
+              "blocked"
+            ]
+          },
+          "regression_detected": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "issues_found_and_fixed": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "current_system_completion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remaining_gaps_and_risks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "next_round_goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

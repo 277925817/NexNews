@@ -18,6 +18,15 @@
     "clock_source",
     "fixture_version",
     "mock_version",
+    "commands",
+    "case_count",
+    "passed_count",
+    "failed_count",
+    "skipped_count",
+    "pass_rate",
+    "failure_reasons",
+    "repair_status",
+    "regression_detected",
     "referenced_files",
     "data_hash",
     "artifact_paths",
@@ -109,6 +118,52 @@
     "mock_version": {
       "type": "string",
       "minLength": 1
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "case_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "passed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pass_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "failure_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "repair_status": {
+      "enum": [
+        "not_required",
+        "unresolved",
+        "fixed",
+        "blocked"
+      ]
+    },
+    "regression_detected": {
+      "type": "boolean"
     },
     "referenced_files": {
       "type": "array",

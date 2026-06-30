@@ -56,6 +56,7 @@ Report paths:
 - Full-stage reports: `reports/stages/<stage>.json`
 - Task reports: `reports/tasks/<task_id>/<stage>.json`
 - Task plans: `reports/tasks/<task_id>/plan.json`
+- Round summaries: `reports/tasks/<task_id>/summary.json`
 - Acceptance gates: `reports/acceptance/ACC-STOP-001.json` through `reports/acceptance/ACC-STOP-010.json`
 - PRD coverage: `reports/acceptance/prd_coverage.json`
 - Task acceptance coverage: `reports/acceptance/task_acceptance_coverage.json`
@@ -72,6 +73,8 @@ Loop simplification policy:
 
 PRD coverage policy:
 
+- `docs/01_prd.md` is the primary product requirement input. API, data, UI, development and architecture documents may refine executable details, but they must not silently omit, weaken or replace a clear PRD core requirement.
+- If a higher-priority contract document conflicts with a clear PRD requirement, the current implementation must follow the documented priority order for executable safety, and the workflow must create or keep a PRD coverage/document-consistency blocker until the documents are repaired.
 - Every checklist-style acceptance statement in `docs/01_prd.md` must map to at least one assertion id in `docs/07_test_spec.md#2.16` or a PRD coverage artifact referenced by `reports/acceptance/ACC-STOP-001.json`.
 - `STOP_ALLOWED=true` is forbidden when any PRD acceptance statement is unmapped, unexecuted or only proven by scaffold/synthetic evidence.
 - Home page acceptance must prove the news feed and 30-day high-score list using enough fixture data to exercise the PRD, not a sparse smoke sample.
@@ -87,7 +90,7 @@ Task acceptance coverage policy:
 MVP task source:
 
 - Primary task queue: `tasks.md`
-- If `tasks.md` is missing, Codex must create it from unresolved implementation gaps, failed test stages, and failed acceptance gates.
+- If `tasks.md` is missing, Codex must create it from unresolved implementation gaps, failed test stages, structured critical/security/blocking risk findings, PRD core-flow gaps, and failed acceptance gates.
 - A task is complete only when its scoped tests pass and it does not cause any acceptance regression.
 - Tasks with `acceptance_gate: none` are workflow housekeeping tasks only. They are ignored by acceptance gate coverage and cannot satisfy any `ACC-STOP-*` gate.
 
@@ -101,6 +104,7 @@ MVP task source:
 - `acceptance` is a full-workflow gate-evaluation stage only. It is not valid in a task-scoped `test_scope`, and `python3 scripts/run_harness.py --stage acceptance --task-id ...` must fail with structured evidence.
 - `depends_on` is a hard readiness gate: a task is actionable only when every dependency is `passed`.
 - `plan_report` stores the persisted task plan path created during `PLAN`.
+- `summary_report` stores the persisted round summary path created during `SUMMARIZE`.
 - `SUMMARIZE` updates the matching YAML node fields in `tasks.md`; it must not rewrite the task queue into another format.
 
 Minimal task record format:
@@ -111,14 +115,15 @@ Minimal task record format:
 - status: pending | in_progress | passed | task_blocked
 - source: docs/01_prd.md | docs/02_arch.md | docs/03_ui_spec.md | docs/04_data_model.md | docs/05_api_contract.md | docs/06_dev_rules.md | docs/07_test_spec.md | docs/08_acceptance.md
 - acceptance_gate: ACC-STOP-001 | ACC-STOP-002 | ... | none
-- priority: acceptance_gate_failures | api_contract_failures | data_model_violations | test_failures | ui_failures | refactor_tasks
+- priority: test_failures | critical_bugs | security_risks | blocking_risks | prd_core_flow_gaps | acceptance_gate_failures | api_contract_failures | data_model_violations | ui_failures | refactor_tasks
 - test_scope: static | unit | contract | api | integration | replay | snapshot | e2e
-- active_state: none | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | SUMMARIZE
-- last_updated_state: INIT | LOAD_TASKS | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | SUMMARIZE | ACCEPTANCE | ITERATE | TASK_BLOCKED | WORKFLOW_BLOCKED | ENV_BLOCKED | DONE | none
+- active_state: none | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | FIX_OPTIMIZE | SUMMARIZE
+- last_updated_state: INIT | LOAD_TASKS | PLAN | IMPLEMENT | TEST | REVIEW | FIX | RE_TEST | FIX_OPTIMIZE | SUMMARIZE | ACCEPTANCE | ITERATE | TASK_BLOCKED | WORKFLOW_BLOCKED | ENV_BLOCKED | DONE | none
 - attempts: 0
 - evidence: path/to/report.json
 - test_report: path/to/test-report.json
 - plan_report: path/to/plan-report.json
+- summary_report: path/to/summary-report.json
 - intentionally_out_of_scope: false
 - blocker: none
 ```
@@ -130,7 +135,13 @@ Task plans must be persisted as machine-readable reports before implementation:
   "schema_ref": "workflows.md#TaskPlanReport",
   "schema_version": "v1",
   "task_id": "TASK-000",
+  "prd_source": "docs/01_prd.md",
+  "unimplemented_prd_items": ["PRD item still not proven by structured evidence"],
+  "selected_related_features": ["small related feature selected for this round"],
+  "prd_items": ["docs/01_prd.md#section-or-acceptance-id"],
   "scope": "smallest implementation slice for the selected task",
+  "deliverable_submodule": "smallest deliverable submodule for this round",
+  "round_acceptance_criteria": ["machine-checkable criterion for this round"],
   "files": ["path/to/file"],
   "test_stages": ["static"],
   "test_commands": ["python3 scripts/run_harness.py --stage static --task-id TASK-000 --report-dir reports"],
@@ -146,10 +157,51 @@ Task plans must be persisted as machine-readable reports before implementation:
 reports/tasks/<task_id>/plan.json
 ```
 
+Round summaries must be persisted as machine-readable reports before a task can be marked `passed`:
+
+```json
+{
+  "schema_ref": "workflows.md#RoundSummaryReport",
+  "schema_version": "v1",
+  "task_id": "TASK-000",
+  "completed_work": ["implemented behavior completed in this round"],
+  "prd_items": ["docs/01_prd.md#section-or-acceptance-id"],
+  "changed_files": ["path/to/file"],
+  "test_results": [
+    {
+      "stage": "unit",
+      "status": "passed",
+      "report": "reports/tasks/TASK-000/unit.json",
+      "commands": ["python3 scripts/run_harness.py --stage unit --task-id TASK-000 --report-dir reports"],
+      "case_count": 12,
+      "passed_count": 12,
+      "failed_count": 0,
+      "skipped_count": 0,
+      "pass_rate": 1.0,
+      "failure_reasons": [],
+      "repair_status": "not_required",
+      "regression_detected": false
+    }
+  ],
+  "issues_found_and_fixed": ["blocking issue fixed in this round, or none"],
+  "current_system_completion": "machine-derived completion status after this round",
+  "remaining_gaps_and_risks": ["remaining gap or risk, or none"],
+  "next_round_goal": "one unique and explicit next target, or full ACCEPTANCE when no task remains",
+  "timestamp": "ISO8601"
+}
+```
+
+`RoundSummaryReport` path:
+
+```text
+reports/tasks/<task_id>/summary.json
+```
+
 Machine-checkable JSON Schema:
 
 ```text
 schemas/task_plan_report.schema.json
+schemas/round_summary_report.schema.json
 ```
 
 ## 2. State Machine Definition（核心）
@@ -173,10 +225,14 @@ workflow_state_machine:
       - local_user_acceptance_status
   task_retry_limit: 3
   task_priority_order:
+    - test_failures
+    - critical_bugs
+    - security_risks
+    - blocking_risks
+    - prd_core_flow_gaps
     - acceptance_gate_failures
     - api_contract_failures
     - data_model_violations
-    - test_failures
     - ui_failures
     - refactor_tasks
   test_stage_order:
@@ -197,6 +253,7 @@ workflow_state_machine:
     - REVIEW
     - FIX
     - RE_TEST
+    - FIX_OPTIMIZE
     - SUMMARIZE
     - ACCEPTANCE
     - ITERATE
@@ -215,11 +272,15 @@ INIT
   -> IMPLEMENT
   -> TEST
   -> REVIEW
+  -> FIX_OPTIMIZE
   -> SUMMARIZE
   -> LOAD_TASKS
 
 On test or review failure:
-  TEST/REVIEW -> FIX -> RE_TEST -> REVIEW -> SUMMARIZE
+  TEST/REVIEW -> FIX -> RE_TEST -> REVIEW -> FIX_OPTIMIZE -> SUMMARIZE
+
+On fix/optimize finding:
+  FIX_OPTIMIZE -> FIX -> RE_TEST -> REVIEW -> FIX_OPTIMIZE -> SUMMARIZE
 
 When all tasks are passed:
   LOAD_TASKS triggers ACCEPTANCE
@@ -246,16 +307,93 @@ If a task exceeds retry limit:
 
 - Task order must be stable: sort by `task_priority_order`, then by task id ascending inside the same priority bucket. The tie-breaker must always be `task_id` ascending.
 - If `tasks.md` contains DAG dependencies, `LOAD_TASKS` must first filter out tasks whose `depends_on` tasks are not `passed`; blocked dependencies do not make the dependent task actionable.
-- If a task lacks `priority`, `LOAD_TASKS` must derive it with one deterministic rule: failed acceptance gate mapping first; otherwise failed test stage order; otherwise canonical doc order `docs/01_prd.md -> docs/08_acceptance.md`; otherwise `refactor_tasks`. Do not use semantic guessing or multi-source fallback.
-- For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `plan_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
+- If a task lacks `priority`, `LOAD_TASKS` must derive it with one deterministic rule: failed test stage order first; otherwise structured review or acceptance findings categorized as `critical_bug`, `security_risk` or `blocking_risk`; otherwise PRD core-flow coverage gaps; otherwise failed acceptance gate mapping; otherwise canonical doc order `docs/01_prd.md -> docs/08_acceptance.md`; otherwise `refactor_tasks`. Do not use semantic guessing or multi-source fallback.
+- For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `plan_report: none`, `summary_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
 - Test stage order must follow `docs/07_test_spec.md#2.13`. Compatibility stages may still run in the historical order `static -> unit -> contract -> api -> integration -> replay -> snapshot -> e2e`, but stop eligibility depends on PRD coverage and browser-visible E2E evidence, not on shallow stage count.
 - Each test stage must start from clean isolated state.
 - Tests and acceptance must use fixture, mock and fixed clock.
 - Structured reports are the source of truth. Free-form logs are diagnostic only.
 - If evidence is missing, malformed or not machine-readable, the state result is `FAIL`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, never `PASS`.
-- Acceptance entry is intentionally lightweight but strict. It only means the workflow should start stop-gate validation: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. Evidence, reports, mandatory assertions and gate coverage are validated inside `ACCEPTANCE`, not before it.
+- Acceptance entry is intentionally lightweight but strict. It only means the workflow should start stop-gate validation: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`. Evidence, reports, mandatory assertions and gate coverage are validated inside `ACCEPTANCE`, not before it.
 - Acceptance validation is mandatory on every entry: every `ACC-STOP-*` gate must be revalidated inside `ACCEPTANCE` with structured evidence, linked reports and required assertions.
 - User acceptance is part of deterministic workflow state. If the user reports a failed local acceptance finding after any `STOP_ALLOWED=true`, that stop decision is stale and must be treated as failed until the finding is converted into a regression assertion and passes.
+
+### 2.4 Mandatory Round Lifecycle
+
+Every product development round must complete the following six steps in order. A round may stop early only by entering `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`; that blocked result is not a completed round and cannot mark a task `passed`.
+
+For this repository, any requirement that says `prd.md` means the project PRD source `docs/01_prd.md`.
+
+Round count policy:
+
+- The workflow should execute at least 10 completed product development rounds when unfinished work remains.
+- The workflow may enter `DONE` before 10 completed rounds only when every stop condition in section 6 is satisfied by the current `ACCEPTANCE` run.
+- Completing 10 rounds never authorizes `DONE` by itself. If any stop condition, required gate, stop input, PRD coverage item, task acceptance item, browser E2E input or local user acceptance input is not `PASS`, the workflow must keep iterating.
+- Round count is only a progress guard. It must not cause broad scope selection, cosmetic churn, fake work, skipped tests or weakened acceptance evidence.
+
+| Step | Required state evidence |
+| --- | --- |
+| 1. Understand and plan | `PLAN` must read `docs/01_prd.md`, compare it with completed task and acceptance evidence, list remaining unimplemented PRD functions, select a small related set of unfinished PRD functions for this round, map exact PRD items, split the work into the smallest deliverable submodule, define round acceptance criteria and persist `reports/tasks/<task_id>/plan.json`. If only one unfinished PRD function remains, `PLAN` must record that exception explicitly. |
+| 2. Implement code | `IMPLEMENT` must write or modify real runnable code and any required tests/docs inside the scoped plan files only. It must keep directory, module and responsibility boundaries clear, avoid duplicate logic, hidden dependencies and meaningless coupling, and reject fake implementations, placeholder implementations and new `TODO` markers. |
+| 3. Automated testing | `TEST` must verify that tests were added or updated for new or changed logic, execute the relevant deterministic tests, persist structured results, and cover normal flow, invalid input, boundary conditions and regression risk for the current scope. A required test that cannot run because of the environment must produce explicit `ENV_BLOCKED` evidence or structured substitute diagnostics; it must never be reported as `PASS`. |
+| 4. Code review | `REVIEW` must produce a structured self-check for PRD fit, logic correctness, test sufficiency, architecture, maintainability, performance, security and compatibility. Review remains static/design verification and must not replace machine test evidence. |
+| 5. Fix and optimize | `FIX_OPTIMIZE` is mandatory after `REVIEW`. It must confirm all blocking test and review findings from the round are fixed, perform necessary scoped maintainability/module-boundary optimization or record a no-op optimization rationale, rerun or validate relevant tests after any change, and confirm no new regression before `SUMMARIZE`. |
+| 6. Round summary | `SUMMARIZE` must persist `reports/tasks/<task_id>/summary.json` with completed work, PRD items, changed files, test results, issues found and fixed, current system completion, remaining gaps/risks and one unique next-round goal before marking the task `passed`. |
+
+### 2.5 Round Output Contract
+
+After each completed round, Codex must output a human-readable summary in exactly this Markdown structure, in addition to the machine-readable `RoundSummaryReport`:
+
+```markdown
+## Round X
+
+### 1. 本轮目标
+- 对应 PRD 条目：
+- 最小交付子模块：
+- 本轮验收标准：
+
+### 2. 开发计划
+1. 
+2. 
+3. 
+
+### 3. 修改内容
+- 新增文件：
+- 修改文件：
+- 删除文件：
+- 核心实现说明：
+
+### 4. 测试结果
+- 测试命令：
+- 用例总数：
+- 通过数量：
+- 失败数量：
+- 跳过数量：
+- 测试通过率：
+- 边界与回归验证：
+
+### 5. 代码评审
+- PRD 符合度：
+- 逻辑正确性：
+- 架构与可维护性：
+- 性能风险：
+- 安全风险：
+
+### 6. 发现与修复
+- 发现问题：
+- 修复内容：
+- 修复后验证：
+
+### 7. 当前状态
+- 当前系统完成度：XX%
+- 已完成模块：
+- 剩余缺口：
+- 已知风险：
+
+### 8. 下一轮计划
+- 下一轮唯一目标：
+- 选择该目标的原因：
+```
 
 ## 3. States Description（逐个 state 定义）
 
@@ -274,16 +412,16 @@ If a task exceeds retry limit:
 | --- | --- |
 | entry condition | `INIT` completed, a task was summarized, or acceptance failed and new tasks must be loaded. |
 | actions | Load all of `tasks.md`; fill missing fields with explicit defaults; normalize task status and missing priority; order actionable tasks by `task_priority_order`, then task id ascending; verify task ids are unique; map each task to source docs, test scope and acceptance gate. |
-| exit condition | One actionable task is selected, or acceptance entry is triggered. Acceptance entry means `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. It does not inspect evidence, report contents, assertion coverage or gate coverage. |
-| failure handling | If `tasks.md` is missing, generate an MVP `tasks.md` from failed/missing acceptance gates. If task records, priority derivation or task selection cannot be normalized deterministically, enter `WORKFLOW_BLOCKED`. If no actionable task exists while any task is non-terminal, enter `WORKFLOW_BLOCKED`, not `ACCEPTANCE`. |
+| exit condition | One actionable task is selected, or acceptance entry is triggered. Acceptance entry means `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`. It does not inspect evidence, report contents, assertion coverage or gate coverage. |
+| failure handling | If `tasks.md` is missing, generate an MVP `tasks.md` from unresolved implementation gaps, failed test stages, structured critical/security/blocking risk findings, PRD core-flow gaps and failed/missing acceptance gates. If task records, priority derivation or task selection cannot be normalized deterministically, enter `WORKFLOW_BLOCKED`. If no actionable task exists while any task is non-terminal, enter `WORKFLOW_BLOCKED`, not `ACCEPTANCE`. |
 
 ### PLAN
 
 | Field | Definition |
 | --- | --- |
 | entry condition | A `pending` or previously failed task is selected. |
-| actions | Read the task source documents; identify files likely to change; define smallest implementation slice; define expected test stage and acceptance gate impact; persist `TaskPlanReport` to `reports/tasks/<task_id>/plan.json`; update the task node `plan_report` field with that path. |
-| exit condition | A deterministic task plan exists with scope, files, test commands/stages and rollback boundary, and the `TaskPlanReport` is parseable. |
+| actions | Read `docs/01_prd.md` and the task source documents; compare PRD requirements with completed task, report and acceptance evidence; list remaining unimplemented PRD functions; select a small related set of unfinished PRD functions for this round; map exact PRD items; define the smallest deliverable submodule; define round acceptance criteria, expected test stages and acceptance gate impact; persist `TaskPlanReport` to `reports/tasks/<task_id>/plan.json`; update the task node `plan_report` field with that path. |
+| exit condition | A deterministic task plan exists with `prd_source`, remaining PRD items, selected related features, mapped PRD items, deliverable submodule, acceptance criteria, scope, files, test commands/stages and rollback boundary, and the `TaskPlanReport` is parseable. |
 | failure handling | If scope cannot be derived from documents, mark the task `task_blocked` with the missing decision and enter `TASK_BLOCKED`. If the plan report cannot be written or parsed, enter `WORKFLOW_BLOCKED`. |
 
 ### IMPLEMENT
@@ -291,8 +429,8 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | `PLAN` produced a scoped implementation plan. |
-| actions | Modify only files required by the task; preserve unrelated user changes; keep implementation aligned with `docs/06_dev_rules.md`; update contract docs when behavior changes. |
-| exit condition | Code or documentation changes for the task are complete and ready for local tests. |
+| actions | Modify only files required by the task; write or modify real runnable code plus required tests/docs for the scoped goal; preserve unrelated user changes; keep implementation aligned with `docs/06_dev_rules.md`; preserve clear directory, module and responsibility boundaries; avoid duplicate logic, hidden dependencies and meaningless coupling; update contract docs when behavior changes; reject fake implementations, placeholder implementations and new `TODO` markers. |
+| exit condition | Real runnable code, required tests/docs and contract updates for the task are complete inside the planned scope and ready for local tests. |
 | failure handling | If `plan_report` is missing or malformed, return to `PLAN`. If implementation exposes a contract conflict, stop coding that slice and return to `PLAN`. If the conflict is between documents, apply the priority order from `docs/06_dev_rules.md`. |
 
 ### TEST
@@ -300,17 +438,17 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | `IMPLEMENT` completed or `RE_TEST` requires a full affected stage run. |
-| actions | Run runtime/data verification only: execute tests defined by `docs/07_test_spec.md` in deterministic order. Stop downstream stages on first failed stage, mark those downstream stages as `SKIPPED`, persist partial structured `TestReport` objects matching `docs/07_test_spec.md#6`, and target only the failed stage for the next fix. `SKIPPED` stages do not count toward `PASS`; a skipped required stage is acceptance failure. |
-| exit condition | Required scoped tests pass, or the first failing stage emits a structured failure report. A task-scoped pass requires every stage declared for that task run to execute, every mandatory assertion that belongs to the current task/stage scope to execute, no skipped required assertion in that scope, and at least one machine-verified assertion per active stage. An active stage is a stage with mandatory assertions in the current run scope. Behavior-only stages with no mandatory assertions may pass only as structured non-assertion evidence and cannot by themselves satisfy an acceptance gate. The complete mandatory assertion catalog is enforced only by full-stage materialization and workflow `ACCEPTANCE`. `100%` total assertion coverage is a soft target, not a hard PASS condition. |
-| failure handling | If tests fail, route by `stage`, `failure_type`, `error_category`, `node` and `trace_id`, then enter `FIX`. If reports are missing or invalid, treat this as `ACC-STOP-001` failure and enter `FIX`. |
+| actions | Run runtime/data verification only: verify tests were added or updated for new or modified logic; execute tests defined by `docs/07_test_spec.md` in deterministic order; cover normal flow, invalid input, boundary conditions and regression risk for the current scope through structured assertions or explicit non-assertion evidence; stop downstream stages on first failed stage, mark those downstream stages as `SKIPPED`, persist partial structured `TestReport` objects matching `docs/07_test_spec.md#6`, and target only the failed stage for the next fix. `SKIPPED` stages do not count toward `PASS`; a skipped required stage is acceptance failure. |
+| exit condition | Required scoped tests pass, or the first failing stage emits a structured failure report. A task-scoped pass requires every stage declared for that task run to execute, every mandatory assertion that belongs to the current task/stage scope to execute, no skipped required assertion in that scope, at least one machine-verified assertion per active stage, and explicit coverage or evidence for normal flow, invalid input, boundary conditions and regression risk. An active stage is a stage with mandatory assertions in the current run scope. Behavior-only stages with no mandatory assertions may pass only as structured non-assertion evidence and cannot by themselves satisfy an acceptance gate. The complete mandatory assertion catalog is enforced only by full-stage materialization and workflow `ACCEPTANCE`. `100%` total assertion coverage is a soft target, not a hard PASS condition. |
+| failure handling | If tests fail, route by `stage`, `failure_type`, `error_category`, `node` and `trace_id`, then enter `FIX`. If required tests are missing or stale, treat this as `test_coverage_gap` and enter `FIX`. If reports are missing or invalid, treat this as `ACC-STOP-001` failure and enter `FIX`. If a required test cannot run because of local environment limits that cannot be fixed in the repo, emit explicit `ENV_BLOCKED` evidence or structured substitute diagnostics and enter `ENV_BLOCKED`; never report that test as `PASS`. |
 
 ### REVIEW
 
 | Field | Definition |
 | --- | --- |
 | entry condition | Scoped machine tests passed and the task is not `task_blocked`. |
-| actions | Run static design verification only: check code structure against `docs/02_arch.md`, `docs/03_ui_spec.md`, `docs/04_data_model.md`, `docs/05_api_contract.md` and `docs/06_dev_rules.md`; check architecture fit, schema/document diffs, dependency graph boundaries, internal field leaks and non-goal features. Treat API contract, data model and UI checks as static design/spec alignment only. Do not execute code or validate runtime outputs, API JSON responses, DB state, DOM snapshots, logs or generated reports. Do not treat review as a substitute for tests. |
-| exit condition | Review finds no blocking issue, or produces a structured list of required fixes. |
+| actions | Run static design verification only: check code structure against `docs/01_prd.md`, `docs/02_arch.md`, `docs/03_ui_spec.md`, `docs/04_data_model.md`, `docs/05_api_contract.md` and `docs/06_dev_rules.md`; produce structured self-check findings for requirements fit, logic correctness, test sufficiency, architecture, maintainability, performance, security and compatibility; check schema/document diffs, dependency graph boundaries, internal field leaks and non-goal features. Treat API contract, data model and UI checks as static design/spec alignment only. Do not execute code or validate runtime outputs, API JSON responses, DB state, DOM snapshots, logs or generated reports. Do not treat review as a substitute for tests. |
+| exit condition | Review finds no blocking issue and records all required self-check dimensions, or produces a structured list of required fixes. |
 | failure handling | If review fails, enter `FIX`. If review reveals a task-local conflict that cannot be resolved from priority rules, mark task `task_blocked` and enter `TASK_BLOCKED`. If review reveals workflow metadata or document consistency cannot be interpreted deterministically, enter `WORKFLOW_BLOCKED`. |
 
 ### FIX
@@ -318,8 +456,8 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | `TEST` or `REVIEW` produced a failure. |
-| actions | Before changing code, record root cause hypothesis, evidence reference from the structured test/review report, and change isolation boundary. Then apply the smallest fix that addresses the highest-priority failure; increment task attempt count; avoid broad refactors; update tests or docs only when the source contract requires it. |
-| exit condition | A fix is ready for regression testing, or retry limit is exceeded. |
+| actions | Before changing code, record root cause hypothesis, evidence reference from the structured test/review/optimization report, and change isolation boundary. Then apply the smallest fix that addresses the highest-priority blocking failure; increment task attempt count; avoid broad refactors; update tests or docs only when the source contract requires it. Repeat through `RE_TEST` until all blocking issues from the round are fixed or the task is blocked. |
+| exit condition | A fix is ready for regression testing, all known blocking issues have been routed for verification, or retry limit is exceeded. |
 | failure handling | If attempts exceed `task_retry_limit = 3`, mark task `task_blocked` and enter `TASK_BLOCKED`. If a fix creates a higher-priority failure, abandon that fix path and return to `PLAN`. |
 
 ### RE_TEST
@@ -331,20 +469,29 @@ If a task exceeds retry limit:
 | exit condition | Regression scope passes and task can return to `REVIEW`, or failure persists and task returns to `FIX`. |
 | failure handling | If the same failure persists, increment attempts and return to `FIX`. If a new failure appears, route the new failure by priority from `docs/07_test_spec.md#2.14`. |
 
+### FIX_OPTIMIZE
+
+| Field | Definition |
+| --- | --- |
+| entry condition | `REVIEW` produced no unresolvable blocker after scoped machine tests passed, or `RE_TEST` returned to `REVIEW` and review passed. |
+| actions | Execute mandatory round step 5: confirm every blocking test and review finding from the round is fixed; apply necessary scoped optimization for code structure, module boundaries, maintainability, performance or security when supported by review evidence; if no optimization is needed, persist a no-op optimization rationale; if code, tests or docs changed, rerun the relevant scoped tests and persist structured reports; confirm no new regression issue before summary. |
+| exit condition | Round acceptance criteria are met, no blocking finding remains, relevant `TEST` or `RE_TEST` reports are passing, optimization evidence exists, and the task can enter `SUMMARIZE`. |
+| failure handling | If `FIX_OPTIMIZE` finds a blocking issue, route it by priority and enter `FIX`. If the issue cannot be resolved within task scope, enter `TASK_BLOCKED`. If workflow metadata or reports are inconsistent, enter `WORKFLOW_BLOCKED`. If the local environment cannot verify required optimization/regression checks, enter `ENV_BLOCKED`. |
+
 ### SUMMARIZE
 
 | Field | Definition |
 | --- | --- |
-| entry condition | `REVIEW` passed for a task that is not `task_blocked`. |
-| actions | Update only the MVP task summary fields in `tasks.md`: task status, `active_state: none`, evidence path, test report path and acceptance mapping through `acceptance_gate`. |
-| exit condition | Task state is persisted as `passed`. |
-| failure handling | If `tasks.md` cannot be updated, enter `WORKFLOW_BLOCKED` with a persistence failure. Missing task persistence must never advance to `ACCEPTANCE`. |
+| entry condition | `FIX_OPTIMIZE` passed for a task that is not `task_blocked`. |
+| actions | Persist `RoundSummaryReport` to `reports/tasks/<task_id>/summary.json` with completed work, corresponding PRD items, code modification scope, test execution results, issues found and fixed, current system completion, remaining gaps and risks, and one unique explicit next-round goal. Then update only the MVP task summary fields in `tasks.md`: task status, `active_state: none`, evidence path, test report path, summary report path and acceptance mapping through `acceptance_gate`. |
+| exit condition | The round summary report is parseable and task state is persisted as `passed`. |
+| failure handling | If the summary report cannot be written or parsed, or `tasks.md` cannot be updated, enter `WORKFLOW_BLOCKED` with a persistence failure. Missing summary persistence must never advance to `ACCEPTANCE`. |
 
 ### ACCEPTANCE
 
 | Field | Definition |
 | --- | --- |
-| entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. |
+| entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`. |
 | actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing full-stage reports under `reports/stages/<stage>.json`. This is where task completion, PRD coverage, task acceptance coverage, browser E2E evidence, local user acceptance, gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, evidence exists and `test_report` exists. Any `task_blocked` task makes task completion fail and must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
 | exit condition | Every gate has status `PASS`, `FAIL`, `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, and `STOP_ALLOWED` has been computed. |
 | failure handling | If any gate is `FAIL` or `UNKNOWN`, enter `ITERATE` with the failed or unproven gate evidence. If a task-local unresolved blocker prevents a gate from being proven, enter `TASK_BLOCKED`. If workflow metadata, task records or report generation logic are inconsistent, enter `WORKFLOW_BLOCKED`. If the local environment cannot execute required verification, enter `ENV_BLOCKED`. Missing evidence is a failed gate unless the evidence generator itself is unavailable. |
@@ -354,9 +501,9 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | `ACCEPTANCE` did not produce `STOP_ALLOWED = true`. |
-| actions | Do only three things: extract failed acceptance gates, map each failed gate to an existing task or create one new task, and order tasks by priority. If no actionable task results from that mapping, rebuild the MVP task queue from failed acceptance gates, missing test coverage and unverified contract fields, compare `rebuilt_tasks_hash` with `previous_tasks_hash`, then order it by priority. Do not pause tasks, resolve dependencies, schedule work, run tests or implement task lifecycle logic. Those concerns belong in `tasks.md` and the surrounding state transitions. |
+| actions | Do only three things: extract failed acceptance gates and structured round-end findings, map each failed gate or finding to an existing task or create one new task, and order tasks by priority. If no actionable task results from that mapping, rebuild the MVP task queue from failed acceptance gates, missing test coverage, structured critical/security/blocking risk findings, PRD core-flow gaps and unverified contract fields, compare `rebuilt_tasks_hash` with `previous_tasks_hash`, then order it by priority. Do not pause tasks, resolve dependencies, schedule work, run tests or implement task lifecycle logic. Those concerns belong in `tasks.md` and the surrounding state transitions. |
 | exit condition | New or updated tasks are available for `LOAD_TASKS`. |
-| failure handling | If `rebuilt_tasks_hash == previous_tasks_hash`, classify loop type as `missing_task_mapping`, `unresolved_contract_gap` or `test_coverage_gap`, then enter `WORKFLOW_BLOCKED` for loop prevention. If no actionable task exists after the rebuild because a task-local decision is missing, enter `TASK_BLOCKED`. If no actionable task exists after the rebuild because workflow metadata is inconsistent, enter `WORKFLOW_BLOCKED`. If no actionable task exists after the rebuild because the local environment cannot run required verification, enter `ENV_BLOCKED`. |
+| failure handling | If `rebuilt_tasks_hash == previous_tasks_hash`, classify loop type as `missing_task_mapping`, `unresolved_contract_gap`, `test_coverage_gap`, `unresolved_risk_gap` or `prd_core_flow_gap`, then enter `WORKFLOW_BLOCKED` for loop prevention. If no actionable task exists after the rebuild because a task-local decision is missing, enter `TASK_BLOCKED`. If no actionable task exists after the rebuild because workflow metadata is inconsistent, enter `WORKFLOW_BLOCKED`. If no actionable task exists after the rebuild because the local environment cannot run required verification, enter `ENV_BLOCKED`. |
 
 ### TASK_BLOCKED
 
@@ -402,7 +549,7 @@ If a task exceeds retry limit:
 | `INIT` | Required source document missing or unreadable | `WORKFLOW_BLOCKED` |
 | `INIT` | Local environment cannot run required commands | `ENV_BLOCKED` |
 | `LOAD_TASKS` | Actionable task exists after priority ordering | `PLAN` |
-| `LOAD_TASKS` | `tasks.count > 0`, all tasks have `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST` | `ACCEPTANCE` |
+| `LOAD_TASKS` | `tasks.count > 0`, all tasks have `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE` | `ACCEPTANCE` |
 | `LOAD_TASKS` | No actionable task can be selected while any task is non-terminal | `WORKFLOW_BLOCKED` |
 | `LOAD_TASKS` | Malformed task records cannot be normalized | `WORKFLOW_BLOCKED` |
 | `PLAN` | Plan produced | `IMPLEMENT` |
@@ -411,7 +558,7 @@ If a task exceeds retry limit:
 | `IMPLEMENT` | Contract conflict found | `PLAN` |
 | `TEST` | Scoped tests pass with mandatory assertions executed and no skipped required assertions | `REVIEW` |
 | `TEST` | Test fails or report invalid | `FIX` |
-| `REVIEW` | Review passes | `SUMMARIZE` |
+| `REVIEW` | Review passes with all required self-check dimensions recorded | `FIX_OPTIMIZE` |
 | `REVIEW` | Review fails | `FIX` |
 | `REVIEW` | Unresolvable task-local conflict | `TASK_BLOCKED` |
 | `REVIEW` | Unresolvable workflow/document conflict | `WORKFLOW_BLOCKED` |
@@ -420,12 +567,17 @@ If a task exceeds retry limit:
 | `RE_TEST` | Regression passes with mandatory assertions executed and no skipped required assertions | `REVIEW` |
 | `RE_TEST` | Regression fails and attempts <= 3 | `FIX` |
 | `RE_TEST` | Attempts > 3 | `TASK_BLOCKED` |
+| `FIX_OPTIMIZE` | All blocking findings fixed, optimization evidence recorded, relevant tests verified, and no regression found | `SUMMARIZE` |
+| `FIX_OPTIMIZE` | Blocking issue found | `FIX` |
+| `FIX_OPTIMIZE` | Unresolvable task-local conflict | `TASK_BLOCKED` |
+| `FIX_OPTIMIZE` | Workflow/report metadata blocker prevents verification | `WORKFLOW_BLOCKED` |
+| `FIX_OPTIMIZE` | Environment blocker prevents verification | `ENV_BLOCKED` |
 | `TASK_BLOCKED` | Task blocker unresolved | `TASK_BLOCKED` |
 | `TASK_BLOCKED` | Explicit `resolve_task_blocker` completed with evidence | `LOAD_TASKS` |
 | `WORKFLOW_BLOCKED` | Workflow blocker unresolved | `WORKFLOW_BLOCKED` |
 | `WORKFLOW_BLOCKED` | Explicit `resolve_workflow_blocker` completed with evidence | `LOAD_TASKS` |
 | `ENV_BLOCKED` | Environment unchanged | `ENV_BLOCKED` |
-| `SUMMARIZE` | Task persisted as `passed` | `LOAD_TASKS` |
+| `SUMMARIZE` | Round summary persisted and task persisted as `passed` | `LOAD_TASKS` |
 | `ACCEPTANCE` | `STOP_ALLOWED == true`, `tasks_hash_before == tasks_hash_after`, same `tasks_snapshot` used for gate evaluation and DONE guard, every task in `tasks_snapshot` has `status == passed`, all stop inputs are `PASS`, all required gates map only to `passed` tasks with existing evidence and test report, no `task_blocked` task exists, and no required stage is `SKIPPED` | `DONE` |
 | `ACCEPTANCE` | Any gate failed or unknown | `ITERATE` |
 | `ACCEPTANCE` | Task-local blocker prevents gate proof | `TASK_BLOCKED` |
@@ -462,7 +614,7 @@ This follows `docs/07_test_spec.md#2.14`.
 - A retry must be based on structured report fields, not free-form guessing.
 - After each fix, rerun the failed stage before broader regression.
 - If the same failure persists after 3 attempts, mark the task `task_blocked`.
-- `TASK_BLOCKED` tasks do not automatically transition. They remain `TASK_BLOCKED` until an explicit `resolve_task_blocker` action provides evidence. They do not enter `REVIEW`, `SUMMARIZE` or `ITERATE`, do not satisfy gate coverage and do not allow final delivery.
+- `TASK_BLOCKED` tasks do not automatically transition. They remain `TASK_BLOCKED` until an explicit `resolve_task_blocker` action provides evidence. They do not enter `REVIEW`, `FIX_OPTIMIZE`, `SUMMARIZE` or `ITERATE`, do not satisfy gate coverage and do not allow final delivery.
 - `WORKFLOW_BLOCKED` may recover only after explicit workflow/document repair evidence.
 - `ENV_BLOCKED` is terminal for the autonomous run unless the environment changes externally.
 
@@ -471,6 +623,7 @@ This follows `docs/07_test_spec.md#2.14`.
 All test and acceptance results must produce machine-readable evidence:
 
 - Test reports must follow `docs/07_test_spec.md#6`.
+- Round summary reports must follow `workflows.md#RoundSummaryReport` and `schemas/round_summary_report.schema.json`.
 - Command surface and report paths must follow `workflows.md#1.Overview`.
 - Acceptance gate reports must map to `ACC-STOP-001` through `ACC-STOP-010`.
 - Missing report means failure.
@@ -498,6 +651,7 @@ Codex must:
 - Fix the smallest failing unit first.
 - Keep the fix inside the declared change isolation boundary.
 - `FIX` may only modify files explicitly listed in both the current `plan_report.files` and the structured failure report `referenced_files`. If `plan_report` is missing, unreadable or malformed, return to `PLAN`. If the structured failure report lacks a parseable `referenced_files` array, enter `WORKFLOW_BLOCKED`. If the intersection is empty after a valid plan report and valid `referenced_files` are loaded, return to `PLAN` or enter `TASK_BLOCKED`; do not widen the fix boundary.
+- `FIX_OPTIMIZE` may modify only files listed in the current `plan_report.files`, and only when structured review or optimization evidence justifies the change. If no scoped optimization is needed, it must record a no-op optimization rationale instead of making cosmetic churn.
 - Preserve unrelated user changes.
 - Do not modify unrelated modules.
 - Do not modify already passed test areas unless the root cause evidence proves they are the source of the failure.
@@ -527,6 +681,15 @@ Codex must not:
 
 ```yaml
 review_scope:
+  required_dimensions:
+    - requirements_fit
+    - logic_correctness
+    - test_sufficiency
+    - architecture
+    - maintainability
+    - performance
+    - security
+    - compatibility
   allowed:
     - static_diff
     - schema_comparison
@@ -544,12 +707,41 @@ review_scope:
 
 ### 5.6 Iterate Priority Guard
 
-- `ITERATE` extracts failed acceptance gates from the latest acceptance result.
-- `ITERATE` maps each failed gate to an existing task or creates one new task when none exists.
-- `ITERATE` orders tasks by priority: acceptance gate failures, API contract failures, data model inconsistencies, test failures, UI mismatches.
-- If mapping creates no actionable task, `ITERATE` rebuilds `tasks.md` from failed acceptance gates, missing test coverage and unverified contract fields before classifying any blocked state.
+- `ITERATE` extracts failed acceptance gates from the latest acceptance result and structured round-end findings from the latest structured reports.
+- `ITERATE` maps each failed gate or finding to an existing task or creates one new task when none exists.
+- `ITERATE` orders tasks by priority: test failures, critical bugs, security risks, blocking risks, PRD core-flow gaps, acceptance gate failures, API contract failures, data model inconsistencies, UI mismatches and refactor tasks.
+- If mapping creates no actionable task, `ITERATE` rebuilds `tasks.md` from failed acceptance gates, missing test coverage, structured critical/security/blocking risk findings, PRD core-flow gaps and unverified contract fields before classifying any blocked state.
 - `ITERATE` must compute a deterministic content hash of rebuilt task records. Hash scope is only `task_id`, `acceptance_gate`, `status`, `priority` and `test_scope`; exclude timestamps, evidence path, test report path, attempt count and other metadata noise. If `rebuilt_tasks_hash == previous_tasks_hash`, enter `WORKFLOW_BLOCKED` to prevent silent rebuild loops.
-- When rebuild hash does not change, `ITERATE` must record `loop_type` as one of: `missing_task_mapping`, `unresolved_contract_gap`, `test_coverage_gap`.
+- When rebuild hash does not change, `ITERATE` must record `loop_type` as one of: `missing_task_mapping`, `unresolved_contract_gap`, `test_coverage_gap`, `unresolved_risk_gap`, `prd_core_flow_gap`.
+
+### 5.7 Round-End Decision Policy
+
+After every completed task round, Codex must choose the next state or next task by the following branch order. A completed task round means `PLAN`, `IMPLEMENT`, `TEST`, `REVIEW`, `FIX_OPTIMIZE` and `SUMMARIZE` all produced their required evidence. If `TEST`, `RE_TEST`, `REVIEW` or `FIX_OPTIMIZE` finds a blocking issue, the workflow must resolve it through `FIX -> RE_TEST -> REVIEW -> FIX_OPTIMIZE` before the round may summarize.
+
+```text
+Complete current implementation round
+├─ Does any required test fail or emit invalid evidence?
+│  ├─ Yes -> stop new feature work, enter FIX/RE_TEST, then rerun the failed stage before broader regression
+│  └─ No -> check review and risk findings
+│
+├─ Does any critical bug, security issue or blocking risk exist?
+│  ├─ Yes -> make that finding the highest-priority actionable task for the next round
+│  └─ No -> check PRD core-flow completion
+│
+├─ Is the PRD core flow complete?
+│  ├─ No -> continue with the smallest unfinished PRD core-flow submodule
+│  └─ Yes -> continue with boundary cases, non-core features and engineering quality
+│
+├─ Are all quality gates satisfied?
+│  ├─ No -> iterate from the failed gate evidence
+│  └─ Yes -> check final stop conditions
+│
+└─ Are all stop conditions satisfied?
+   ├─ No -> enter the next round through LOAD_TASKS or ITERATE
+   └─ Yes -> enter DONE and produce the final delivery summary
+```
+
+This round-end branch is an ordering rule, not a replacement for state transitions. `TEST` and `RE_TEST` failures still enter `FIX` immediately; `REVIEW` and `FIX_OPTIMIZE` findings still use `FIX`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`; `ACCEPTANCE` remains the only state that may compute `STOP_ALLOWED`; and `DONE` remains allowed only through the strict stop conditions in section 6.
 
 ## 6. Stop Condition（停止条件）
 
@@ -575,7 +767,7 @@ The workflow may enter `DONE` only when all conditions are true:
 - `tasks.md` is loaded and `tasks.count > 0`.
 - No task is `pending` or `in_progress`.
 - No task is `task_blocked`.
-- No task has `active_state` in `FIX` or `RE_TEST`.
+- No task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`.
 - No required report is `failed`, `flaky` or `skipped`.
 - No required stage is `SKIPPED`; if `stage` is in the required stages defined by `docs/07_test_spec.md#2.13`, `SKIPPED` is acceptance failure regardless of whether it came from `TEST` or `RE_TEST`.
 - No required gate is `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`.
@@ -599,10 +791,14 @@ If Codex cannot continue because task input, workflow metadata or the local envi
 ```python
 TASK_RETRY_LIMIT = 3
 TASK_PRIORITY_ORDER = [
+    "test_failures",
+    "critical_bugs",
+    "security_risks",
+    "blocking_risks",
+    "prd_core_flow_gaps",
     "acceptance_gate_failures",
     "api_contract_failures",
     "data_model_violations",
-    "test_failures",
     "ui_failures",
     "refactor_tasks",
 ]
@@ -647,6 +843,7 @@ while True:
                 "evidence": "none",
                 "test_report": "none",
                 "plan_report": "none",
+                "summary_report": "none",
                 "intentionally_out_of_scope": False,
                 "blocker": "none",
             },
@@ -655,8 +852,10 @@ while True:
         normalize_missing_task_priority(
             tasks,
             rule=[
-                "failed_acceptance_gate_mapping",
                 "failed_test_stage_order",
+                "structured_critical_bug_security_or_blocking_risk",
+                "prd_core_flow_coverage_gap",
+                "failed_acceptance_gate_mapping",
                 "canonical_doc_order_01_to_08",
                 "default_refactor_tasks",
             ],
@@ -674,7 +873,7 @@ while True:
             and all_tasks_passed(tasks)
             and no_pending_or_in_progress(tasks)
             and no_task_blocked(tasks)
-            and no_task_active_state_in(tasks, ["FIX", "RE_TEST"])
+            and no_task_active_state_in(tasks, ["FIX", "RE_TEST", "FIX_OPTIMIZE"])
         ):
             state = "ACCEPTANCE"
         else:
@@ -683,7 +882,15 @@ while True:
     elif state == "PLAN":
         task.active_state = "PLAN"
         task.last_updated_state = "PLAN"
-        plan = create_task_plan(task)
+        plan = create_task_plan(
+            task,
+            prd_source="docs/01_prd.md",
+            require_unimplemented_prd_audit=True,
+            require_related_unfinished_features=True,
+            require_prd_item_mapping=True,
+            require_smallest_deliverable_submodule=True,
+            require_round_acceptance_criteria=True,
+        )
         if plan.blocked:
             task.status = "task_blocked"
             task.active_state = "none"
@@ -711,17 +918,38 @@ while True:
         if not plan_report.parseable:
             state = "PLAN"
             continue
-        apply_scoped_changes(plan_report)
+        apply_scoped_changes(
+            plan_report,
+            require_real_runnable_code=True,
+            require_required_tests_or_docs=True,
+            forbid_fake_implementation=True,
+            forbid_placeholder_implementation=True,
+            forbid_new_todo=True,
+            preserve_module_boundaries=True,
+        )
         state = "TEST"
 
     elif state == "TEST":
         task.active_state = "TEST"
         task.last_updated_state = "TEST"
+        ensure_tests_added_or_updated_for_changed_logic(
+            task,
+            coverage=[
+                "normal_flow",
+                "invalid_input",
+                "boundary_conditions",
+                "regression_risk",
+            ],
+        )
         test_result = run_07_test_spec_stages(
             order=TEST_STAGE_ORDER,
             scope=task.test_scope,
             strict_mock=True,
         )
+        if test_result.environment_blocked:
+            emit_env_blocked_test_evidence_or_substitute_diagnostics(test_result)
+            state = "ENV_BLOCKED"
+            continue
         if test_result.failed:
             mark_downstream_stages(
                 after_stage=test_result.failed_stage,
@@ -757,6 +985,16 @@ while True:
         review_result = review_static_design_against_architecture_and_contracts(
             task,
             allowed=["static_diff", "schema_comparison", "dependency_graph_check"],
+            required_dimensions=[
+                "requirements_fit",
+                "logic_correctness",
+                "test_sufficiency",
+                "architecture",
+                "maintainability",
+                "performance",
+                "security",
+                "compatibility",
+            ],
             forbidden=[
                 "execute_code",
                 "read_runtime_output",
@@ -765,7 +1003,7 @@ while True:
             ],
         )
         if review_result.passed:
-            state = "SUMMARIZE"
+            state = "FIX_OPTIMIZE"
         elif review_result.blocked:
             task.status = "task_blocked"
             task.active_state = "none"
@@ -849,6 +1087,60 @@ while True:
             task.failure = route_failure(retest_result.highest_priority_failure)
             state = "FIX"
 
+    elif state == "FIX_OPTIMIZE":
+        task.active_state = "FIX_OPTIMIZE"
+        task.last_updated_state = "FIX_OPTIMIZE"
+        plan_report = load_task_plan_report(task.plan_report)
+        if not plan_report.parseable:
+            state = "PLAN"
+            continue
+        optimize_result = run_fix_optimize_gate(
+            task,
+            allowed_files=plan_report.files,
+            require_all_blockers_fixed=True,
+            require_optimization_or_noop_rationale=True,
+            require_no_regression=True,
+        )
+        persist_fix_optimize_evidence(optimize_result)
+        if optimize_result.task_blocked:
+            task.status = "task_blocked"
+            task.active_state = "none"
+            task.last_updated_state = "TASK_BLOCKED"
+            task.blocker = optimize_result.blocker
+            state = "TASK_BLOCKED"
+        elif optimize_result.workflow_blocked:
+            record_workflow_blocker(optimize_result.blocker)
+            state = "WORKFLOW_BLOCKED"
+        elif optimize_result.environment_blocked:
+            record_environment_blocker(optimize_result.blocker)
+            state = "ENV_BLOCKED"
+        elif optimize_result.requires_fix:
+            task.failure = optimize_result.failure
+            state = "FIX"
+        elif optimize_result.changed_files:
+            retest_result = rerun_relevant_tests_after_optimization(optimize_result)
+            persist_test_reports(retest_result.reports)
+            if retest_result.passed and reports_have_required_assertions(
+                retest_result.reports,
+                require_no_skipped_required_assertions=True,
+                minimum_assertions_per_stage=1,
+                minimum_assertions_scope="active_stage",
+                assertion_catalog="docs/07_test_spec.md",
+                require_scope_mandatory_assertions=True,
+                required_assertion_scope="task_declared_scope",
+                require_all_mandatory_assertions=False,
+                assertion_coverage_target_percent=100,
+                enforce_assertion_coverage_target=False,
+                allow_behavior_only_stages=True,
+            ):
+                state = "SUMMARIZE"
+            else:
+                task.failure = route_failure(retest_result.highest_priority_failure)
+                state = "FIX"
+        else:
+            confirm_latest_test_or_retest_reports_pass(task)
+            state = "SUMMARIZE"
+
     elif state == "TASK_BLOCKED":
         record_task_blocker(task)
         if task_blocker_resolved_with_evidence(task):
@@ -872,11 +1164,28 @@ while True:
         break
 
     elif state == "SUMMARIZE":
+        summary_report = persist_round_summary_report(
+            task_id=task.id,
+            completed_work=derive_completed_work(task),
+            prd_items=derive_prd_items_from_plan(task.plan_report),
+            changed_files=derive_changed_files(task),
+            test_results=derive_test_results(task),
+            issues_found_and_fixed=derive_issues_found_and_fixed(task),
+            current_system_completion=derive_current_system_completion(),
+            remaining_gaps_and_risks=derive_remaining_gaps_and_risks(),
+            next_round_goal=derive_unique_next_round_goal(),
+            path=f"reports/tasks/{task.id}/summary.json",
+        )
+        if not summary_report.parseable:
+            record_workflow_blocker("round_summary_report_invalid")
+            state = "WORKFLOW_BLOCKED"
+            continue
         task.status = "passed"
         task.active_state = "none"
         task.last_updated_state = "SUMMARIZE"
         task.evidence = latest_evidence_path(task)
         task.test_report = latest_test_report_path(task)
+        task.summary_report = summary_report.path
         confirm_acceptance_gate_mapping(task.acceptance_gate)
         update_tasks_md(
             task,
@@ -886,6 +1195,7 @@ while True:
                 "last_updated_state",
                 "evidence",
                 "test_report",
+                "summary_report",
                 "acceptance_gate",
             ],
         )
@@ -915,7 +1225,7 @@ while True:
             and tasks_hash_before == tasks_hash_after
             and task_count(tasks_snapshot) > 0
             and all_tasks_passed(tasks_snapshot)
-            and no_task_active_state_in(tasks_snapshot, ["FIX", "RE_TEST"])
+            and no_task_active_state_in(tasks_snapshot, ["FIX", "RE_TEST", "FIX_OPTIMIZE"])
             and prd_coverage_matrix_complete(
                 source="docs/01_prd.md",
                 evidence=acceptance.reports,
@@ -957,11 +1267,20 @@ while True:
 
     elif state == "ITERATE":
         failed_gates = extract_failed_acceptance_gates()
+        round_end_findings = extract_structured_round_end_findings(
+            categories=[
+                "critical_bug",
+                "security_risk",
+                "blocking_risk",
+                "prd_core_flow_gap",
+            ],
+        )
         user_acceptance_failures = extract_user_acceptance_failures(
             report="reports/acceptance/local_user_acceptance.json",
         )
         convert_user_failures_to_regression_tasks(user_acceptance_failures)
         map_failed_gates_to_existing_or_new_tasks(failed_gates)
+        map_round_end_findings_to_existing_or_new_tasks(round_end_findings)
         order_tasks_by_priority("tasks.md")
         if not has_actionable_pending_tasks("tasks.md"):
             previous_tasks_hash = hash_task_records(
@@ -977,6 +1296,8 @@ while True:
             rebuild_tasks_md_from(
                 failed_acceptance_gates=failed_gates,
                 missing_test_coverage=extract_missing_test_coverage(),
+                structured_round_end_findings=round_end_findings,
+                prd_core_flow_gaps=extract_prd_core_flow_gaps(),
                 unverified_contract_fields=extract_unverified_contract_fields(),
             )
             rebuilt_tasks_hash = hash_task_records(
@@ -993,11 +1314,15 @@ while True:
                 loop_type = classify_rebuild_loop(
                     failed_acceptance_gates=failed_gates,
                     missing_test_coverage=extract_missing_test_coverage(),
+                    structured_round_end_findings=round_end_findings,
+                    prd_core_flow_gaps=extract_prd_core_flow_gaps(),
                     unverified_contract_fields=extract_unverified_contract_fields(),
                     allowed=[
                         "missing_task_mapping",
                         "unresolved_contract_gap",
                         "test_coverage_gap",
+                        "unresolved_risk_gap",
+                        "prd_core_flow_gap",
                     ],
                 )
                 record_workflow_loop_blocker(loop_type)

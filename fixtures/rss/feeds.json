@@ -56,22 +56,82 @@
     {
       "rss_url": "https://news.ycombinator.com/rss",
       "status": "success",
-      "items": []
+      "items": [
+        {
+          "guid": "fixture-rank-95",
+          "title": "AI safety benchmark reaches enterprise pilots",
+          "link": "https://example.com/news/rank-95",
+          "published_at": "2026-06-28T06:00:00Z",
+          "summary": "Dense ranking fixture summary 95."
+        },
+        {
+          "guid": "fixture-rank-94",
+          "title": "Open model eval suite adds agent tasks",
+          "link": "https://example.com/news/rank-94",
+          "published_at": "2026-06-28T05:50:00Z",
+          "summary": "Dense ranking fixture summary 94."
+        }
+      ]
     },
     {
       "rss_url": "https://hnrss.org/frontpage",
       "status": "success",
-      "items": []
+      "items": [
+        {
+          "guid": "fixture-rank-93",
+          "title": "AI chip scheduler cuts inference latency",
+          "link": "https://example.com/news/rank-93",
+          "published_at": "2026-06-28T05:40:00Z",
+          "summary": "Dense ranking fixture summary 93."
+        },
+        {
+          "guid": "fixture-rank-92",
+          "title": "Research lab publishes multimodal tool use benchmark",
+          "link": "https://example.com/news/rank-92",
+          "published_at": "2026-06-28T05:30:00Z",
+          "summary": "Dense ranking fixture summary 92."
+        }
+      ]
     },
     {
       "rss_url": "https://hnrss.org/newest",
       "status": "success",
-      "items": []
+      "items": [
+        {
+          "guid": "fixture-rank-91",
+          "title": "AI data pipeline validates synthetic QA traces",
+          "link": "https://example.com/news/rank-91",
+          "published_at": "2026-06-28T05:20:00Z",
+          "summary": "Dense ranking fixture summary 91."
+        },
+        {
+          "guid": "fixture-rank-90",
+          "title": "Small language model improves retrieval planning",
+          "link": "https://example.com/news/rank-90",
+          "published_at": "2026-06-28T05:10:00Z",
+          "summary": "Dense ranking fixture summary 90."
+        }
+      ]
     },
     {
       "rss_url": "https://hnrss.org/bestcomments",
       "status": "success",
-      "items": []
+      "items": [
+        {
+          "guid": "fixture-rank-89",
+          "title": "AI observability tool traces prompt regressions",
+          "link": "https://example.com/news/rank-89",
+          "published_at": "2026-06-28T05:00:00Z",
+          "summary": "Dense ranking fixture summary 89."
+        },
+        {
+          "guid": "fixture-old-high-99",
+          "title": "Older AI milestone outside ranking window",
+          "link": "https://example.com/news/old-high-99",
+          "published_at": "2026-05-20T09:00:00Z",
+          "summary": "Older high-score fixture that must be excluded from the 30-day ranking."
+        }
+      ]
     }
   ]
 }

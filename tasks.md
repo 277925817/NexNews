@@ -3,7 +3,7 @@ meta:
   mode: dag_execution
   purpose: "stable executable MVP product task system"
   architecture: "single FastAPI app + React/Vite SPA + SQLite"
-  execution_loop: "plan -> implement -> test -> fix -> review"
+  execution_loop: "plan -> implement -> test -> review -> fix_optimize -> summarize -> iterate"
   task_policy:
     definition_only: false
     runner_external: false
@@ -47,11 +47,17 @@ dag:
       name: "Workflow executor contract repair"
       layer: "L0: Bootstrap"
       type: ["docs", "test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      evidence: "reports/tasks/TASK-000/static.json"
+      test_report: "reports/tasks/TASK-000/static.json"
+      plan_report: "reports/tasks/TASK-000/plan.json"
+      summary_report: "reports/tasks/TASK-000/summary.json"
       depends_on: []
       description: "Repair the document-level workflow executor contract and create the first runnable local command surface before product implementation begins."
       inputs:

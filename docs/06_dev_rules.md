@@ -158,7 +158,10 @@
 2. `04_data_model.md`
 3. `06_dev_rules.md`
 4. `03_ui_spec.md`
-5. Implementation code
+5. `01_prd.md`
+6. `02_arch.md`
+7. Implementation code
 
 Document priority MUST override internal rule priority.
 Within same document, more restrictive rule takes priority.
+This order resolves executable contract conflicts, but it MUST NOT silently omit, weaken or replace an explicit `01_prd.md` core requirement. If a higher-priority contract conflicts with a clear PRD requirement, the workflow must record a PRD coverage or document-consistency blocker and repair the documents before implementation proceeds.

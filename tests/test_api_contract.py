@@ -81,12 +81,35 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert_json_response(client.post("/api/refresh"), 200)
     assert_json_response(client.post("/api/refresh"), 200)
 
-    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 4
+    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 12
     assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] >= 16
 
     home = assert_json_response(client.get("/api/home"), 200)["data"]
-    assert [item["id"] for item in home["latest_news"]] == ["1", "3", "4"]
-    assert [item["id"] for item in home["top_ranked_news"]] == ["3", "4", "1"]
+    assert [item["id"] for item in home["latest_news"][:10]] == [
+        "1",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+    ]
+    assert [item["id"] for item in home["top_ranked_news"]] == [
+        "3",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "4",
+        "1",
+    ]
+    assert "12" not in [item["id"] for item in home["top_ranked_news"]]
 
     ready_detail = assert_json_response(client.get("/api/news/1"), 200)["data"]
     assert ready_detail["status"] == "ready"

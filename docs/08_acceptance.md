@@ -197,7 +197,8 @@ isolation: strict_mock
 | Leak evidence | Forbidden field count、forbidden pattern count、allowlisted token field count。 |
 | PRD coverage evidence | Every acceptance statement from `docs/01_prd.md` mapped to stable PRD id、source line、task id、acceptance gate、assertion id、stage、report path and pass/fail status。 |
 | Task acceptance coverage evidence | Every acceptance criterion from `tasks.md` mapped to task id、source line、assertion id、stage、report path and pass/fail status。 |
-| Local user acceptance evidence | Local URL、port、database、browser check result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
+| Deployed browser smoke evidence | `http://127.0.0.1:8010/` real browser runtime result、HTTP status、API status、root mount count、NewsCard count、HighScoreList count、ArticleView result、Sources page result、refresh result、console/page errors and screenshot artifact。 |
+| Local user acceptance evidence | Local URL、port、database、deployed browser smoke result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
 
 Codex 不得把“看起来正常”“页面能打开”“日志没有明显错误”作为验收证据。
 
@@ -440,7 +441,7 @@ Evaluation rule:
 - `prd_coverage_status = PASS` requires `reports/acceptance/prd_coverage.json` to exist, match `schemas/prd_coverage.schema.json`, use `schema_ref = 07_test_spec.md#6.3.1`, report `status = passed`, map every PRD acceptance item to stable PRD id、source line、passed task id、acceptance gate、assertion id and report path, and contain no uncovered PRD acceptance item.
 - `task_acceptance_coverage_status = PASS` requires `reports/acceptance/task_acceptance_coverage.json` to exist, match `schemas/task_acceptance_coverage.schema.json`, report `status = passed`, and contain no uncovered task acceptance item.
 - `browser_e2e_status = PASS` requires structured browser or DOM-capable E2E evidence for homepage news feed, 30-day high-score list, news detail, and sources management. API-only evidence cannot satisfy this input.
-- `local_user_acceptance_status = PASS` requires `reports/acceptance/local_user_acceptance.json` to exist, match `schemas/local_user_acceptance.schema.json`, report `status = passed`, and contain no failed findings.
+- `local_user_acceptance_status = PASS` requires `reports/acceptance/deployed_browser_smoke.json` to exist, target `http://127.0.0.1:8010/`, prove the deployed app mounts in a real browser with zero console/page errors and visible Home/HighScore/Article/Sources/Refresh surfaces, and requires `reports/acceptance/local_user_acceptance.json` to exist, match `schemas/local_user_acceptance.schema.json`, report `status = passed`, and contain no failed findings.
 
 ### 5.1 StopDecisionReport
 
@@ -585,6 +586,7 @@ Codex 可以成功停止编程并进入 `DONE`，当且仅当：
 - Task acceptance coverage matrix 覆盖 `tasks.md` 的全部 task acceptance criteria。
 - 真实浏览器或等价 DOM runner 已验证主页新闻流、30 天高分榜单、详情页和信源页。
 - 最新本地用户验收记录无失败项。
+- 最新部署浏览器 smoke 记录无失败项，且证明 `http://127.0.0.1:8010/` 不是空白页或运行时崩溃页。
 - Round count policy 证明已经完成至少 10 轮，或在 10 轮前已满足全部停止条件并允许提前 DONE。
 - 没有 `failed`、`flaky`、`skipped` required report。
 - 没有 API/UI/log/report 数据泄漏。

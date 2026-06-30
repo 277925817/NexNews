@@ -62,6 +62,7 @@ Report paths:
 - Acceptance gates: `reports/acceptance/ACC-STOP-001.json` through `reports/acceptance/ACC-STOP-010.json`
 - PRD coverage: `reports/acceptance/prd_coverage.json`
 - Task acceptance coverage: `reports/acceptance/task_acceptance_coverage.json`
+- Deployed browser smoke: `reports/acceptance/deployed_browser_smoke.json`
 - Local user acceptance: `reports/acceptance/local_user_acceptance.json`
 - Stop decision: `reports/acceptance/STOP_ALLOWED.json`
 
@@ -902,7 +903,8 @@ The workflow may enter `DONE` only when all conditions are true:
 - `docs/01_prd.md` acceptance coverage matrix is complete: every PRD acceptance statement is mapped to executed structured evidence.
 - `tasks.md` acceptance coverage matrix is complete: every task acceptance criterion is mapped to executed structured evidence.
 - Browser-visible E2E evidence exists for Home News Feed, 30-day HighScoreList, ArticleView and Sources page. API-only tests, string scans and static snapshots cannot satisfy this condition.
-- The latest local deployment acceptance record exists at `reports/acceptance/local_user_acceptance.json` and has no failed user findings.
+- The latest deployed browser smoke record exists at `reports/acceptance/deployed_browser_smoke.json`, targets `http://127.0.0.1:8010/`, proves the app mounted in a real browser with no console/page errors, and has no failed findings.
+- The latest local deployment acceptance record exists at `reports/acceptance/local_user_acceptance.json`, is derived from the deployed browser smoke record, and has no failed user findings.
 - `reports/acceptance/STOP_ALLOWED.json.round_count_policy.status == PASS`, proving either at least 10 valid completed rounds with linked summary/review/fix evidence or a valid early-DONE case where every stop condition is already satisfied.
 - If the user reports any acceptance failure after `STOP_ALLOWED=true`, the previous stop decision is stale and the workflow must return to `ITERATE`.
 - All required gates are covered only by tasks where `status == passed`, evidence exists and test report exists.

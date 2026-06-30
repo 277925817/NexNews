@@ -1,0 +1,21 @@
+{
+  "version": "mvp_acceptance_fixture@v1",
+  "valid_public": {
+    "name": "Example AI Feed",
+    "rss_url": "https://example.com/rss.xml"
+  },
+  "duplicate_url": "https://developers.openai.com/rss.xml",
+  "local_url": "http://localhost:8000/rss.xml",
+  "private_url": "http://192.168.1.10/rss.xml",
+  "disabled_source": {
+    "name": "Disabled Fixture Feed",
+    "rss_url": "https://example.com/disabled.xml",
+    "is_enabled": false
+  },
+  "deleted_source": {
+    "name": "Deleted Fixture Feed",
+    "rss_url": "https://example.com/deleted.xml",
+    "is_enabled": false,
+    "deleted_at": "2026-06-28T09:00:00Z"
+  }
+}

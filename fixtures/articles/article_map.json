@@ -12,6 +12,34 @@
     "https://example.com/news/translation-partial": {
       "status": "failure",
       "error": "network"
+    },
+    "https://example.com/news/extraction-failure": {
+      "status": "failure",
+      "error": "parsing",
+      "path": "extraction_failure.html"
+    },
+    "https://example.com/news/empty-summary": {
+      "status": "failure",
+      "error": "empty_summary",
+      "path": "empty_summary.html"
     }
-  }
+  },
+  "cases": [
+    {
+      "case": "success",
+      "url": "https://example.com/news/threshold"
+    },
+    {
+      "case": "extraction_failure",
+      "url": "https://example.com/news/extraction-failure"
+    },
+    {
+      "case": "network_failure",
+      "url": "https://example.com/news/translation-partial"
+    },
+    {
+      "case": "empty_summary",
+      "url": "https://example.com/news/empty-summary"
+    }
+  ]
 }

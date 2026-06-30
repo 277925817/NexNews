@@ -184,7 +184,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     initialize_database(conn)
     seed_default_sources(conn)
     app.state.db = conn
-    app.state.last_successful_refresh_at = FIXED_NOW
+    app.state.last_successful_refresh_at = None
     app.state.refresh_running = False
 
     def db() -> sqlite3.Connection:
@@ -333,4 +333,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def create_runtime_shell_app() -> FastAPI:
+    runtime_app = FastAPI(title="rss-aggregator")
+
+    @runtime_app.get("/", include_in_schema=False)
+    def runtime_index() -> FileResponse:
+        return FileResponse(INDEX_HTML)
+
+    return runtime_app
+
+
+app = create_runtime_shell_app()

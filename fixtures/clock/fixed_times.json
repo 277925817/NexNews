@@ -1,7 +1,30 @@
 {
+  "version": "fixed_clock_fixture@v1",
   "times": [
     "09:00",
     "18:00",
     "12:00"
+  ],
+  "cases": [
+    {
+      "kind": "scheduled_09",
+      "now": "2026-06-28T09:00:00Z",
+      "should_trigger": true
+    },
+    {
+      "kind": "scheduled_18",
+      "now": "2026-06-28T18:00:00Z",
+      "should_trigger": true
+    },
+    {
+      "kind": "non_trigger",
+      "now": "2026-06-28T12:00:00Z",
+      "should_trigger": false
+    },
+    {
+      "kind": "ranking_window_start",
+      "now": "2026-05-29T09:00:00Z",
+      "should_trigger": false
+    }
   ]
 }

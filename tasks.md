@@ -93,11 +93,20 @@ dag:
       name: "Repo runtime skeleton"
       layer: "L0: Bootstrap"
       type: ["setup"]
-      status: "pending"
+      status: "passed"
       source: ["docs/02_arch.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-008", "ACC-STOP-010"]
       priority: "refactor_tasks"
       test_scope: ["static"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-001/static.json"
+      test_report: "reports/tasks/TASK-001/static.json"
+      plan_report: "reports/tasks/TASK-001/plan.json"
+      summary_report: "reports/tasks/TASK-001/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-000"]
       description: "Replace legacy Flask/static-page traction with only the minimal repository structure and runnable app shells for FastAPI backend and React/Vite frontend."
       inputs:
@@ -119,11 +128,20 @@ dag:
       name: "DB schema constraints"
       layer: "Data Layer"
       type: ["data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-005"]
       priority: "data_model_violations"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-002A/static.json"
+      test_report: "reports/tasks/TASK-002A/unit.json"
+      plan_report: "reports/tasks/TASK-002A/plan.json"
+      summary_report: "reports/tasks/TASK-002A/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-021"]
       description: "Create only the SQLite MVP schema, constraints, and indexes."
       inputs:
@@ -147,11 +165,20 @@ dag:
       name: "DB init hook and seed"
       layer: "Data Layer"
       type: ["data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-005"]
       priority: "data_model_violations"
       test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-002B/unit.json"
+      test_report: "reports/tasks/TASK-002B/unit.json"
+      plan_report: "reports/tasks/TASK-002B/plan.json"
+      summary_report: "reports/tasks/TASK-002B/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002A"]
       description: "Create the SQLite init hook and idempotent default RSS source seed only."
       inputs:
@@ -173,11 +200,20 @@ dag:
       name: "Local config fixtures mocks"
       layer: "Data Layer"
       type: ["setup", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-003/static.json"
+      test_report: "reports/tasks/TASK-003/unit.json"
+      plan_report: "reports/tasks/TASK-003/plan.json"
+      summary_report: "reports/tasks/TASK-003/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-001"]
       description: "Create local development config and fixture/mock inputs without adding product behavior."
       inputs:
@@ -201,11 +237,20 @@ dag:
       name: "RSS ingest"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-004/unit.json"
+      test_report: "reports/tasks/TASK-004/integration.json"
+      plan_report: "reports/tasks/TASK-004/plan.json"
+      summary_report: "reports/tasks/TASK-004/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002B", "TASK-003"]
       description: "Read enabled RSS sources from fixture-backed clients, parse items, normalize links, and store new raw news items."
       inputs:
@@ -227,11 +272,20 @@ dag:
       name: "Score news"
       layer: "Pipeline Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-005/unit.json"
+      test_report: "reports/tasks/TASK-005/integration.json"
+      plan_report: "reports/tasks/TASK-005/plan.json"
+      summary_report: "reports/tasks/TASK-005/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-004"]
       description: "Score raw news with mock LLM JSON, validate score output, and transition raw items to scored."
       inputs:
@@ -255,11 +309,20 @@ dag:
       name: "Filter and dedupe"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-006/unit.json"
+      test_report: "reports/tasks/TASK-006/integration.json"
+      plan_report: "reports/tasks/TASK-006/plan.json"
+      summary_report: "reports/tasks/TASK-006/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-005"]
       description: "Apply score threshold filtering and canonical_url dedupe, producing the selected set for content fetch."
       inputs:
@@ -283,11 +346,20 @@ dag:
       name: "Fetch content"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-007/unit.json"
+      test_report: "reports/tasks/TASK-007/integration.json"
+      plan_report: "reports/tasks/TASK-007/plan.json"
+      summary_report: "reports/tasks/TASK-007/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-006"]
       description: "Fetch article content for selected items using article HTML fixtures, with RSS content fallback."
       inputs:
@@ -310,11 +382,20 @@ dag:
       name: "Translate content"
       layer: "Pipeline Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-007", "ACC-STOP-009"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-008/unit.json"
+      test_report: "reports/tasks/TASK-008/integration.json"
+      plan_report: "reports/tasks/TASK-008/plan.json"
+      summary_report: "reports/tasks/TASK-008/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-007"]
       description: "Translate fetched content with mock LLM JSON and persist Chinese fields or translation failure facts."
       inputs:
@@ -338,11 +419,20 @@ dag:
       name: "Pipeline run record"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-009/integration.json"
+      test_report: "reports/tasks/TASK-009/integration.json"
+      plan_report: "reports/tasks/TASK-009/plan.json"
+      summary_report: "reports/tasks/TASK-009/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-004", "TASK-005", "TASK-006", "TASK-007", "TASK-008"]
       description: "Record pipeline run metadata from pipeline step results; this task does not expose triggers, scheduler, API, or UI."
       inputs:
@@ -361,11 +451,20 @@ dag:
       name: "Refresh trigger signal"
       layer: "Trigger Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-010/integration.json"
+      test_report: "reports/tasks/TASK-010/integration.json"
+      plan_report: "reports/tasks/TASK-010/plan.json"
+      summary_report: "reports/tasks/TASK-010/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-009"]
       description: "Coordinate manual and scheduled refresh execution using fixed-clock triggers and concurrency guards; the refresh path runs the complete MVP pipeline through existing pipeline services."
       inputs:
@@ -389,11 +488,20 @@ dag:
       name: "API home"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-011/contract.json"
+      test_report: "reports/tasks/TASK-011/api.json"
+      plan_report: "reports/tasks/TASK-011/plan.json"
+      summary_report: "reports/tasks/TASK-011/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Implement GET /api/home with latest news and 30-day high-score list."
       inputs:
@@ -415,11 +523,20 @@ dag:
       name: "API news detail"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-012/api.json"
+      test_report: "reports/tasks/TASK-012/api.json"
+      plan_report: "reports/tasks/TASK-012/plan.json"
+      summary_report: "reports/tasks/TASK-012/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Implement GET /api/news/{id} with translated detail and safe non-translated states."
       inputs:
@@ -439,11 +556,20 @@ dag:
       name: "API sources"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-004"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-013/contract.json"
+      test_report: "reports/tasks/TASK-013/api.json"
+      plan_report: "reports/tasks/TASK-013/plan.json"
+      summary_report: "reports/tasks/TASK-013/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002B", "TASK-003"]
       description: "Implement GET/POST/PATCH/DELETE /api/sources for RSS source management."
       inputs:
@@ -466,11 +592,20 @@ dag:
       name: "API refresh"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-014/contract.json"
+      test_report: "reports/tasks/TASK-014/api.json"
+      plan_report: "reports/tasks/TASK-014/plan.json"
+      summary_report: "reports/tasks/TASK-014/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-010"]
       description: "Implement POST /api/refresh as the API boundary for the complete manual refresh flow."
       inputs:
@@ -490,11 +625,20 @@ dag:
       name: "UI home"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-006", "ACC-STOP-009"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      status: "passed"
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-015/integration.json"
+      test_report: "reports/tasks/TASK-015/integration.json"
+      plan_report: "reports/tasks/TASK-015/plan.json"
+      summary_report: "reports/tasks/TASK-015/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-011", "TASK-014"]
       description: "Implement Home page news feed, high-score list, refresh button, loading, empty, and error states using mocked API client responses."
       inputs:
@@ -518,11 +662,20 @@ dag:
       name: "UI article"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-006", "ACC-STOP-009"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      status: "passed"
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-016/integration.json"
+      test_report: "reports/tasks/TASK-016/integration.json"
+      plan_report: "reports/tasks/TASK-016/plan.json"
+      summary_report: "reports/tasks/TASK-016/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-012", "TASK-015"]
       description: "Implement ArticleView for translated reading, ready polling, translation_failed state, original_url link, and 404."
       inputs:
@@ -544,11 +697,20 @@ dag:
       name: "UI sources"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-006"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-017/integration.json"
+      test_report: "reports/tasks/TASK-017/integration.json"
+      plan_report: "reports/tasks/TASK-017/plan.json"
+      summary_report: "reports/tasks/TASK-017/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-013", "TASK-015"]
       description: "Implement RSS source configuration page using mocked source API responses."
       inputs:
@@ -571,11 +733,20 @@ dag:
       name: "Integration pipeline only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-018/integration.json"
+      test_report: "reports/tasks/TASK-018/integration.json"
+      plan_report: "reports/tasks/TASK-018/plan.json"
+      summary_report: "reports/tasks/TASK-018/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Run the pipeline-only integration path directly with fixture data; verify DB facts only and do not call trigger layer, API routes, or render UI."
       inputs:
@@ -598,11 +769,20 @@ dag:
       name: "Integration API only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-019/integration.json"
+      test_report: "reports/tasks/TASK-019/integration.json"
+      plan_report: "reports/tasks/TASK-019/plan.json"
+      summary_report: "reports/tasks/TASK-019/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-011", "TASK-012", "TASK-013", "TASK-014", "TASK-018"]
       description: "Run API integration against pipeline-produced fixture data; verify API responses only and do not render UI."
       inputs:
@@ -627,11 +807,20 @@ dag:
       name: "Integration UI only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-020/integration.json"
+      test_report: "reports/tasks/TASK-020/integration.json"
+      plan_report: "reports/tasks/TASK-020/plan.json"
+      summary_report: "reports/tasks/TASK-020/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-015", "TASK-016", "TASK-017", "TASK-019"]
       description: "Run UI integration against API fixture responses; verify rendered DOM only and do not re-run pipeline internals."
       inputs:
@@ -657,11 +846,20 @@ dag:
       name: "Acceptance evaluator implementation"
       layer: "Acceptance Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-021/static.json"
+      test_report: "reports/tasks/TASK-021/unit.json"
+      plan_report: "reports/tasks/TASK-021/plan.json"
+      summary_report: "reports/tasks/TASK-021/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-000", "TASK-003"]
       description: "Implement and test the local acceptance evaluator without making it the final stop gate task."
       inputs:
@@ -691,11 +889,20 @@ dag:
       name: "Replay deterministic stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["replay"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-022/replay.json"
+      test_report: "reports/tasks/TASK-022/replay.json"
+      plan_report: "reports/tasks/TASK-022/plan.json"
+      summary_report: "reports/tasks/TASK-022/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-018"]
       description: "Implement the replay stage owner that proves fixture, mock, seed, and fixed-clock pipeline outputs are deterministic across repeated runs."
       inputs:
@@ -717,11 +924,20 @@ dag:
       name: "Snapshot regression stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["snapshot"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-023/snapshot.json"
+      test_report: "reports/tasks/TASK-023/snapshot.json"
+      plan_report: "reports/tasks/TASK-023/plan.json"
+      summary_report: "reports/tasks/TASK-023/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-019", "TASK-020"]
       description: "Implement the snapshot stage owner for API JSON, DB schema, public schema, and React DOM regression artifacts."
       inputs:
@@ -744,11 +960,20 @@ dag:
       name: "E2E deterministic stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-024/e2e.json"
+      test_report: "reports/tasks/TASK-024/e2e.json"
+      plan_report: "reports/tasks/TASK-024/plan.json"
+      summary_report: "reports/tasks/TASK-024/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-022", "TASK-023"]
       description: "Implement the deterministic end-to-end stage from clean SQLite database through refresh, API projection, and UI render."
       inputs:
@@ -772,11 +997,20 @@ dag:
       name: "Full stage report materialization"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-025/unit.json"
+      test_report: "reports/tasks/TASK-025/unit.json"
+      plan_report: "reports/tasks/TASK-025/plan.json"
+      summary_report: "reports/tasks/TASK-025/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-018", "TASK-019", "TASK-020", "TASK-021", "TASK-022", "TASK-023", "TASK-024"]
       description: "Implement the full-regression materialization path that runs every required product stage without --task-id before final workflow acceptance."
       inputs:
@@ -803,11 +1037,20 @@ dag:
       name: "Round evidence schema hardening"
       layer: "Acceptance Layer"
       type: ["test", "docs", "schema"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026A/static.json"
+      test_report: "reports/tasks/TASK-026A/static.json"
+      plan_report: "reports/tasks/TASK-026A/plan.json"
+      summary_report: "reports/tasks/TASK-026A/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-021"]
       description: "Add explicit ReviewReport and FixOptimizeReport contracts and ensure RoundSummaryReport cannot count a completed round without parseable review and fix/optimize evidence."
       inputs:
@@ -829,11 +1072,20 @@ dag:
       name: "Stop decision and coverage schema hardening"
       layer: "Acceptance Layer"
       type: ["test", "docs", "schema"]
-      status: "pending"
+      status: "passed"
       source: ["docs/07_test_spec.md", "docs/08_acceptance.md", "schemas/stop_decision.schema.json"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026B/unit.json"
+      test_report: "reports/tasks/TASK-026B/unit.json"
+      plan_report: "reports/tasks/TASK-026B/plan.json"
+      summary_report: "reports/tasks/TASK-026B/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-026A"]
       description: "Make STOP_ALLOWED depend on valid round evidence and tighten PRD/task acceptance coverage schemas so prose-only or task-scoped-only evidence cannot pass."
       inputs:
@@ -857,11 +1109,20 @@ dag:
       name: "Acceptance evaluator enforcement"
       layer: "Acceptance Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["scripts/run_harness.py", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026C/unit.json"
+      test_report: "reports/tasks/TASK-026C/unit.json"
+      plan_report: "reports/tasks/TASK-026C/plan.json"
+      summary_report: "reports/tasks/TASK-026C/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-026B", "TASK-025"]
       description: "Teach the acceptance evaluator to compute valid completed rounds from parseable summary/review/fix evidence and to reject stale or failed local user acceptance."
       inputs:
@@ -884,11 +1145,20 @@ dag:
       name: "PRD, workflow stop-rule, and test-spec audit"
       layer: "Acceptance Layer"
       type: ["test", "docs", "review"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "tasks.md", "docs/01_prd.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026/e2e.json"
+      test_report: "reports/tasks/TASK-026/e2e.json"
+      plan_report: "reports/tasks/TASK-026/plan.json"
+      summary_report: "reports/tasks/TASK-026/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-026A", "TASK-026B", "TASK-026C"]
       description: "Audit whether tasks.md covers every PRD requirement, whether workflows.md plus docs/08_acceptance.md can prevent premature long-running stop, and whether docs/07_test_spec.md has rigorous executable test plans for all PRD, acceptance, and task-level acceptance standards."
       inputs:

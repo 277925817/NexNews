@@ -49,5 +49,33 @@
       "score": 99,
       "reason": "High-score item outside the 30-day ranking window."
     }
+  },
+  "invalid_cases": {
+    "missing_score": {
+      "response": {
+        "reason": "Score field is absent."
+      },
+      "expected_error": "validation_llm_error"
+    },
+    "wrong_type": {
+      "response": {
+        "score": "high",
+        "reason": "Score must be numeric."
+      },
+      "expected_error": "validation_llm_error"
+    },
+    "out_of_range": {
+      "response": {
+        "score": 101,
+        "reason": "Score must be within 0-100."
+      },
+      "expected_error": "validation_llm_error"
+    }
+  },
+  "timeout_cases": {
+    "score_timeout": {
+      "error": "timeout",
+      "retry_max": 2
+    }
   }
 }

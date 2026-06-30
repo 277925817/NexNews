@@ -1,0 +1,121 @@
+.sources-page {
+  display: grid;
+  gap: 18px;
+}
+
+.sources-page h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.source-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 220px minmax(0, 1fr) auto;
+}
+
+.source-form label {
+  color: #8b98a8;
+  display: grid;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 6px;
+}
+
+.source-form input {
+  background: #111820;
+  border: 1px solid #253241;
+  border-radius: 6px;
+  color: #e6edf3;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.source-form button,
+.source-row button {
+  background: #111820;
+  border: 1px solid #253241;
+  border-radius: 6px;
+  color: #e6edf3;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+.source-form button:disabled,
+.source-row button:disabled {
+  color: #8b98a8;
+  cursor: not-allowed;
+}
+
+.source-form__error,
+.source-row em {
+  color: #f87171;
+  font-style: normal;
+}
+
+.source-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.source-row {
+  align-items: center;
+  background: #111820;
+  border: 1px solid #253241;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 72px;
+  padding: 14px;
+}
+
+.source-row__main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.source-row__main strong,
+.source-row__main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-row__main span {
+  color: #8b98a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.source-row__status {
+  color: #34d399;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-row__status--off {
+  color: #8b98a8;
+}
+
+.source-row__actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .source-form,
+  .source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

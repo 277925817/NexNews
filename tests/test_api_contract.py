@@ -120,3 +120,15 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert translated_detail["status"] == "translated"
     assert translated_detail["summary_zh"]
     assert translated_detail["content_zh"]
+
+
+def test_refresh_concurrent_rejection_before_success_returns_null(tmp_path):
+    client = make_client(tmp_path)
+    conn = client.app.state.db
+
+    client.app.state.refresh_running = True
+    response = assert_json_response(client.post("/api/refresh"), 200)
+    client.app.state.refresh_running = False
+
+    assert response == {"data": {"refreshed_at": None}}
+    assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] == 0

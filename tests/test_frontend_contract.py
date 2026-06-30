@@ -1,24 +1,29 @@
 from pathlib import Path
 
 
-def test_frontend_uses_documented_api_contract_only():
+def test_frontend_vite_entrypoint_exists():
+    text = Path("frontend/index.html").read_text()
+
+    assert 'id="root"' in text
+    assert 'type="module"' in text
+    assert "/src/main.tsx" in text
+
+
+def test_frontend_vite_uses_react_plugin():
+    config_path = Path("frontend/vite.config.ts")
+
+    assert config_path.exists()
+
+    text = config_path.read_text()
+    assert "@vitejs/plugin-react" in text
+    assert "react()" in text
+
+
+def test_root_static_page_is_only_a_runtime_shell():
     text = Path("index.html").read_text()
+
+    assert "/frontend/src/main.tsx" in text
+    assert "<script>" not in text
 
     for legacy_endpoint in ("/rss", "/api/sync", "/api/feeds", "/api/items"):
         assert legacy_endpoint not in text
-
-    for contract_endpoint in (
-        "/api/home",
-        "/api/refresh",
-        "/api/sources",
-        "/api/news/",
-    ):
-        assert contract_endpoint in text
-
-
-def test_frontend_checks_json_content_type_before_parsing():
-    text = Path("index.html").read_text()
-
-    assert "content-type" in text
-    assert "application/json" in text
-    assert "response.json()" in text

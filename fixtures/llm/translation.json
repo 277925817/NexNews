@@ -5,12 +5,45 @@
     "fixture-translated-96": {
       "title_zh": "新的 AI 模型发布",
       "summary_zh": "这是一条来自 fixture 的中文摘要。",
-      "content_zh": "这是一篇来自 fixture 的中文正文。"
+      "content_zh": "这是一篇来自 fixture 的中文正文。",
+      "category_zh": "产品"
+    },
+    "fixture-rank-95": {
+      "title_zh": "AI 安全基准进入企业试点",
+      "summary_zh": "这是一条基于 RSS fallback 的中文摘要。",
+      "content_zh": "这是一篇基于 RSS fallback 的中文正文。",
+      "category_zh": "研究"
     },
     "fixture-translate-partial": {
       "title_zh": "部分翻译标题",
       "summary_zh": "",
       "content_zh": "缺少摘要时必须整体失败。"
+    }
+  },
+  "invalid_cases": {
+    "invalid_json": {
+      "raw_response": "{not valid json",
+      "expected_error": "validation_llm_error"
+    },
+    "missing_content_zh": {
+      "response": {
+        "title_zh": "缺少正文",
+        "summary_zh": "摘要存在",
+        "category_zh": "产品"
+      },
+      "expected_error": "validation_llm_error"
+    }
+  },
+  "timeout_cases": {
+    "translation_timeout": {
+      "error": "timeout",
+      "retry_max": 2
+    }
+  },
+  "partial_cases": {
+    "fixture-translate-partial": {
+      "expected_error": "validation_llm_error",
+      "must_write_partial_fields": false
     }
   }
 }

@@ -1,4 +1,5 @@
 {
+  "version": "mvp_acceptance_fixture@v1",
   "sources": [
     "https://developers.openai.com/rss.xml",
     "https://openai.com/news/rss.xml",

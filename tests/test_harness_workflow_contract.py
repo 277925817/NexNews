@@ -1,3 +1,4 @@
+import ast
 import json
 import subprocess
 import sys
@@ -21,7 +22,35 @@ def load_harness_module():
     return module
 
 
-def test_unimplemented_product_stage_cannot_pass_with_synthetic_report(tmp_path):
+def test_task_026a_harness_helpers_follow_function_line_limit():
+    source = (ROOT / "scripts" / "run_harness.py").read_text()
+    module = ast.parse(source)
+    target_names = {"sample_round_summary_report", "run_task_026a_static"}
+    function_lengths = {
+        node.name: node.end_lineno - node.lineno + 1
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name in target_names
+    }
+
+    assert function_lengths.keys() == target_names
+    assert all(length <= 60 for length in function_lengths.values()), function_lengths
+
+
+def test_task_026b_harness_owner_follows_function_line_limit():
+    source = (ROOT / "scripts" / "run_harness.py").read_text()
+    module = ast.parse(source)
+    target_names = {"run_task_026b_unit"}
+    function_lengths = {
+        node.name: node.end_lineno - node.lineno + 1
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name in target_names
+    }
+
+    assert function_lengths.keys() == target_names
+    assert all(length <= 60 for length in function_lengths.values()), function_lengths
+
+
+def test_full_unit_stage_materializes_without_synthetic_report(tmp_path):
     report_dir = tmp_path / "reports"
 
     result = subprocess.run(
@@ -41,11 +70,11 @@ def test_unimplemented_product_stage_cannot_pass_with_synthetic_report(tmp_path)
 
     report = json.loads((report_dir / "stages" / "unit.json").read_text())
 
-    assert result.returncode != 0
-    assert report["status"] == "failed"
-    assert report["test_id"] == "full-unit-synthetic-blocked"
-    assert "synthetic_stage_report_blocked" in report["failure_reasons"]
-    assert all(assertion["status"] == "failed" for assertion in report["assertions"])
+    assert result.returncode == 0
+    assert report["status"] == "passed"
+    assert report["test_id"] == "full-unit-materialized"
+    assert "synthetic_stage_report_blocked" not in report["failure_reasons"]
+    assert all(assertion["status"] == "passed" for assertion in report["assertions"])
 
 
 def test_passed_product_stage_report_cannot_use_scaffold_or_synthetic_test_id():
@@ -72,6 +101,85 @@ def test_passed_product_stage_report_cannot_use_scaffold_or_synthetic_test_id():
     issues = harness.validate_test_report(report)
 
     assert "synthetic_or_scaffold_report_cannot_pass" in issues
+
+
+def test_frontend_endpoint_evidence_ignores_generated_outputs(tmp_path, monkeypatch):
+    harness = load_harness_module()
+    (tmp_path / "frontend" / "src" / "api").mkdir(parents=True)
+    (tmp_path / "frontend" / "node_modules" / "vite").mkdir(parents=True)
+    (tmp_path / "frontend" / "dist" / "assets").mkdir(parents=True)
+    (tmp_path / "index.html").write_text('/frontend/src/main.tsx')
+    (tmp_path / "frontend" / "index.html").write_text('/src/main.tsx')
+    (tmp_path / "frontend" / "vite.config.ts").write_text("react()")
+    (tmp_path / "frontend" / "src" / "api" / "news.ts").write_text(
+        "fetch('/api/home'); fetch('/api/refresh'); fetch('/api/sources'); fetch('/api/news/1')"
+    )
+    (tmp_path / "frontend" / "node_modules" / "vite" / "internal.js").write_text(
+        "const legacy = '/rss'"
+    )
+    (tmp_path / "frontend" / "dist" / "assets" / "app.js").write_text(
+        "const legacy = '/api/feeds'"
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    evidence = harness.frontend_endpoint_evidence()
+
+    assert evidence["issues"] == []
+    assert not any("/node_modules/" in path for path in evidence["scanned_files"])
+    assert not any("/dist/" in path for path in evidence["scanned_files"])
+
+
+def test_local_user_acceptance_requires_deployed_browser_smoke(tmp_path):
+    harness = load_harness_module()
+    report_dir = tmp_path / "reports"
+    e2e_assertions = [
+        harness.assertion(
+            assertion_id,
+            "passed",
+            {"surface": surface},
+            {"surface": surface},
+            {},
+            visibility="public_surface",
+        )
+        for surface, assertion_ids in harness.E2E_SURFACE_ASSERTION_MAP.items()
+        for assertion_id in assertion_ids
+    ]
+    e2e_report = harness.test_report(
+        stage="e2e",
+        status="passed",
+        test_id="deployed-smoke-e2e-fixture",
+        assertions=e2e_assertions,
+        expected={"surfaces": "covered"},
+        actual={"surfaces": "covered"},
+        referenced_files=["scripts/run_harness.py"],
+    )
+    e2e_path = report_dir / "stages" / "e2e.json"
+    e2e_path.parent.mkdir(parents=True)
+    e2e_path.write_text(json.dumps(e2e_report))
+
+    harness.ensure_local_user_acceptance_report(report_dir)
+
+    local_report = json.loads(
+        (report_dir / "acceptance" / "local_user_acceptance.json").read_text()
+    )
+    summaries = [finding["summary"] for finding in local_report["failed_findings"]]
+    assert local_report["status"] == "failed"
+    assert "deployed_browser_smoke:missing_report" in summaries
+
+
+def test_deployed_browser_smoke_script_records_runtime_assertions():
+    script_path = ROOT / "scripts" / "run_deployed_browser_smoke.py"
+
+    assert script_path.exists()
+
+    text = script_path.read_text()
+    assert "deployed_browser_smoke.json" in text
+    assert "console_error_count" in text
+    assert "page_error_count" in text
+    assert "root_child_count" in text
+    assert "news_card_count" in text
+    assert "rank_item_count" in text
 
 
 def test_round_summary_schema_requires_round_end_decision():

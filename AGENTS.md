@@ -6,16 +6,15 @@ This file is the lightweight project commander for Codex agents.
 
 Codex must use:
 
-- `workflows.md` for workflow state transitions.
+- `workflows.md` for workflow state transitions, command interface, report paths and loop strategy.
 - `tasks.md` for task queue and task status.
-- `harness.md` for local harness commands and report paths.
 - `docs/01_prd.md` through `docs/08_acceptance.md` for product, architecture, UI, data, API, development, test and acceptance truth.
 
 ## Command Rule
 
 Always start from `workflows.md`.
 
-The project is complete only when `docs/08_acceptance.md` evaluates all required gates as `PASS` and `STOP_ALLOWED = true`.
+The project is complete only when `workflows.md` allows `DONE`, `docs/08_acceptance.md` evaluates all required gates as `PASS`, `STOP_ALLOWED = true`, PRD coverage is complete, and the latest local user acceptance has no failed finding.
 
 ## Priority Rule
 

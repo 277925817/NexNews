@@ -1,0 +1,21 @@
+{
+  "version": "mvp_mock@v1",
+  "scores": {
+    "fixture-threshold-60": {
+      "score": 60,
+      "reason": "Exactly reaches the selection threshold."
+    },
+    "fixture-low-59": {
+      "score": 59,
+      "reason": "Just below the selection threshold."
+    },
+    "fixture-translated-96": {
+      "score": 96,
+      "reason": "High-signal model release."
+    },
+    "fixture-translate-partial": {
+      "score": 75,
+      "reason": "Selected item with translation failure fixture."
+    }
+  }
+}

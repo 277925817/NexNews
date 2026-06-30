@@ -565,7 +565,7 @@
       const feedLabel = document.querySelector("#feed-label");
       const reader = document.querySelector("#reader");
 
-      let nextOffset = 0;
+      let nextCursor = null;
       let hasMore = true;
       let isLoading = false;
       let listLoaded = false;
@@ -620,6 +620,50 @@
           .join("；");
         setText(target, `${prefix}：${message}`);
         target.classList.add("visible");
+      }
+
+      async function apiJson(response) {
+        if (response.status === 204) {
+          return null;
+        }
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error(`非 JSON 响应 (${response.status})`);
+        }
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error?.message || `HTTP ${response.status}`);
+        }
+        return payload;
+      }
+
+      function sourceKey(value) {
+        return String(value || "source")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "source";
+      }
+
+      function formatDate(value) {
+        if (!value) return "";
+        return new Intl.DateTimeFormat("zh-CN", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(value));
+      }
+
+      function toListItem(item) {
+        return {
+          id: item.id,
+          source: sourceKey(item.source_name),
+          sourceLabel: item.source_name,
+          publishedAt: item.published_at,
+          publishedDisplay: formatDate(item.published_at),
+          title: item.title,
+          description: `评分 ${item.score} · ${item.status}`,
+          originalLink: item.original_url,
+          translationStatus: item.status,
+        };
       }
 
       function renderLegend(feeds) {
@@ -722,7 +766,7 @@
       }
 
       function updatePagination(pagination) {
-        nextOffset = pagination?.nextOffset ?? nextOffset;
+        nextCursor = pagination?.nextCursor ?? null;
         hasMore = Boolean(pagination?.hasMore);
         if (hasMore) {
           setText(loadMore, "");
@@ -737,7 +781,6 @@
         if (isLoading) return;
 
         isLoading = true;
-        const offset = reset ? 0 : nextOffset;
         refresh.disabled = true;
         setText(status, reset ? "正在加载 RSS..." : "正在加载更多...");
         status.hidden = !reset;
@@ -746,20 +789,23 @@
         try {
           const params = new URLSearchParams({
             limit: String(PAGE_LIMIT),
-            offset: String(offset),
-            refresh: "0",
           });
-          const response = await fetch(`/rss?${params}`, { headers: { Accept: "application/json" } });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+          if (!reset && nextCursor) {
+            params.set("cursor", nextCursor);
           }
 
-          const payload = await response.json();
-          renderLegend(payload.feeds || []);
-          renderErrors(errors, payload.errors, "部分订阅源加载失败");
-          renderItems(payload.items, { append: !reset });
-          updatePagination(payload.pagination);
-          setText(updated, formatUpdatedAt(payload.updatedAt));
+          const response = await fetch(`/api/home?${params}`, { headers: { Accept: "application/json" } });
+          const payload = await apiJson(response);
+          const home = payload.data || {};
+          const items = (home.latest_news || []).map(toListItem);
+          const sources = Array.from(
+            new Map(items.map((item) => [item.source, { id: item.source, label: item.sourceLabel }])).values(),
+          );
+          renderLegend(sources);
+          renderErrors(errors, [], "部分订阅源加载失败");
+          renderItems(items, { append: !reset });
+          updatePagination({ hasMore: Boolean(home.next_cursor), nextCursor: home.next_cursor, total: items.length });
+          setText(updated, formatUpdatedAt(items[0]?.publishedAt));
           status.hidden = true;
           listLoaded = true;
         } catch (error) {
@@ -781,14 +827,11 @@
         setText(status, "正在同步 RSS...");
         status.hidden = false;
         try {
-          const response = await fetch("/api/sync", {
+          const response = await fetch("/api/refresh", {
             method: "POST",
             headers: { Accept: "application/json" },
           });
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.error?.message || `HTTP ${response.status}`);
-          }
+          await apiJson(response);
           listLoaded = false;
           await loadRss({ reset: true });
         } catch (error) {
@@ -802,10 +845,9 @@
 
       async function loadFeeds() {
         try {
-          const response = await fetch("/api/feeds", { headers: { Accept: "application/json" } });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const payload = await response.json();
-          renderSourceList(payload.feeds || []);
+          const response = await fetch("/api/sources", { headers: { Accept: "application/json" } });
+          const payload = await apiJson(response);
+          renderSourceList(payload.data || []);
           renderErrors(configErrors, [], "");
         } catch (error) {
           renderErrors(configErrors, [{ message: error.message }], "信息源加载失败");
@@ -822,11 +864,17 @@
           main.className = "source-main";
           const name = document.createElement("div");
           name.className = "source-name";
-          setText(name, feed.label);
+          setText(name, feed.name);
           const url = document.createElement("div");
           url.className = "source-url";
-          setText(url, feed.url);
+          setText(url, feed.rss_url);
           main.append(name, url);
+
+          const toggle = document.createElement("button");
+          toggle.className = "button";
+          toggle.type = "button";
+          setText(toggle, feed.is_enabled ? "停用" : "启用");
+          toggle.addEventListener("click", () => updateFeed(feed.id, !feed.is_enabled));
 
           const remove = document.createElement("button");
           remove.className = "button";
@@ -834,7 +882,7 @@
           setText(remove, "删除");
           remove.addEventListener("click", () => deleteFeed(feed.id));
 
-          row.append(main, remove);
+          row.append(main, toggle, remove);
           sourceList.appendChild(row);
         }
       }
@@ -842,15 +890,15 @@
       async function addFeed(event) {
         event.preventDefault();
         try {
-          const response = await fetch("/api/feeds", {
+          const response = await fetch("/api/sources", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ url: feedUrl.value, label: feedLabel.value }),
+            body: JSON.stringify({
+              name: feedLabel.value || feedUrl.value,
+              rss_url: feedUrl.value,
+            }),
           });
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.error?.message || `HTTP ${response.status}`);
-          }
+          await apiJson(response);
           feedUrl.value = "";
           feedLabel.value = "";
           await loadFeeds();
@@ -860,16 +908,28 @@
         }
       }
 
+      async function updateFeed(feedId, isEnabled) {
+        try {
+          const response = await fetch(`/api/sources/${encodeURIComponent(feedId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ is_enabled: isEnabled }),
+          });
+          await apiJson(response);
+          await loadFeeds();
+          await loadRss({ reset: true });
+        } catch (error) {
+          renderErrors(configErrors, [{ message: error.message }], "信息源更新失败");
+        }
+      }
+
       async function deleteFeed(feedId) {
         try {
-          const response = await fetch(`/api/feeds/${encodeURIComponent(feedId)}`, {
+          const response = await fetch(`/api/sources/${encodeURIComponent(feedId)}`, {
             method: "DELETE",
             headers: { Accept: "application/json" },
           });
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.error?.message || `HTTP ${response.status}`);
-          }
+          await apiJson(response);
           await loadFeeds();
           await loadRss({ reset: true });
         } catch (error) {
@@ -879,14 +939,11 @@
 
       async function showReader(itemId) {
         try {
-          const response = await fetch(`/api/items/${encodeURIComponent(itemId)}`, {
+          const response = await fetch(`/api/news/${encodeURIComponent(itemId)}`, {
             headers: { Accept: "application/json" },
           });
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.error?.message || `HTTP ${response.status}`);
-          }
-          renderReader(payload.item);
+          const payload = await apiJson(response);
+          renderReader(payload.data);
           showView("reader");
         } catch (error) {
           renderErrors(errors, [{ message: error.message }], "文章加载失败");
@@ -904,31 +961,25 @@
         meta.className = "meta-row";
         const source = document.createElement("span");
         source.className = "source";
-        source.dataset.source = item.source;
-        setText(source, item.sourceLabel);
+        source.dataset.source = sourceKey(item.source_name);
+        setText(source, item.source_name);
         const date = document.createElement("time");
         date.className = "date";
-        date.dateTime = item.publishedAt;
-        setText(date, item.publishedDisplay);
+        date.dateTime = item.published_at;
+        setText(date, formatDate(item.published_at));
         meta.append(source, date);
-        if (item.classification) {
-          const classification = document.createElement("span");
-          classification.className = "category";
-          setText(classification, item.classification);
-          meta.appendChild(classification);
-        }
 
         const summary = document.createElement("p");
         summary.className = "description";
-        setText(summary, item.summaryZh || item.description || "");
+        setText(summary, item.summary_zh || item.status || "");
 
         const body = document.createElement("div");
         body.className = "reader-body";
-        setText(body, item.contentZh || item.summaryZh || item.description || "");
+        setText(body, item.content_zh || item.summary_zh || "");
 
         const originalLink = document.createElement("a");
         originalLink.className = "link-button";
-        originalLink.href = item.originalLink || item.link;
+        originalLink.href = item.original_url;
         originalLink.target = "_blank";
         originalLink.rel = "noopener noreferrer";
         setText(originalLink, "原文链接");

@@ -10,7 +10,7 @@
 Plan -> Implement -> Test -> Review -> Fix -> Re-test -> Summarize -> Iterate
 ```
 
-直到 `docs/08_acceptance.md` 中 `ACC-STOP-001` 到 `ACC-STOP-010` 全部为 `PASS`，并且 `STOP_ALLOWED = true`。
+直到 `tasks.md` 中每个 `dag.nodes[*].status == passed`、`docs/08_acceptance.md` 中 `ACC-STOP-001` 到 `ACC-STOP-010` 全部为 `PASS`、全部 stop inputs 为 `PASS`，并且 `STOP_ALLOWED = true`。
 
 本 workflow 只依赖当前仓库、项目文档、本地测试、fixture、mock 和 fixed clock。不得依赖 GitHub Actions、外部 CI、真实 RSS、真实网页、真实 LLM、生产数据库、网络时间或人工主观判断。
 
@@ -18,6 +18,7 @@ Source of truth:
 
 | Area | Source |
 | --- | --- |
+| Workflow, command interface, report paths and loop strategy | `workflows.md` |
 | Product behavior | `docs/01_prd.md` |
 | Architecture boundary | `docs/02_arch.md` |
 | UI behavior | `docs/03_ui_spec.md` |
@@ -25,10 +26,63 @@ Source of truth:
 | API contract | `docs/05_api_contract.md` |
 | Development rules | `docs/06_dev_rules.md` |
 | Test execution | `docs/07_test_spec.md` |
-| Harness command interface | `harness.md` |
 | Stop gate | `docs/08_acceptance.md` |
 
-Operational runbook: `docs/09_harness_runbook.md` is a procedure guide for Codex sessions. It is not a higher-priority source of truth.
+Control-plane consolidation:
+
+- `workflows.md` is the only local workflow control plane.
+- Legacy harness/runbook documents are obsolete and must not be used as workflow truth.
+- `scripts/run_harness.py` is an executor for the commands defined below. It must not define completion rules that are absent from `workflows.md`, `docs/07_test_spec.md` or `docs/08_acceptance.md`.
+- If command behavior and this file conflict, this file wins and the executor must be fixed.
+
+Command surface:
+
+```bash
+python3 scripts/run_harness.py --stage static --report-dir reports
+python3 scripts/run_harness.py --stage unit --report-dir reports
+python3 scripts/run_harness.py --stage contract --report-dir reports
+python3 scripts/run_harness.py --stage api --report-dir reports
+python3 scripts/run_harness.py --stage integration --report-dir reports
+python3 scripts/run_harness.py --stage replay --report-dir reports
+python3 scripts/run_harness.py --stage snapshot --report-dir reports
+python3 scripts/run_harness.py --stage e2e --report-dir reports
+python3 scripts/run_harness.py --stage acceptance --report-dir reports
+```
+
+Task-scoped commands add `--task-id TASK-000` and write task evidence under `reports/tasks/<task_id>/<stage>.json`. Task-scoped `acceptance` is invalid.
+
+Report paths:
+
+- Full-stage reports: `reports/stages/<stage>.json`
+- Task reports: `reports/tasks/<task_id>/<stage>.json`
+- Task plans: `reports/tasks/<task_id>/plan.json`
+- Acceptance gates: `reports/acceptance/ACC-STOP-001.json` through `reports/acceptance/ACC-STOP-010.json`
+- PRD coverage: `reports/acceptance/prd_coverage.json`
+- Task acceptance coverage: `reports/acceptance/task_acceptance_coverage.json`
+- Local user acceptance: `reports/acceptance/local_user_acceptance.json`
+- Stop decision: `reports/acceptance/STOP_ALLOWED.json`
+
+Loop simplification policy:
+
+- The workflow loop is one product loop, not a chain of shallow stage approvals.
+- `static`, `unit`, `api`, `e2e` and `acceptance` are the core stop-verification stages.
+- `contract`, `integration`, `replay` and `snapshot` may exist as compatibility stages or evidence classes, but they cannot substitute for PRD coverage, real API behavior, browser-visible UI behavior or user acceptance.
+- A stage report may pass only when it contains behavior evidence for the current product slice. Directory existence, placeholder modules, scaffold files, snapshots without behavior assertions and synthetic pass reports do not count toward stop eligibility.
+- Any user acceptance failure invalidates the previous `STOP_ALLOWED=true` result and forces `ITERATE`.
+
+PRD coverage policy:
+
+- Every checklist-style acceptance statement in `docs/01_prd.md` must map to at least one assertion id in `docs/07_test_spec.md#2.16` or a PRD coverage artifact referenced by `reports/acceptance/ACC-STOP-001.json`.
+- `STOP_ALLOWED=true` is forbidden when any PRD acceptance statement is unmapped, unexecuted or only proven by scaffold/synthetic evidence.
+- Home page acceptance must prove the news feed and 30-day high-score list using enough fixture data to exercise the PRD, not a sparse smoke sample.
+- Browser-visible UI requirements must be proven in a real browser or an equivalent DOM-capable runner. FastAPI `TestClient`, string scanning and API-only snapshots cannot prove final UI acceptance.
+
+Task acceptance coverage policy:
+
+- Every `tasks.md.dag.nodes[*].acceptance_criteria[*]` statement must map to at least one executed structured assertion id and report path in `reports/acceptance/task_acceptance_coverage.json`.
+- `STOP_ALLOWED=true` is forbidden when any task acceptance criterion is unmapped, unexecuted, failed, flaky, skipped, mapped only to prose, or missing a report path.
+- A task may become `passed` during task-scoped workflow only when its scoped tests pass, but final `DONE` requires the task acceptance coverage stop input to prove every persisted criterion against structured evidence.
+- Task-scoped reports may prove task progress; they cannot replace full-stage or ACC-STOP evidence for any criterion that contributes to final stop eligibility.
 
 MVP task source:
 
@@ -110,6 +164,13 @@ workflow_state_machine:
     source: docs/08_acceptance.md
     field: STOP_ALLOWED
     expected: true
+    required_task_state: all tasks.md dag.nodes[*].status == passed
+    required_stop_inputs:
+      - task_completion_status
+      - prd_coverage_status
+      - task_acceptance_coverage_status
+      - browser_e2e_status
+      - local_user_acceptance_status
   task_retry_limit: 3
   task_priority_order:
     - acceptance_gate_failures
@@ -160,10 +221,10 @@ INIT
 On test or review failure:
   TEST/REVIEW -> FIX -> RE_TEST -> REVIEW -> SUMMARIZE
 
-When all tasks are terminal:
+When all tasks are passed:
   LOAD_TASKS triggers ACCEPTANCE
-  if every task status is passed or task_blocked
-  AND no pending/in_progress task exists -> ACCEPTANCE
+  if every task status is passed
+  AND no pending/in_progress/task_blocked task exists -> ACCEPTANCE
   else continue task loop
 
 ACCEPTANCE always performs full gate validation.
@@ -187,13 +248,14 @@ If a task exceeds retry limit:
 - If `tasks.md` contains DAG dependencies, `LOAD_TASKS` must first filter out tasks whose `depends_on` tasks are not `passed`; blocked dependencies do not make the dependent task actionable.
 - If a task lacks `priority`, `LOAD_TASKS` must derive it with one deterministic rule: failed acceptance gate mapping first; otherwise failed test stage order; otherwise canonical doc order `docs/01_prd.md -> docs/08_acceptance.md`; otherwise `refactor_tasks`. Do not use semantic guessing or multi-source fallback.
 - For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `plan_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
-- Test stage order must follow `docs/07_test_spec.md#2.13`: `static -> unit -> contract -> api -> integration -> replay -> snapshot -> e2e`.
+- Test stage order must follow `docs/07_test_spec.md#2.13`. Compatibility stages may still run in the historical order `static -> unit -> contract -> api -> integration -> replay -> snapshot -> e2e`, but stop eligibility depends on PRD coverage and browser-visible E2E evidence, not on shallow stage count.
 - Each test stage must start from clean isolated state.
 - Tests and acceptance must use fixture, mock and fixed clock.
 - Structured reports are the source of truth. Free-form logs are diagnostic only.
 - If evidence is missing, malformed or not machine-readable, the state result is `FAIL`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, never `PASS`.
-- Acceptance entry is intentionally lightweight but strict. It only means the workflow should start stop-gate validation: `tasks.md` is loaded, `tasks.count > 0`, every task is in a terminal state (`passed` or `task_blocked`), no task is `pending` or `in_progress`, and no task has `active_state` in `FIX` or `RE_TEST`. Evidence, reports, mandatory assertions and gate coverage are validated inside `ACCEPTANCE`, not before it.
+- Acceptance entry is intentionally lightweight but strict. It only means the workflow should start stop-gate validation: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. Evidence, reports, mandatory assertions and gate coverage are validated inside `ACCEPTANCE`, not before it.
 - Acceptance validation is mandatory on every entry: every `ACC-STOP-*` gate must be revalidated inside `ACCEPTANCE` with structured evidence, linked reports and required assertions.
+- User acceptance is part of deterministic workflow state. If the user reports a failed local acceptance finding after any `STOP_ALLOWED=true`, that stop decision is stale and must be treated as failed until the finding is converted into a regression assertion and passes.
 
 ## 3. States Description（逐个 state 定义）
 
@@ -202,7 +264,7 @@ If a task exceeds retry limit:
 | Field | Definition |
 | --- | --- |
 | entry condition | Workflow starts, or Codex resumes an unfinished workflow. |
-| actions | Read `docs/01_prd.md` to `docs/08_acceptance.md` and `harness.md`; detect available local commands; verify workspace can run local tests; check whether `tasks.md` exists. |
+| actions | Read `docs/01_prd.md` to `docs/08_acceptance.md` and `workflows.md`; detect available local commands defined in this file; verify workspace can run local tests; check whether `tasks.md` exists. |
 | exit condition | Required source documents are readable and workflow inputs are known. |
 | failure handling | If a required source document is missing or unreadable, enter `WORKFLOW_BLOCKED`. If local test commands cannot run because the local environment is unavailable, enter `ENV_BLOCKED`. If local test commands are missing but can be implemented in the repo, create tasks according to `docs/07_test_spec.md`. |
 
@@ -212,7 +274,7 @@ If a task exceeds retry limit:
 | --- | --- |
 | entry condition | `INIT` completed, a task was summarized, or acceptance failed and new tasks must be loaded. |
 | actions | Load all of `tasks.md`; fill missing fields with explicit defaults; normalize task status and missing priority; order actionable tasks by `task_priority_order`, then task id ascending; verify task ids are unique; map each task to source docs, test scope and acceptance gate. |
-| exit condition | One actionable task is selected, or acceptance entry is triggered. Acceptance entry means `tasks.md` is loaded, `tasks.count > 0`, every task is `passed` or `task_blocked`, no task is `pending` or `in_progress`, and no task has `active_state` in `FIX` or `RE_TEST`. It does not inspect evidence, report contents, assertion coverage or gate coverage. |
+| exit condition | One actionable task is selected, or acceptance entry is triggered. Acceptance entry means `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. It does not inspect evidence, report contents, assertion coverage or gate coverage. |
 | failure handling | If `tasks.md` is missing, generate an MVP `tasks.md` from failed/missing acceptance gates. If task records, priority derivation or task selection cannot be normalized deterministically, enter `WORKFLOW_BLOCKED`. If no actionable task exists while any task is non-terminal, enter `WORKFLOW_BLOCKED`, not `ACCEPTANCE`. |
 
 ### PLAN
@@ -282,8 +344,8 @@ If a task exceeds retry limit:
 
 | Field | Definition |
 | --- | --- |
-| entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task is `passed` or `task_blocked`, no task is `pending` or `in_progress`, and no task has `active_state` in `FIX` or `RE_TEST`. |
-| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing full-stage reports under `reports/stages/<stage>.json`. This is where gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, `evidence` exists and `test_report` exists. `task_blocked` tasks must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
+| entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST`. |
+| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing full-stage reports under `reports/stages/<stage>.json`. This is where task completion, PRD coverage, task acceptance coverage, browser E2E evidence, local user acceptance, gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, evidence exists and `test_report` exists. Any `task_blocked` task makes task completion fail and must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
 | exit condition | Every gate has status `PASS`, `FAIL`, `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, and `STOP_ALLOWED` has been computed. |
 | failure handling | If any gate is `FAIL` or `UNKNOWN`, enter `ITERATE` with the failed or unproven gate evidence. If a task-local unresolved blocker prevents a gate from being proven, enter `TASK_BLOCKED`. If workflow metadata, task records or report generation logic are inconsistent, enter `WORKFLOW_BLOCKED`. If the local environment cannot execute required verification, enter `ENV_BLOCKED`. Missing evidence is a failed gate unless the evidence generator itself is unavailable. |
 
@@ -327,7 +389,7 @@ If a task exceeds retry limit:
 
 | Field | Definition |
 | --- | --- |
-| entry condition | `ACCEPTANCE` reads `STOP_ALLOWED == true` from `docs/08_acceptance.md`, every required gate is mapped only to `passed` tasks with existing evidence and test report, and any `task_blocked` task has `acceptance_gate: none`. |
+| entry condition | `ACCEPTANCE` reads `STOP_ALLOWED == true` from `docs/08_acceptance.md`, every task in `tasks.md` has `status == passed`, every stop input is `PASS`, every required gate is mapped only to `passed` tasks with existing evidence and test report, and no `task_blocked` task exists. |
 | actions | Produce final delivery summary with changed files, required gate statuses, evidence paths and confirmation that all gates passed. |
 | exit condition | Workflow stops successfully as a terminal irreversible state. |
 | failure handling | No transition is allowed after `DONE`. A later acceptance failure proof must start a new workflow iteration from `ITERATE`; it must not mutate the completed run's terminal state. |
@@ -340,7 +402,7 @@ If a task exceeds retry limit:
 | `INIT` | Required source document missing or unreadable | `WORKFLOW_BLOCKED` |
 | `INIT` | Local environment cannot run required commands | `ENV_BLOCKED` |
 | `LOAD_TASKS` | Actionable task exists after priority ordering | `PLAN` |
-| `LOAD_TASKS` | `tasks.count > 0`, all tasks are terminal (`passed` or `task_blocked`), no task is `pending` or `in_progress`, and no task has `active_state` in `FIX` or `RE_TEST` | `ACCEPTANCE` |
+| `LOAD_TASKS` | `tasks.count > 0`, all tasks have `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX` or `RE_TEST` | `ACCEPTANCE` |
 | `LOAD_TASKS` | No actionable task can be selected while any task is non-terminal | `WORKFLOW_BLOCKED` |
 | `LOAD_TASKS` | Malformed task records cannot be normalized | `WORKFLOW_BLOCKED` |
 | `PLAN` | Plan produced | `IMPLEMENT` |
@@ -364,7 +426,7 @@ If a task exceeds retry limit:
 | `WORKFLOW_BLOCKED` | Explicit `resolve_workflow_blocker` completed with evidence | `LOAD_TASKS` |
 | `ENV_BLOCKED` | Environment unchanged | `ENV_BLOCKED` |
 | `SUMMARIZE` | Task persisted as `passed` | `LOAD_TASKS` |
-| `ACCEPTANCE` | `STOP_ALLOWED == true`, `tasks_hash_before == tasks_hash_after`, same `tasks_snapshot` used for gate evaluation and DONE guard, all required gates map only to `passed` tasks with existing evidence and test report, all `task_blocked` tasks have `acceptance_gate: none`, and no required stage is `SKIPPED` | `DONE` |
+| `ACCEPTANCE` | `STOP_ALLOWED == true`, `tasks_hash_before == tasks_hash_after`, same `tasks_snapshot` used for gate evaluation and DONE guard, every task in `tasks_snapshot` has `status == passed`, all stop inputs are `PASS`, all required gates map only to `passed` tasks with existing evidence and test report, no `task_blocked` task exists, and no required stage is `SKIPPED` | `DONE` |
 | `ACCEPTANCE` | Any gate failed or unknown | `ITERATE` |
 | `ACCEPTANCE` | Task-local blocker prevents gate proof | `TASK_BLOCKED` |
 | `ACCEPTANCE` | Workflow/report metadata blocker prevents gate proof | `WORKFLOW_BLOCKED` |
@@ -409,13 +471,13 @@ This follows `docs/07_test_spec.md#2.14`.
 All test and acceptance results must produce machine-readable evidence:
 
 - Test reports must follow `docs/07_test_spec.md#6`.
-- Harness commands and report paths must follow `harness.md`.
+- Command surface and report paths must follow `workflows.md#1.Overview`.
 - Acceptance gate reports must map to `ACC-STOP-001` through `ACC-STOP-010`.
 - Missing report means failure.
 - Invalid schema means failure.
 - `failed`, `flaky` or `skipped` required reports mean failure.
-- Every stage declared for the run must execute. Acceptance and full-regression runs must execute all stages in `test_stage_order`.
-- Full-regression materialization runs the required product stages without `--task-id` and writes `reports/stages/static.json` through `reports/stages/e2e.json`. Task-scoped runs write only `reports/tasks/<task_id>/<stage>.json` and must not be used as substitutes for full-stage stop evidence.
+- Every core stop-verification stage declared in `docs/07_test_spec.md#2.13` must execute. Compatibility stages may produce useful evidence, but they do not reduce the need for PRD coverage or real browser E2E evidence.
+- Full-regression materialization runs required product stages without `--task-id` and writes stage reports under `reports/stages/`. Task-scoped runs write only `reports/tasks/<task_id>/<stage>.json` and must not be used as substitutes for full-stage stop evidence.
 - On first stage failure, downstream stages must be marked `SKIPPED`, not `NOT_RUN`, omitted or treated as `PASS`.
 - `SKIPPED` stages do not count toward `PASS`. If `stage` is in the required stages defined by `docs/07_test_spec.md#2.13`, `SKIPPED == FAIL` for acceptance and blocks `STOP_ALLOWED`, whether the skip was produced by `TEST` or `RE_TEST`.
 - Partial reports from the failed run must be persisted and must identify the single failed stage that becomes the next fix target.
@@ -491,18 +553,28 @@ review_scope:
 
 ## 6. Stop Condition（停止条件）
 
+`DONE` is the only successful stop state. `TASK_BLOCKED`、`WORKFLOW_BLOCKED` and `ENV_BLOCKED` may halt the current autonomous run, but they are non-success blocked states and must not be reported as product completion.
+
 The workflow may enter `DONE` only when all conditions are true:
 
 - `ACC-STOP-001` to `ACC-STOP-010` are all `PASS`.
 - Terminal success condition is exactly `source: docs/08_acceptance.md`, `field: STOP_ALLOWED`, `expected: true`.
+- Every task in `tasks.md` has `status == passed`; `pending`、`in_progress` and `task_blocked` all block `DONE`.
+- Stop inputs `task_completion_status`、`prd_coverage_status`、`task_acceptance_coverage_status`、`browser_e2e_status` and `local_user_acceptance_status` are all `PASS`.
 - `ACCEPTANCE` and `DONE` must use the same immutable `tasks_snapshot`; `tasks.md` must remain unchanged between acceptance evaluation and `DONE` transition.
 - `tasks_hash_before == tasks_hash_after` is required before entering `DONE`.
+- `docs/01_prd.md` acceptance coverage matrix is complete: every PRD acceptance statement is mapped to executed structured evidence.
+- `tasks.md` acceptance coverage matrix is complete: every task acceptance criterion is mapped to executed structured evidence.
+- Browser-visible E2E evidence exists for Home News Feed, 30-day HighScoreList, ArticleView and Sources page. API-only tests, string scans and static snapshots cannot satisfy this condition.
+- The latest local deployment acceptance record exists at `reports/acceptance/local_user_acceptance.json` and has no failed user findings.
+- If the user reports any acceptance failure after `STOP_ALLOWED=true`, the previous stop decision is stale and the workflow must return to `ITERATE`.
 - All required gates are covered only by tasks where `status == passed`, evidence exists and test report exists.
 - `task_blocked` tasks must not contribute to any acceptance gate coverage.
-- `task_blocked` is allowed at `DONE` only when `acceptance_gate: none`.
+- No task has `status == task_blocked` at `DONE`; blocked tasks must be resolved or removed from `tasks.md` only when they are genuinely out of scope.
 - Each gate-covering task has an existing evidence file and linked test report.
 - `tasks.md` is loaded and `tasks.count > 0`.
 - No task is `pending` or `in_progress`.
+- No task is `task_blocked`.
 - No task has `active_state` in `FIX` or `RE_TEST`.
 - No required report is `failed`, `flaky` or `skipped`.
 - No required stage is `SKIPPED`; if `stage` is in the required stages defined by `docs/07_test_spec.md#2.13`, `SKIPPED` is acceptance failure regardless of whether it came from `TEST` or `RE_TEST`.
@@ -512,6 +584,7 @@ The workflow may enter `DONE` only when all conditions are true:
 - No required assertion is skipped in stop evidence.
 - No mandatory assertion ID from `docs/07_test_spec.md#2.16` is missing, failed, flaky, skipped, duplicated with conflicting results, attached to the wrong stage or proven only by a task-scoped report.
 - Behavior-only evidence without active assertions cannot be the sole evidence for a required acceptance gate.
+- Synthetic evidence is forbidden for stop eligibility. Directory existence, placeholder files, scaffold modules and hardcoded sparse fixture smoke samples do not prove PRD completion.
 - No API/UI/log/report leak is detected.
 - All acceptance evidence is structured, parseable and mapped to the required gates.
 - `STOP_ALLOWED = true` may be produced only by the workflow `ACCEPTANCE` state running the full acceptance command without `--task-id`.
@@ -598,8 +671,9 @@ while True:
             state = "PLAN"
         elif (
             task_count(tasks) > 0
-            and all_tasks_terminal(tasks, allowed=["passed", "task_blocked"])
+            and all_tasks_passed(tasks)
             and no_pending_or_in_progress(tasks)
+            and no_task_blocked(tasks)
             and no_task_active_state_in(tasks, ["FIX", "RE_TEST"])
         ):
             state = "ACCEPTANCE"
@@ -840,12 +914,30 @@ while True:
             acceptance.field("STOP_ALLOWED") is True
             and tasks_hash_before == tasks_hash_after
             and task_count(tasks_snapshot) > 0
+            and all_tasks_passed(tasks_snapshot)
             and no_task_active_state_in(tasks_snapshot, ["FIX", "RE_TEST"])
+            and prd_coverage_matrix_complete(
+                source="docs/01_prd.md",
+                evidence=acceptance.reports,
+            )
+            and task_acceptance_coverage_matrix_complete(
+                source="tasks.md",
+                report="reports/acceptance/task_acceptance_coverage.json",
+                evidence=acceptance.reports,
+            )
+            and browser_e2e_evidence_passed(
+                reports=acceptance.reports,
+                required_surfaces=["home_news_feed", "high_score_list", "article_view", "sources_page"],
+            )
+            and local_deployment_acceptance_record_passed(
+                report="reports/acceptance/local_user_acceptance.json",
+            )
+            and no_open_user_acceptance_failures()
             and required_gates_mapped_only_to_passed_tasks_with_evidence_and_reports(
                 tasks_snapshot,
             )
             and task_blocked_tasks_do_not_contribute_to_gate_coverage(tasks_snapshot)
-            and task_blocked_tasks_have_acceptance_gate_none(tasks_snapshot)
+            and no_task_blocked(tasks_snapshot)
             and no_required_stage_is_skipped(
                 acceptance.reports,
                 required_stage_source="docs/07_test_spec.md#2.13",
@@ -865,6 +957,10 @@ while True:
 
     elif state == "ITERATE":
         failed_gates = extract_failed_acceptance_gates()
+        user_acceptance_failures = extract_user_acceptance_failures(
+            report="reports/acceptance/local_user_acceptance.json",
+        )
+        convert_user_failures_to_regression_tasks(user_acceptance_failures)
         map_failed_gates_to_existing_or_new_tasks(failed_gates)
         order_tasks_by_priority("tasks.md")
         if not has_actionable_pending_tasks("tasks.md"):

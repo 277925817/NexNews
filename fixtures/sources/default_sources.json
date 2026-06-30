@@ -1,0 +1,11 @@
+{
+  "sources": [
+    "https://developers.openai.com/rss.xml",
+    "https://openai.com/news/rss.xml",
+    "https://dreyx.com/digest/rss",
+    "https://news.ycombinator.com/rss",
+    "https://hnrss.org/frontpage",
+    "https://hnrss.org/newest",
+    "https://hnrss.org/bestcomments"
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "version": "mvp_acceptance_fixture@v1",
+  "feeds": [
+    {
+      "rss_url": "https://developers.openai.com/rss.xml",
+      "status": "success",
+      "items": [
+        {
+          "guid": "fixture-threshold-60",
+          "title": "Threshold AI agent reaches production",
+          "link": "https://example.com/news/threshold?utm_source=rss",
+          "published_at": "2026-06-28T08:00:00Z",
+          "summary": "RSS summary for a threshold-selected article."
+        },
+        {
+          "guid": "fixture-threshold-60-duplicate",
+          "title": "Threshold AI agent reaches production duplicate",
+          "link": "https://example.com/news/threshold?utm_campaign=duplicate",
+          "published_at": "2026-06-28T08:05:00Z",
+          "summary": "Duplicate RSS summary that must not create another news row."
+        },
+        {
+          "guid": "fixture-low-59",
+          "title": "Low signal AI funding rumor",
+          "link": "https://example.com/news/low-signal",
+          "published_at": "2026-06-28T07:30:00Z",
+          "summary": "Low signal RSS summary."
+        }
+      ]
+    },
+    {
+      "rss_url": "https://openai.com/news/rss.xml",
+      "status": "success",
+      "items": [
+        {
+          "guid": "fixture-translated-96",
+          "title": "New AI model released",
+          "link": "https://example.com/news/translated?utm_medium=rss",
+          "published_at": "2026-06-28T07:00:00Z",
+          "summary": "RSS summary for a translated article."
+        },
+        {
+          "guid": "fixture-translate-partial",
+          "title": "AI translation mock emits partial output",
+          "link": "https://example.com/news/translation-partial",
+          "published_at": "2026-06-28T06:30:00Z",
+          "summary": "RSS fallback summary for translation failure."
+        }
+      ]
+    },
+    {
+      "rss_url": "https://dreyx.com/digest/rss",
+      "status": "failure",
+      "error": "parsing"
+    },
+    {
+      "rss_url": "https://news.ycombinator.com/rss",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://hnrss.org/frontpage",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://hnrss.org/newest",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://hnrss.org/bestcomments",
+      "status": "success",
+      "items": []
+    }
+  ]
+}

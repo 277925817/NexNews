@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/local_user_acceptance.schema.json",
+  "title": "Local User Acceptance Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ref",
+    "schema_version",
+    "status",
+    "local_url",
+    "port",
+    "database",
+    "checked_surfaces",
+    "failed_findings",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_ref": {
+      "const": "workflows.md#LocalUserAcceptanceReport"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "local_url": {
+      "type": "string",
+      "pattern": "^https?://"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string"
+        },
+        "fixture_set": {
+          "type": "string"
+        }
+      }
+    },
+    "checked_surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "home_news_feed",
+          "high_score_list",
+          "article_view",
+          "sources_page",
+          "refresh_action",
+          "error_state"
+        ]
+      }
+    },
+    "failed_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "surface",
+          "severity",
+          "summary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "surface": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "blocker",
+              "critical",
+              "major",
+              "minor"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

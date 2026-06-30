@@ -1,0 +1,16 @@
+{
+  "version": "mvp_mock@v1",
+  "pending_guids": ["fixture-threshold-60"],
+  "translations": {
+    "fixture-translated-96": {
+      "title_zh": "新的 AI 模型发布",
+      "summary_zh": "这是一条来自 fixture 的中文摘要。",
+      "content_zh": "这是一篇来自 fixture 的中文正文。"
+    },
+    "fixture-translate-partial": {
+      "title_zh": "部分翻译标题",
+      "summary_zh": "",
+      "content_zh": "缺少摘要时必须整体失败。"
+    }
+  }
+}

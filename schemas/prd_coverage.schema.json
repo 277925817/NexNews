@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/prd_coverage.schema.json",
+  "title": "PRD Coverage Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ref",
+    "schema_version",
+    "status",
+    "source",
+    "coverage_items",
+    "uncovered_acceptance_items",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_ref": {
+      "const": "07_test_spec.md#6.3.1"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "const": "docs/01_prd.md"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "coverage_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_path",
+          "source_line",
+          "acceptance_text",
+          "task_ids",
+          "acceptance_gate",
+          "assertion_ids",
+          "report_paths",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^PRD-[0-9]+\\.[0-9]+-AC-[0-9]{3}$"
+          },
+          "source_path": {
+            "const": "docs/01_prd.md"
+          },
+          "source_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "acceptance_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+            }
+          },
+          "acceptance_gate": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^ACC-STOP-00[1-9]$|^ACC-STOP-010$"
+            }
+          },
+          "assertion_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "report_paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "uncovered"
+            ]
+          }
+        }
+      }
+    },
+    "uncovered_acceptance_items": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

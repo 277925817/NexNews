@@ -13,6 +13,13 @@
     "failed_gates",
     "blocked_gates",
     "unknown_gates",
+    "stop_inputs",
+    "failed_stop_inputs",
+    "failure_reasons",
+    "unfinished_tasks",
+    "uncovered_prd_items",
+    "uncovered_task_acceptance_items",
+    "user_acceptance_failures",
     "generated_from_reports",
     "timestamp"
   ],
@@ -56,6 +63,108 @@
     "unknown_gates": {
       "$ref": "#/$defs/gate_list"
     },
+    "stop_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_completion_status",
+        "prd_coverage_status",
+        "task_acceptance_coverage_status",
+        "browser_e2e_status",
+        "local_user_acceptance_status"
+      ],
+      "properties": {
+        "task_completion_status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "prd_coverage_status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "task_acceptance_coverage_status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "browser_e2e_status": {
+          "$ref": "#/$defs/status_value"
+        },
+        "local_user_acceptance_status": {
+          "$ref": "#/$defs/status_value"
+        }
+      }
+    },
+    "failed_stop_inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stop_input_name"
+      },
+      "uniqueItems": true
+    },
+    "failure_reasons": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "unfinished_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+          },
+          "status": {
+            "type": "string"
+          },
+          "active_state": {
+            "type": "string"
+          },
+          "acceptance_gate": {},
+          "evidence": {},
+          "test_report": {}
+        }
+      }
+    },
+    "uncovered_prd_items": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "uncovered_task_acceptance_items": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "user_acceptance_failures": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "generated_from_reports": {
       "type": "array",
       "items": {
@@ -69,6 +178,25 @@
     }
   },
   "$defs": {
+    "status_value": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "UNKNOWN",
+        "TASK_BLOCKED",
+        "WORKFLOW_BLOCKED",
+        "ENV_BLOCKED"
+      ]
+    },
+    "stop_input_name": {
+      "enum": [
+        "task_completion_status",
+        "prd_coverage_status",
+        "task_acceptance_coverage_status",
+        "browser_e2e_status",
+        "local_user_acceptance_status"
+      ]
+    },
     "gate_list": {
       "type": "array",
       "items": {

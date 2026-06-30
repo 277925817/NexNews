@@ -136,12 +136,19 @@ isolation: strict_mock
 - 使用 mock API response 渲染 UI。
 - Click NewsCard → detail page。
 - Click HighScoreList item → detail page。
+- Home page fixture 必须包含足够数量的可展示新闻来证明产品体验；当 fixture 中最近 30 天合格新闻不少于 10 条时，HighScoreList 必须渲染 10 条。
+- Home News Feed 不能只用 1-3 条 smoke sample 证明完成；验收 fixture 必须覆盖至少 10 条可展示新闻、`score=59` 排除项、30 天窗口外排除项和同分排序项。
+- Browser/DOM E2E 必须点击 NewsCard 和 HighScoreList item 进入 ArticleView，并断言详情页请求 `GET /api/news/{id}`、展示匹配 ID 的中文详情、ready 等待态、translation_failed 失败态和 404 错误态。
+- Browser/DOM E2E 必须进入 Sources page，并断言 `GET/POST/PATCH/DELETE /api/sources` 绑定、创建成功、非法 URL 错误、禁用最后一个启用 source 错误和删除视觉移除。
+- Browser/DOM E2E 必须点击 Home `[刷新]`，断言调用 `POST /api/refresh`，完成后重新调用 `GET /api/home`，且不会出现 HTML 被当 JSON 解析的错误。
+- NewsCard summary fixture 必须包含带 HTML-like 标签的中文摘要字符串，并断言浏览器 DOM 将其作为文本渲染，不生成对应元素节点。
 - Loading state 必须在 fetch 期间出现。
 - Error state 必须渲染固定 fallback view。
 - `NewsItem.status` → UI 展示必须 deterministic。
 - UI 不得从 `summary_zh` 或 `content_zh` 反推 status。
 - Invalid state combination must throw error in dev mode。
 - ScoreBadge 和 SourceMarker 必须不可点击。
+- SourceMarker 或 NewsCard source color 必须按 source id/name 稳定映射，不同 source 在 fixture 中必须产生可区分颜色；颜色不得成为唯一信息载体。
 - HighScoreList 不得拥有独立 API、独立刷新、独立滚动容器、tab、modal、drawer、dropdown 或 floating sidebar。
 - NewsCard 不得在任何状态渲染 `content_zh`。
 - `ready` / `translation_failed` UI 不得渲染 `summary_zh` 或 `content_zh`。
@@ -184,7 +191,8 @@ isolation: strict_mock
 - Required stages for acceptance are exactly: `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot`, `e2e`.
 - `acceptance` is a harness gate-evaluation stage. It runs after required stages, consumes their reports, and emits ACC-STOP reports plus `STOP_ALLOWED.json`; it is not one of the required product verification stages.
 - `acceptance` must run only as a full-stage command without `--task-id`; task-scoped acceptance is invalid and must emit structured failure evidence.
-- Stage commands and report paths are defined by `harness.md`.
+- Stage commands, report paths and workflow loop strategy are defined by `workflows.md`.
+- The historical stage list is supported for compatibility, but final stop eligibility depends on PRD coverage, browser-visible E2E evidence and latest local user acceptance. A shallow pass in each stage is not sufficient.
 - Each stage must start from clean isolated state。
 - Stage failure must stop downstream execution。
 - No shared global state across stages。
@@ -249,11 +257,16 @@ Mandatory catalog:
 | `A-acceptance-ACC-STOP-001-stop-decision-schema` | acceptance | ACC-STOP-001 | report_metadata | `STOP_ALLOWED.json` conforms to `docs/08_acceptance.md#5.1` and contains only relative `generated_from_reports` paths. |
 | `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | acceptance | ACC-STOP-001 | report_metadata | Acceptance rejects task-scoped gate evaluation and task-scoped reports as substitutes for full-stage stop evidence. |
 | `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 7 documented default sources once. |
+| `A-api-ACC-STOP-002-default-source-exact-list` | api | ACC-STOP-002 | public_surface | Empty database initialization creates a source URL set exactly equal to the 7 URLs listed in `docs/01_prd.md`. |
 | `A-api-ACC-STOP-002-source-crud-errors` | api | ACC-STOP-002 | public_surface | Source create, update and delete APIs return documented success and structured error responses for invalid, duplicate, private, deleted and missing source cases. |
 | `A-api-ACC-STOP-002-source-tombstone-history` | api | ACC-STOP-002 | public_surface | Source delete uses soft tombstone behavior, hides the source from configuration API and preserves historical news visibility. |
+| `A-api-ACC-STOP-002-default-source-crud-parity` | api | ACC-STOP-002 | public_surface | Default seeded sources and user-created sources have identical enable, disable, delete, tombstone and no-auto-restore behavior. |
+| `A-integration-ACC-STOP-002-source-ui-crud-parity` | integration | ACC-STOP-002 | public_surface | Sources UI renders identical controls and state transitions for default seeded and user-created sources. |
 | `A-integration-ACC-STOP-003-scheduler-fixed-clock` | integration | ACC-STOP-003 | internal_evidence | Fixed clock cases trigger scheduled refresh at 09:00 and 18:00 and do not trigger at non-scheduled times. |
 | `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold fixture proves score 60 is selected and score 59 is not API/UI visible. |
+| `A-integration-ACC-STOP-003-dedupe-positive-distinct-items` | integration | ACC-STOP-003 | internal_evidence | Distinct high-score items with different canonical URLs or different domains remain separate fetch candidates. |
 | `A-integration-ACC-STOP-003-fetch-fallback` | integration | ACC-STOP-003 | internal_evidence | Fetch success, extraction failure with RSS fallback and no-content failure produce the documented displayability outcomes. |
+| `A-integration-ACC-STOP-003-fallback-summary-translation` | integration | ACC-STOP-003 | internal_evidence | A fetched item using RSS summary fallback produces non-empty Chinese summary and content through translation. |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | integration | ACC-STOP-003 | internal_evidence | Translation failure does not write partial Chinese fields and does not block other items. |
 | `A-api-ACC-STOP-004-home-detail-behavior` | api | ACC-STOP-004 | public_surface | Home and detail endpoints enforce sorting, 30-day ranking, translated detail fields and structured 404 behavior. |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | api | ACC-STOP-004 | public_surface | User, login, search, category, comment, favorite, share, task progress, retry, admin and versioning endpoints are absent. |
@@ -262,6 +275,14 @@ Mandatory catalog:
 | `A-unit-ACC-STOP-005-translation-facts` | unit | ACC-STOP-005 | internal_evidence | Translation success and failure facts derive only from Chinese fields, `has_translate_failed` cache and `processing_log`. |
 | `A-integration-ACC-STOP-006-ui-forbidden-rendering` | integration | ACC-STOP-006 | public_surface | Ready and translation-failed UI states render no `summary_zh`, `content_zh`, raw English summary or raw English body. |
 | `A-integration-ACC-STOP-006-ui-allowed-interactions` | integration | ACC-STOP-006 | public_surface | UI click behavior is limited to the whitelist in `docs/03_ui_spec.md#5.0`. |
+| `A-e2e-ACC-STOP-006-home-news-density` | e2e | ACC-STOP-006 | public_surface | Browser-visible Home News Feed renders the PRD fixture news set, not a sparse smoke sample. |
+| `A-e2e-ACC-STOP-006-high-score-list-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible HighScoreList renders up to 10 eligible 30-day items sorted by score and supports click-through to ArticleView. |
+| `A-e2e-ACC-STOP-006-article-view-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible ArticleView loads `GET /api/news/{id}`, renders matching translated detail, ready waiting state, translation_failed state and structured 404 state without raw English body. |
+| `A-e2e-ACC-STOP-006-article-original-link-button` | e2e | ACC-STOP-006 | public_surface | Browser-visible ArticleView renders a user-visible original URL link or button for translated details. |
+| `A-e2e-ACC-STOP-006-no-direct-original-navigation` | e2e | ACC-STOP-006 | public_surface | Browser-visible NewsCard and HighScoreList clicks stay on internal ArticleView routes and do not navigate directly to the original site. |
+| `A-e2e-ACC-STOP-006-sources-page-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible Sources page binds to `GET/POST/PATCH/DELETE /api/sources` and proves create, invalid URL, disable-all error and delete visual removal. |
+| `A-e2e-ACC-STOP-006-refresh-action-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible refresh action calls `POST /api/refresh`, then reloads `GET /api/home`, with no HTML-as-JSON parse error. |
+| `A-e2e-ACC-STOP-006-news-card-summary-text-only` | e2e | ACC-STOP-006 | public_surface | Browser-visible NewsCard summary renders HTML-like fixture text as text content and does not create raw HTML nodes. |
 | `A-snapshot-ACC-STOP-006-layout-visual-contract` | snapshot | ACC-STOP-006 | public_surface | Home layout, NewsCard density, skeleton dimensions and ArticleView reading width match the UI spec. |
 | `A-unit-ACC-STOP-007-llm-request-shapes` | unit | ACC-STOP-007 | internal_evidence | Scoring and translation requests contain exactly the documented structured JSON input fields. |
 | `A-unit-ACC-STOP-007-llm-retry-failure-policy` | unit | ACC-STOP-007 | internal_evidence | Invalid, timeout and schema-invalid LLM outputs retry at most twice and do not write successful business fields. |
@@ -270,6 +291,11 @@ Mandatory catalog:
 | `A-unit-ACC-STOP-009-log-sanitizer` | unit | ACC-STOP-009 | internal_evidence | Log sanitizer removes or truncates raw body, fallback text, prompt, secret and token-like values before persistence. |
 | `A-integration-ACC-STOP-009-ui-dom-leak-scan` | integration | ACC-STOP-009 | public_surface | UI DOM leak scan finds zero forbidden internal fields and zero sensitive content matches. |
 | `A-acceptance-ACC-STOP-009-report-leak-scan` | acceptance | ACC-STOP-009 | report_metadata | Acceptance scans public-surface reports for forbidden fields and internal-evidence reports for sensitive value leaks. |
+| `A-acceptance-ACC-STOP-001-prd-coverage-complete` | acceptance | ACC-STOP-001 | report_metadata | Acceptance verifies every `docs/01_prd.md` acceptance statement is mapped to executed structured evidence. |
+| `A-acceptance-ACC-STOP-001-task-acceptance-coverage-complete` | acceptance | ACC-STOP-001 | report_metadata | Acceptance verifies every `tasks.md` acceptance criterion is mapped to executed structured evidence. |
+| `A-acceptance-ACC-STOP-001-task-completion-all-passed` | acceptance | ACC-STOP-001 | report_metadata | Acceptance verifies every `tasks.md` DAG node has `status = passed`; pending, in_progress and task_blocked nodes fail stop eligibility. |
+| `A-acceptance-ACC-STOP-001-browser-e2e-evidence` | acceptance | ACC-STOP-001 | report_metadata | Acceptance verifies browser E2E stop input covers Home News Feed, HighScoreList, ArticleView and Sources page with structured passed evidence. |
+| `A-acceptance-ACC-STOP-001-local-user-acceptance-passed` | acceptance | ACC-STOP-001 | report_metadata | Acceptance verifies latest local user acceptance report exists, matches schema and has no failed findings. |
 | `A-static-ACC-STOP-010-contract-doc-sync` | static | ACC-STOP-010 | report_metadata | API, data, UI and report contract changes are reflected in their authoritative documents. |
 | `A-static-ACC-STOP-010-non-goal-files-absent` | static | ACC-STOP-010 | report_metadata | Repository contains no active MVP implementation for documented non-goal capabilities. |
 
@@ -306,11 +332,16 @@ Rules:
 | `A-acceptance-ACC-STOP-001-stop-decision-schema` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
 | `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
 | `A-api-ACC-STOP-002-default-source-seed` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
+| `A-api-ACC-STOP-002-default-source-exact-list` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-source-crud-errors` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-source-tombstone-history` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-002-default-source-crud-parity` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
+| `A-integration-ACC-STOP-002-source-ui-crud-parity` | ACC-STOP-002 | TASK-017 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-scheduler-fixed-clock` | ACC-STOP-003 | TASK-010 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-threshold-selection` | ACC-STOP-003 | TASK-006 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-dedupe-positive-distinct-items` | ACC-STOP-003 | TASK-006 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-fetch-fallback` | ACC-STOP-003 | TASK-007 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-fallback-summary-translation` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
 | `A-api-ACC-STOP-004-home-detail-behavior` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
@@ -319,6 +350,14 @@ Rules:
 | `A-unit-ACC-STOP-005-translation-facts` | ACC-STOP-005 | TASK-018 | unit | reports/stages/unit.json |
 | `A-integration-ACC-STOP-006-ui-forbidden-rendering` | ACC-STOP-006 | TASK-020 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-006-ui-allowed-interactions` | ACC-STOP-006 | TASK-020 | integration | reports/stages/integration.json |
+| `A-e2e-ACC-STOP-006-home-news-density` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-high-score-list-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-article-view-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-article-original-link-button` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-no-direct-original-navigation` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-sources-page-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-refresh-action-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-news-card-summary-text-only` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
 | `A-snapshot-ACC-STOP-006-layout-visual-contract` | ACC-STOP-006 | TASK-023 | snapshot | reports/stages/snapshot.json |
 | `A-unit-ACC-STOP-007-llm-request-shapes` | ACC-STOP-007 | TASK-005 | unit | reports/stages/unit.json |
 | `A-unit-ACC-STOP-007-llm-retry-failure-policy` | ACC-STOP-007 | TASK-005 | unit | reports/stages/unit.json |
@@ -327,6 +366,11 @@ Rules:
 | `A-unit-ACC-STOP-009-log-sanitizer` | ACC-STOP-009 | TASK-008 | unit | reports/stages/unit.json |
 | `A-integration-ACC-STOP-009-ui-dom-leak-scan` | ACC-STOP-009 | TASK-020 | integration | reports/stages/integration.json |
 | `A-acceptance-ACC-STOP-009-report-leak-scan` | ACC-STOP-009 | TASK-023 | acceptance | reports/acceptance/ACC-STOP-009.json |
+| `A-acceptance-ACC-STOP-001-prd-coverage-complete` | ACC-STOP-001 | TASK-026 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-acceptance-ACC-STOP-001-task-acceptance-coverage-complete` | ACC-STOP-001 | TASK-026 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-acceptance-ACC-STOP-001-task-completion-all-passed` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-acceptance-ACC-STOP-001-browser-e2e-evidence` | ACC-STOP-001 | TASK-026 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-acceptance-ACC-STOP-001-local-user-acceptance-passed` | ACC-STOP-001 | TASK-026 | acceptance | reports/acceptance/ACC-STOP-001.json |
 | `A-static-ACC-STOP-010-contract-doc-sync` | ACC-STOP-010 | TASK-025 | static | reports/stages/static.json |
 | `A-static-ACC-STOP-010-non-goal-files-absent` | ACC-STOP-010 | TASK-001 | static | reports/stages/static.json |
 
@@ -337,11 +381,14 @@ Rules:
 - RSS 重复去重：相同 canonical URL 只保留 1 条。
 - URL canonicalization：`utm_*`、`fbclid` 等跟踪参数必须被移除。
 - 不同 URL 但相同 `canonical_url` 不得重复入库。
+- 不同 `canonical_url` 或不同域名的高分新闻必须保持为不同待抓取候选，不得被标题相似度或过宽去重规则合并。
 - RSS 时间排序正确：`GET /api/home.data.latest_news` 按 `published_at DESC`。
 - RSS 缺少 optional summary：parser 不 crash，后续评分仍可执行。
 - RSS URL 无效：错误归类为 `parsing` 或 `network`，不得 silent fail。
 - 默认 RSS source bootstrap：空库首次启动时写入默认源；已有 source 配置时不得重复写入。
+- 默认 RSS source bootstrap 必须断言 source URL 集合精确等于 `docs/01_prd.md` 列出的 7 个 URL，不得只断言数量。
 - 预置 source 被删除/禁用后，不得在下一次启动或刷新时自动恢复。
+- 预置 source 与用户新增 source 在 API 中必须拥有相同启用、停用、删除、重复 tombstone 校验和最后启用 source 保护行为。
 - 只抓取 `is_enabled = 1` 的 source。
 - 单个 source 抓取失败必须写入 `processing_log(stage=crawl, success=0)`，且其他 source 继续处理。
 
@@ -356,11 +403,12 @@ Rules:
 ### 3.2 LLM 评分
 - Scoring request JSON 必须包含 `title`、`summary`、`source`、`published_at`、`original_link`。
 - Scoring response JSON 必须通过 schema validation；`score` 必须为 `0-100` 数字。
+- Scoring response JSON 必须包含非空 `reason`；缺失或空 `reason` 必须归类为 `validation_llm_error`。
 - score 范围合法：小于 `0` 或大于 `100` 时拒绝写入。
 - 高分过滤正确：score `80` 的新闻进入可展示链路。
 - 低分过滤正确：score `30` 的新闻不出现在 `GET /api/home`。
 - 标题或原文链接缺失时评分为 `0`，且不得进入 fetch。
-- 摘要缺失时 scoring input 必须保留空字段，并测试扣分或 mock score rule。
+- 摘要缺失时 scoring input 必须保留空字段，并断言最终 score 比同等完整摘要基准扣 `20` 分。
 - 写入 `score` 后必须立即计算 `is_selected`，默认 threshold 为 `60`。
 - `is_selected = 1` 不得改变 `pipeline_state`；`pipeline_state` 只允许 `raw → scored → fetched`。
 - JSON schema 错误：缺少 `score` 时归类为 `validation_llm_error`。
@@ -371,6 +419,7 @@ Rules:
 - Translation request JSON 必须包含 `original_title`、`original_summary`、`original_content`、`source`、`score`。
 - Translation response JSON 必须通过 schema validation；`title_zh`、`summary_zh`、`content_zh` 必须非空。
 - 翻译输入优先使用 `content_full`；无全文时使用 `content_raw`。
+- 当 `content_full` 不可用且 `content_raw` 来自 RSS 摘要兜底时，翻译必须基于同一 fallback item 生成非空 `summary_zh` 和 `content_zh`。
 - 翻译成功：`title_zh` 映射到 API `title`。
 - 中文摘要：`summary_zh` 只在 `translated` 时返回。
 - 中文正文：`content_zh` 只在详情接口且 `translated` 时返回。
@@ -398,6 +447,7 @@ Rules:
 - `POST /api/sources` 成功返回 `201`、`is_enabled = true`、`fetch_frequency = twice_daily`。
 - `POST /api/sources` 空 name、空 rss_url、非法 URL、本地地址和私有地址返回结构化 `400`，且数据库不新增记录。
 - `POST /api/sources` 重复 RSS URL 返回 `409`，包括已删除 source tombstone 上的同一 URL。
+- `POST/PATCH/DELETE /api/sources` 必须分别使用默认预置 source 和用户新增 source 执行同一组 CRUD 行为断言，结果除对象 ID 和创建时间外必须一致。
 - `PATCH /api/sources/{id}` 成功返回更新后的 `SourceItem`。
 - `PATCH /api/sources/{id}` source 不存在返回 `404`。
 - `PATCH /api/sources/{id}` source 已删除返回 `404`。
@@ -412,14 +462,19 @@ Rules:
 
 ### 3.5 UI 层
 - NewsCard 正确渲染标题、来源、时间、评分、状态。
+- NewsCard translated summary 必须通过 text node 渲染；当 fixture 的 `summary_zh` 包含 `<b>`、`<script>` 或类似 HTML-like 文本时，DOM 不得生成对应标签节点。
 - HighScoreList 使用与 News Feed 相同的 `NewsListItem` shape。
+- HighScoreList 必须只渲染最近 30 天合格新闻；当 fixture 中合格新闻不少于 10 条时渲染 10 条，并按 `score DESC, published_at DESC` 排序。
 - ArticleView 在 `translated` 时渲染 `summary_zh` 和 `content_zh`。
 - ArticleView 在 `ready` / `translation_failed` 时不渲染 `summary_zh`、`content_zh`。
+- ArticleView 在 translated detail 中必须渲染原文链接按钮或链接，且该链接不得替代 NewsCard 或 HighScoreList 的站内导航。
+- NewsCard 标题点击和 HighScoreList 标题点击必须停留在站内 ArticleView route，不得直接打开原文站点。
 - 空字段不 crash，不自动补默认文案，不用其他字段替代。
 - NewsCard 点击和 Title 点击必须进入同一个 ArticleView。
 - HighScoreList item 点击必须使用同一个 news `id` 进入 ArticleView。
 - ScoreBadge 不得触发排序、筛选或跳转。
 - SourceMarker 不得跳转来源站点。
+- SourceMarker 或卡片来源色必须稳定且可区分，测试不得只验证元素存在。
 - TopBar 只提供 NexNews 返回主页、刷新、信源入口。
 - Refresh 默认文案为 `刷新`，加载中禁用且文案为 `刷新中`，完成后重新加载新闻列表。
 - 新闻列表加载中必须渲染与 NewsCard 尺寸一致的紧凑 skeleton。
@@ -428,6 +483,7 @@ Rules:
 - ArticleView 404 / 不可用状态渲染 `新闻不存在或不可展示` 和返回按钮。
 - SourceForm 空字段时新增按钮禁用；非法 URL 显示行内校验；新增中按钮禁用；新增成功后清空输入并刷新列表。
 - Source toggle frontend binding 必须调用 `PATCH /api/sources/{id}`，并正确展示 `404`、`409` 错误状态。
+- 默认预置 source 和用户新增 source 在 RSS 配置页必须显示相同启用、停用、删除控件；被删除或停用的预置 source 重新加载后不得自动恢复显示。
 - RSS 配置页不得出现高级设置、分类、未记录的 UI 行为或额外组件。
 
 ### 3.6 数据模型与持久化层
@@ -760,6 +816,99 @@ visibility_policy:
   report_metadata: "harness bookkeeping only, product payload bodies forbidden"
 ```
 
+### 6.3.1 PRD Coverage Report
+
+`reports/acceptance/prd_coverage.json` records PRD acceptance coverage. It is a stop-input artifact, not a substitute for full-stage reports.
+
+The machine-checkable JSON Schema for this report lives at `schemas/prd_coverage.schema.json`. The prose contract in this section remains authoritative when schema and prose conflict, and schema changes must update this section in the same task.
+
+```json
+{
+  "schema_ref": "07_test_spec.md#6.3.1",
+  "schema_version": "v1",
+  "status": "failed",
+  "source": {
+    "path": "docs/01_prd.md",
+    "version": "prd_mvp@v1"
+  },
+  "coverage_items": [
+    {
+      "id": "PRD-5.1-AC-001",
+      "source_path": "docs/01_prd.md",
+      "source_line": 328,
+      "acceptance_text": "主页面能展示新闻卡片列表。",
+      "task_ids": ["TASK-015", "TASK-024"],
+      "acceptance_gate": ["ACC-STOP-006"],
+      "assertion_ids": [
+        "A-e2e-ACC-STOP-006-home-news-density"
+      ],
+      "report_paths": ["reports/stages/e2e.json"],
+      "status": "passed"
+    }
+  ],
+  "uncovered_acceptance_items": [],
+  "timestamp": "2026-06-28T09:00:00Z"
+}
+```
+
+Rules:
+
+- `schema_ref` MUST equal `07_test_spec.md#6.3.1`.
+- `schema_version` MUST equal `v1`.
+- Every checklist-style acceptance bullet under `docs/01_prd.md` MUST receive a stable id with format `PRD-<feature>.<flow>-AC-<nnn>`, for example `PRD-6.1-AC-003`.
+- `status = passed` requires every checklist-style acceptance bullet under `docs/01_prd.md` to appear in `coverage_items` with `status = passed`.
+- Every `coverage_items[*]` record MUST include PRD id, source path, source line, acceptance text, mapped task ids, acceptance gates, assertion ids, report paths and execution status.
+- `task_ids` MUST reference tasks that exist in `tasks.md`, have `status = passed` at final acceptance time, and declare at least one matching `acceptance_gate`.
+- `assertion_ids` MUST reference assertion ids that exist in a structured task, full-stage or ACC-STOP report. When the PRD item contributes to final stop eligibility, at least one referenced report MUST be a full-stage or ACC-STOP report, not only a task-scoped report.
+- `report_paths` MUST be stable relative paths and MUST point to existing structured evidence when status is `passed`.
+- `uncovered_acceptance_items` MUST list every PRD acceptance item that is unmapped, unexecuted, failed, flaky, skipped, mapped only to prose, mapped only to task-scoped evidence when full-stage evidence is required, or missing report paths.
+- `prd_coverage_status = PASS` requires this report to exist, match `schemas/prd_coverage.schema.json`, report `status = passed`, and contain no uncovered PRD acceptance item.
+
+### 6.4 Task Acceptance Coverage Report
+
+`reports/acceptance/task_acceptance_coverage.json` records task-level acceptance coverage. It is a stop-input artifact, not a substitute for full-stage reports.
+
+The machine-checkable JSON Schema for this report lives at `schemas/task_acceptance_coverage.schema.json`. The prose contract in this section remains authoritative when schema and prose conflict, and schema changes must update this section in the same task.
+
+```json
+{
+  "schema_ref": "07_test_spec.md#6.4",
+  "schema_version": "v1",
+  "status": "failed",
+  "source": {
+    "path": "tasks.md",
+    "version": "tasks_mvp@v8"
+  },
+  "coverage_items": [
+    {
+      "id": "TASK-015:AC-001",
+      "task_id": "TASK-015",
+      "source_path": "tasks.md",
+      "source_line": 483,
+      "acceptance_text": "Translated card shows Chinese title and summary_zh.",
+      "acceptance_gate": ["ACC-STOP-006"],
+      "test_scope": ["integration"],
+      "assertion_ids": ["A-integration-ACC-STOP-006-ui-render-contract"],
+      "report_paths": ["reports/stages/integration.json"],
+      "status": "passed"
+    }
+  ],
+  "uncovered_task_acceptance_items": [],
+  "timestamp": "2026-06-28T09:00:00Z"
+}
+```
+
+Rules:
+
+- `schema_ref` MUST equal `07_test_spec.md#6.4`.
+- `schema_version` MUST equal `v1`.
+- `status = passed` requires every `tasks.md.dag.nodes[*].acceptance_criteria[*]` item to appear in `coverage_items` with `status = passed`.
+- Every `coverage_items[*]` record MUST include task id, source path, source line, acceptance text, declared acceptance gates, declared test scopes, assertion ids, report paths and execution status.
+- `assertion_ids` MUST reference assertion ids that exist in a structured task or full-stage report. When the criterion contributes to final stop eligibility, at least one referenced report MUST be a full-stage or ACC-STOP report, not only a task-scoped report.
+- `report_paths` MUST be stable relative paths and MUST point to existing structured evidence when status is `passed`.
+- `uncovered_task_acceptance_items` MUST list every criterion that is unmapped, unexecuted, failed, flaky, skipped, mapped only to prose, or missing report paths.
+- `task_acceptance_coverage_status = PASS` requires this report to exist, match `schemas/task_acceptance_coverage.schema.json`, report `status = passed`, and contain no uncovered task acceptance item.
+
 ## 7. 验收标准
 - Static compliance tests pass。
 - 所有 API tests pass。
@@ -773,9 +922,10 @@ visibility_policy:
 - Flaky quarantine 必须为空或有明确 owner。
 - Test report collection 必须符合 `Test Report Contract`。
 - Test report collection 必须覆盖 `static`、`unit`、`contract`、`api`、`integration`、`replay`、`snapshot`、`e2e` stage。
+- Task acceptance coverage report 必须覆盖 `tasks.md` 中每条 acceptance criterion，且不得以 prose-only 或 task-scoped-only evidence 满足最终 stop eligibility。
 - Test failure 必须输出 fixture version 和 data hash。
 - Test execution 必须按 orchestration order 执行。
-- Test execution command surface and report paths must match `harness.md`.
+- Test execution command surface and report paths must match `workflows.md`.
 - Test failure 必须先报告最高优先级 failure。
 - Timeout failure 必须使用 `timeout` category。
 - Test failure 必须包含 `trace_id`、fixture version、mock version、expected vs actual diff。

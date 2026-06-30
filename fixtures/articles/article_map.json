@@ -1,0 +1,17 @@
+{
+  "version": "mvp_acceptance_fixture@v1",
+  "articles": {
+    "https://example.com/news/threshold": {
+      "status": "success",
+      "path": "threshold.html"
+    },
+    "https://example.com/news/translated": {
+      "status": "success",
+      "path": "translated.html"
+    },
+    "https://example.com/news/translation-partial": {
+      "status": "failure",
+      "error": "network"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 meta:
-  version: tasks_mvp@v7
+  version: tasks_mvp@v8
   mode: dag_execution
   purpose: "stable executable MVP product task system"
   architecture: "single FastAPI app + React/Vite SPA + SQLite"
@@ -36,7 +36,7 @@ meta:
     - "ACC-STOP-008"
     - "ACC-STOP-009"
     - "ACC-STOP-010"
-  stop_condition: "ACC-STOP-001 through ACC-STOP-010 pass and docs/08_acceptance.md STOP_ALLOWED = true"
+  stop_condition: "every dag.nodes[*].status is passed, ACC-STOP-001 through ACC-STOP-010 are PASS, task_completion_status/prd_coverage_status/task_acceptance_coverage_status/browser_e2e_status/local_user_acceptance_status are PASS, and docs/08_acceptance.md STOP_ALLOWED = true"
   retry_policy:
     max_retry: 3
     fallback: "record failing_area + isolate owner task + retry"
@@ -44,28 +44,28 @@ meta:
 dag:
   nodes:
     - id: TASK-000
-      name: "Harness contract repair"
+      name: "Workflow executor contract repair"
       layer: "L0: Bootstrap"
       type: ["docs", "test"]
       status: "pending"
-      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static"]
       depends_on: []
-      description: "Repair the document-level harness contract and create the first runnable local harness command surface before product implementation begins."
+      description: "Repair the document-level workflow executor contract and create the first runnable local command surface before product implementation begins."
       inputs:
-        - "Harness command surface from harness.md."
+        - "Workflow command surface from workflows.md."
         - "TestReport contract from docs/07_test_spec.md#6."
         - "Stop gate contract from docs/08_acceptance.md."
       outputs:
-        - "scripts/run_harness.py accepts every harness stage."
+        - "scripts/run_harness.py accepts every workflow stage command."
         - "Stage and gate reports have deterministic structured failure output before product tests exist."
-        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, and schemas/tasks.schema.json exist."
+        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, schemas/tasks.schema.json, schemas/prd_coverage.schema.json, schemas/task_acceptance_coverage.schema.json, and schemas/local_user_acceptance.schema.json exist."
         - "STOP_ALLOWED report has a documented stop-decision shape."
       acceptance_criteria:
-        - "Every harness stage command writes a machine-readable report to the documented report paths."
-        - "TASK-000 static validation checks schema files are parseable and validates tasks.md plus generated harness reports against those schemas."
+        - "Every workflow stage command writes a machine-readable report to the documented report paths."
+        - "TASK-000 static validation checks schema files are parseable and validates tasks.md plus generated stage reports against those schemas."
         - "Non-acceptance stages without implemented assertions fail with structured TestReport evidence, not missing files or free-form logs."
         - "Acceptance evaluates missing or failed stage reports as failed gates and writes STOP_ALLOWED = false."
         - "static stage result = pass for harness contract repair."
@@ -146,6 +146,7 @@ dag:
       acceptance_criteria:
         - "Init hook creates the schema from TASK-002A in an empty SQLite database."
         - "Default source seed count is 7 on first init and unchanged on second init."
+        - "Default source seed URL set exactly matches the 7 URLs listed in docs/01_prd.md."
         - "Seed rows satisfy source table constraints."
         - "static stage result = pass for DB init hook and seed."
       failure_criteria:
@@ -225,8 +226,9 @@ dag:
         - "processing_log(stage = score) records success/failure."
       acceptance_criteria:
         - "Scoring request contains title, summary, source, published_at, original_link."
-        - "Valid score is numeric and within 0-100."
+        - "Scoring response requires numeric score within 0-100 and non-empty reason."
         - "Missing title or original_link scores 0."
+        - "Missing summary keeps the summary field present and applies the documented 20 point score penalty."
         - "Invalid scoring JSON retries at most 2 times."
         - "integration stage result = pass for score."
       failure_criteria:
@@ -255,6 +257,7 @@ dag:
         - "score = 59 sets is_selected = 0."
         - "is_selected does not change pipeline_state."
         - "Duplicate canonical_url count in news_item/displayable output <= 1."
+        - "Distinct high-score items with different canonical_url or different domains remain separate fetch candidates."
         - "integration stage result = pass for filter."
       failure_criteria:
         - "FAIL if filter uses selected/ready/translated as database pipeline_state."
@@ -307,6 +310,7 @@ dag:
       acceptance_criteria:
         - "Translation request contains original_title, original_summary, original_content, source, score."
         - "Valid translation writes non-empty title_zh, summary_zh, content_zh."
+        - "When content_full is unavailable but content_raw/RSS fallback is available, translation writes non-empty summary_zh and content_zh for the fallback item."
         - "Invalid translation writes 0 zh fields."
         - "Translation does not mutate pipeline_state beyond fetched."
         - "integration stage result = pass for translate."
@@ -383,7 +387,8 @@ dag:
       acceptance_criteria:
         - "GET /api/home returns 200 with top-level data."
         - "latest_news sorts by published_at DESC."
-        - "top_ranked_news length <= 10 and sorts by score DESC, published_at DESC."
+        - "latest_news proves the PRD fixture density and is not satisfied by a 1-3 item smoke sample."
+        - "top_ranked_news length <= 10, contains only displayable news from the latest 30-day window, excludes older items, and sorts by score DESC, published_at DESC."
         - "Response contains no forbidden internal fields."
         - "api stage result = pass for home."
       failure_criteria:
@@ -432,6 +437,8 @@ dag:
         - "GET /api/sources returns only non-deleted SourceItem[] sorted by created_at ASC."
         - "POST valid public RSS URL returns 201."
         - "Invalid/local/private/duplicate source requests return stable errors and do not insert rows, including duplicate URLs from deleted tombstones."
+        - "Default seeded sources and user-created sources have identical GET/PATCH/DELETE behavior, including enable, disable, soft delete, duplicate tombstone rejection, and last-enabled-source protection."
+        - "Default seeded sources that are deleted or disabled are not automatically restored by init, refresh, or list reload unless an explicit reset feature is later documented."
         - "PATCH rejects disabling the last non-deleted enabled source with 409 and returns 404 for deleted sources."
         - "DELETE soft-deletes source with is_enabled = 0 and deleted_at, returns 204 with no body, hides the source from GET /api/sources, and preserves historical news."
         - "api stage result = pass for sources."
@@ -479,8 +486,12 @@ dag:
         - "Home page, NewsCard, HighScoreList, status/score/source markers, refresh interaction."
       acceptance_criteria:
         - "Translated card shows Chinese title and summary_zh."
+        - "Translated NewsCard summary renders as text content only; raw HTML tags from RSS or translated fixtures are escaped or absent from the DOM tree."
         - "ready and translation_failed cards show original_title/status and render 0 summary_zh/content_zh nodes."
-        - "HighScoreList shows <= 10 items and no summaries."
+        - "Home renders the PRD fixture news density and cannot pass with only 1-3 visible news cards when fixture data contains at least 10 displayable items."
+        - "HighScoreList shows up to 10 latest-30-day eligible items sorted by score DESC, published_at DESC, excludes older items, and renders no summaries."
+        - "HighScoreList item click opens the matching ArticleView route."
+        - "Source colors or markers are stable and distinguish different sources in the fixture."
         - "Refresh button disables as 刷新中 and reloads GET /api/home after refresh succeeds."
         - "integration stage result = pass for home."
       failure_criteria:
@@ -503,8 +514,10 @@ dag:
         - "ArticleView route and safe render states."
       acceptance_criteria:
         - "Translated ArticleView renders title, original_title, source, published_at, score, and content_zh."
+        - "Translated ArticleView renders an original_url link or button without using it as the card/list navigation target."
         - "ready ArticleView polls detail endpoint and renders no English body."
         - "translation_failed ArticleView renders failure state and original_url link, with 0 content_zh nodes."
+        - "ArticleView navigation from NewsCard and HighScoreList stays on the internal route and never directly jumps to the original site."
         - "404 renders 新闻不存在或不可展示."
         - "integration stage result = pass for article."
       failure_criteria:
@@ -532,6 +545,7 @@ dag:
         - "Enable/disable success updates row state."
         - "Disabling the last enabled source shows structured API error."
         - "Delete success visually removes the row."
+        - "Default seeded sources and user-created sources render the same enable, disable, and delete controls, and deleted or disabled seeded sources do not visually reappear after reload unless reset is explicitly documented."
         - "integration stage result = pass for sources."
       failure_criteria:
         - "FAIL if UI exposes advanced settings, task progress, retry controls, or processing logs."
@@ -582,8 +596,9 @@ dag:
         - "GET /api/news/{id} exposes translated detail and safe non-translated states."
         - "Source and refresh endpoints preserve contract behavior."
       acceptance_criteria:
-        - "GET /api/home returns at least 1 latest_news item after pipeline integration."
+        - "GET /api/home returns the PRD fixture density after pipeline integration; a 1-3 item smoke sample is not sufficient when fixture data contains at least 10 displayable items."
         - "score = 60 item appears through API; score = 59 item does not."
+        - "top_ranked_news returns 10 items when the latest-30-day fixture has at least 10 eligible items, excludes 30-day-window-outside items, and applies score DESC plus published_at DESC tie-break ordering."
         - "Duplicate canonical_url appears once through API."
         - "Detail API returns content_zh only for translated item."
         - "API JSON contains no forbidden internal fields."
@@ -610,7 +625,9 @@ dag:
         - "Article renders DOM for translated, ready, failed, and 404 payloads."
         - "Sources page renders DOM for source UI states."
       acceptance_criteria:
-        - "Home renders at least 1 latest_news item from API payload."
+        - "Home renders the PRD fixture news density from API payload and cannot pass with only 1-3 visible news cards when at least 10 displayable items are supplied."
+        - "HighScoreList renders 10 latest-30-day eligible items when supplied, excludes older items, preserves score/published_at ordering, and click-through opens matching ArticleView."
+        - "NewsCard summary DOM renders fixture strings containing HTML tags as safe text, not parsed markup."
         - "ready and translation_failed UI render no summary_zh/content_zh nodes."
         - "ArticleView renders content_zh only for translated detail."
         - "Source UI create/delete states work against API payloads."
@@ -624,7 +641,7 @@ dag:
       layer: "Acceptance Layer"
       type: ["test"]
       status: "pending"
-      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
@@ -632,7 +649,7 @@ dag:
       description: "Implement and test the local acceptance evaluator without making it the final stop gate task."
       inputs:
         - "Gate mapping from docs/08_acceptance.md."
-        - "Harness report paths from harness.md."
+        - "Workflow command and report paths from workflows.md."
         - "Schema files from schemas/."
       outputs:
         - "scripts/run_harness.py --stage acceptance --report-dir reports reads existing full-stage reports and emits ACC-STOP reports plus STOP_ALLOWED.json."
@@ -645,7 +662,9 @@ dag:
         - "Acceptance command without --task-id consumes reports/stages/static.json through reports/stages/e2e.json."
         - "Acceptance command with --task-id fails as an invalid task-scoped gate evaluation."
         - "Acceptance evaluator enforces live dependency scan, forbidden field scan, non-goal endpoint/UI scan, wrong-stage/conflicting mandatory assertion detection, and skipped-stage stop failure."
-        - "STOP_ALLOWED can become true only when workflow ACCEPTANCE runs full gate evaluation and all required gates are PASS."
+        - "Acceptance evaluator enforces every tasks.md dag node has status passed before task_completion_status can be PASS."
+        - "Acceptance evaluator enforces PRD coverage, task acceptance coverage, browser E2E evidence, and local user acceptance as machine-checkable stop inputs."
+        - "STOP_ALLOWED can become true only when workflow ACCEPTANCE runs full gate evaluation, all required gates are PASS, all tasks are passed, every task acceptance criterion has executed passing evidence, and all stop inputs are PASS."
       failure_criteria:
         - "FAIL if TASK-021 claims product behavior gate coverage for ACC-STOP-002 through ACC-STOP-007 or ACC-STOP-009."
         - "FAIL if TASK-021 accepts missing, skipped, flaky, wrong-stage, conflict-duplicated, or task-scoped-only mandatory assertion IDs."
@@ -656,7 +675,7 @@ dag:
       layer: "Verification Layer"
       type: ["test"]
       status: "pending"
-      source: ["docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["replay"]
@@ -682,7 +701,7 @@ dag:
       layer: "Verification Layer"
       type: ["test"]
       status: "pending"
-      source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      source: ["workflows.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["snapshot"]
@@ -709,7 +728,7 @@ dag:
       layer: "Verification Layer"
       type: ["test"]
       status: "pending"
-      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md", "harness.md"]
+      source: ["workflows.md", "docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["e2e"]
@@ -724,6 +743,8 @@ dag:
         - "End-to-end evidence for full pipeline, API output, UI render, isolation, and leak scan."
       acceptance_criteria:
         - "E2E run loads fixtures, executes full pipeline, verifies API output, and verifies UI render from clean isolated state."
+        - "E2E run uses a real browser or equivalent DOM-capable runner to verify homepage news feed, 30-day high-score list, news detail, and sources management."
+        - "Browser E2E proves Home News Feed fixture density, HighScoreList 30-day ranking, NewsCard summary text-only rendering, NewsCard click-through, HighScoreList click-through, ArticleView translated/ready/translation_failed/404 states, ArticleView original_url button, no direct original-site navigation from cards or rank items, Sources create/disable/delete flows, default source CRUD parity, and refresh POST /api/refresh then GET /api/home behavior."
         - "E2E run emits no live dependency access and no forbidden public-surface fields."
         - "E2E report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
         - "e2e stage result = pass for deterministic full run."
@@ -735,7 +756,7 @@ dag:
       layer: "Verification Layer"
       type: ["test"]
       status: "pending"
-      source: ["workflows.md", "harness.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
@@ -743,7 +764,7 @@ dag:
       description: "Implement the full-regression materialization path that runs every required product stage without --task-id before final workflow acceptance."
       inputs:
         - "Implemented stage owners for static, unit, contract, api, integration, replay, snapshot, and e2e."
-        - "Harness command surface from harness.md."
+        - "Workflow command surface from workflows.md."
       outputs:
         - "Full-stage commands write reports/stages/static.json, unit.json, contract.json, api.json, integration.json, replay.json, snapshot.json, and e2e.json."
         - "Task-scoped reports remain under reports/tasks/<task_id>/<stage>.json and are never copied into reports/stages/."
@@ -755,6 +776,59 @@ dag:
         - "Downstream stages are marked skipped after the first failed full-stage run and cannot satisfy STOP_ALLOWED."
         - "Full-stage materialization runs live dependency, forbidden field, non-goal endpoint/UI, wrong-stage/conflict, and skipped-stage stop-failure checks before final acceptance."
         - "Final acceptance consumes these existing stage-level reports and does not synthesize, replace, or skip replay, snapshot, or e2e evidence."
+        - "Final acceptance fails STOP_ALLOWED if any task in tasks.md is not passed."
+        - "Final acceptance consumes PRD coverage, task acceptance coverage, browser E2E, and local user acceptance evidence as required stop inputs."
       failure_criteria:
         - "FAIL if any task-scoped report is used as a substitute for reports/stages/<stage>.json."
         - "FAIL if full-regression materialization runs acceptance or writes ACC-STOP reports."
+
+    - id: TASK-026
+      name: "PRD, workflow stop-rule, and test-spec audit"
+      layer: "Acceptance Layer"
+      type: ["test", "docs", "review"]
+      status: "pending"
+      source: ["workflows.md", "tasks.md", "docs/01_prd.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static", "e2e"]
+      depends_on: ["TASK-021", "TASK-024", "TASK-025"]
+      description: "Audit whether tasks.md covers every PRD requirement, whether workflows.md plus docs/08_acceptance.md can prevent premature long-running stop, and whether docs/07_test_spec.md has rigorous executable test plans for all PRD, acceptance, and task-level acceptance standards."
+      inputs:
+        - "Checklist-style acceptance statements from docs/01_prd.md."
+        - "All DAG nodes, task acceptance criteria, and stop-condition metadata from tasks.md."
+        - "Workflow DONE guard, LOAD_TASKS -> ACCEPTANCE guard, transition table, and pseudocode from workflows.md."
+        - "Machine stop decision and StopDecisionReport rules from docs/08_acceptance.md."
+        - "Mandatory assertion catalog from docs/07_test_spec.md#2.16."
+        - "Browser E2E report from reports/stages/e2e.json."
+        - "Local deployment URL, port, database, and user acceptance findings."
+      outputs:
+        - "reports/acceptance/prd_coverage.json conforming to schemas/prd_coverage.schema.json."
+        - "reports/acceptance/task_acceptance_coverage.json conforming to schemas/task_acceptance_coverage.schema.json."
+        - "A PRD-to-task coverage audit listing each PRD requirement, source line, mapped task_id, acceptance gate, and missing-task finding when coverage is absent."
+        - "A task acceptance coverage audit listing each tasks.md acceptance criterion, task_id, criterion source line, mapped assertion ids, report paths, and pass/fail status."
+        - "A stop-rule audit proving workflows.md, docs/08_acceptance.md, and tasks.md all require every DAG node to be passed plus all gates and stop inputs to pass before DONE."
+        - "A test-spec audit proving docs/07_test_spec.md has deterministic executable verification for every acceptance standard mentioned by docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
+        - "reports/acceptance/local_user_acceptance.json conforming to schemas/local_user_acceptance.schema.json."
+        - "STOP_ALLOWED.json lists unfinished tasks, uncovered PRD items, failed stop inputs, and user acceptance failures."
+      acceptance_criteria:
+        - "PRD task coverage audit PASS only when every docs/01_prd.md requirement and acceptance item records source line, mapped task_id, acceptance gate, assertion ids, report paths, and pass/fail status."
+        - "PRD task coverage audit FAILS if any PRD requirement is missing from tasks.md, is mapped only to acceptance_gate: none, or lacks executable evidence."
+        - "Task acceptance coverage audit PASS only when every tasks.md dag.nodes[*].acceptance_criteria item records source line, mapped assertion ids, report paths, and executed pass/fail status."
+        - "Task acceptance coverage audit FAILS if any task acceptance criterion is unmapped, mapped only to prose, mapped only to task-scoped evidence when full-stage evidence is required, unexecuted, failed, flaky, skipped, or missing a report path."
+        - "Stop-rule audit PASS only when workflows.md, docs/08_acceptance.md, and tasks.md all agree that DONE requires all dag.nodes[*].status == passed, ACC-STOP-001 through ACC-STOP-010 PASS, task_completion_status PASS, prd_coverage_status PASS, task_acceptance_coverage_status PASS, browser_e2e_status PASS, local_user_acceptance_status PASS, and STOP_ALLOWED = true."
+        - "Stop-rule audit FAILS if task_blocked, pending, in_progress, missing browser E2E, incomplete PRD coverage, incomplete task acceptance coverage, missing local user acceptance, or failed local user acceptance can reach DONE."
+        - "Test-spec audit PASS only when docs/07_test_spec.md gives a deterministic, executable test method for every验收标准 mentioned in docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
+        - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
+        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
+        - "Any PRD acceptance item without executed passing evidence appears in uncovered_acceptance_items and blocks STOP_ALLOWED."
+        - "Any task acceptance criterion without executed passing evidence appears in uncovered_task_acceptance_items and blocks STOP_ALLOWED."
+        - "Local user acceptance records local URL, port, database, checked surfaces, failed findings, and current status."
+        - "Any failed local user acceptance finding blocks local_user_acceptance_status and STOP_ALLOWED."
+        - "Browser-visible coverage includes homepage news feed, 30-day high-score list, article detail, sources page, and refresh action."
+      failure_criteria:
+        - "FAIL if any audit conclusion is prose-only and lacks source lines, task ids, assertion ids, report paths, and executable status."
+        - "FAIL if PRD coverage is generated from prose only without executed structured evidence."
+        - "FAIL if task acceptance coverage is generated from prose only without executed structured evidence."
+        - "FAIL if local user acceptance omits failed findings reported by the user."
+        - "FAIL if workflow, acceptance, or tasks stop rules allow task_blocked, pending, in_progress, missing browser E2E, missing PRD coverage, missing task acceptance coverage, or failed local user acceptance to reach DONE."
+        - "FAIL if browser E2E evidence is replaced by API-only tests, static string scans, screenshots without assertions, or manual visual judgment."

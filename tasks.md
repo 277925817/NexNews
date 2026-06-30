@@ -25,6 +25,17 @@ meta:
       - snapshot
       - e2e
       - acceptance
+    product_stages:
+      - static
+      - unit
+      - contract
+      - api
+      - integration
+      - replay
+      - snapshot
+      - e2e
+    gate_stage: "acceptance"
+    acceptance_report_policy: "acceptance writes reports/acceptance/ACC-STOP-*.json, coverage reports, and STOP_ALLOWED.json; it is not a product-stage report and cannot replace reports/stages/<stage>.json evidence"
   gates:
     - "ACC-STOP-001"
     - "ACC-STOP-002"
@@ -67,7 +78,7 @@ dag:
       outputs:
         - "scripts/run_harness.py accepts every workflow stage command."
         - "Stage and gate reports have deterministic structured failure output before product tests exist."
-        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, schemas/tasks.schema.json, schemas/prd_coverage.schema.json, schemas/task_acceptance_coverage.schema.json, and schemas/local_user_acceptance.schema.json exist."
+        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, schemas/review_report.schema.json, schemas/fix_optimize_report.schema.json, schemas/round_summary_report.schema.json, schemas/tasks.schema.json, schemas/prd_coverage.schema.json, schemas/task_acceptance_coverage.schema.json, and schemas/local_user_acceptance.schema.json exist."
         - "STOP_ALLOWED report has a documented stop-decision shape."
       acceptance_criteria:
         - "Every workflow stage command writes a machine-readable report to the documented report paths."
@@ -788,6 +799,87 @@ dag:
         - "FAIL if any task-scoped report is used as a substitute for reports/stages/<stage>.json."
         - "FAIL if full-regression materialization runs acceptance or writes ACC-STOP reports."
 
+    - id: TASK-026A
+      name: "Round evidence schema hardening"
+      layer: "Acceptance Layer"
+      type: ["test", "docs", "schema"]
+      status: "pending"
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static"]
+      depends_on: ["TASK-021"]
+      description: "Add explicit ReviewReport and FixOptimizeReport contracts and ensure RoundSummaryReport cannot count a completed round without parseable review and fix/optimize evidence."
+      inputs:
+        - "Round lifecycle rules from workflows.md."
+        - "Report schema rules from docs/07_test_spec.md."
+      outputs:
+        - "schemas/review_report.schema.json and schemas/fix_optimize_report.schema.json exist and are validated by static harness checks."
+        - "RoundSummaryReport schema requires round_index, completed_round_count, review, fix_optimize and round_end_decision."
+        - "RoundSummaryReport schema forbids selected_next_state = DONE."
+      acceptance_criteria:
+        - "ReviewReport schema requires all eight review dimensions and forbids passed review reports with blocking findings."
+        - "FixOptimizeReport schema requires resolved blocking findings, at least one retest report and no regression when status = passed."
+        - "RoundSummaryReport schema rejects selected_next_state = DONE."
+        - "static stage result = pass for round evidence schema hardening."
+      failure_criteria:
+        - "FAIL if completed rounds can be counted without parseable review and fix/optimize evidence."
+
+    - id: TASK-026B
+      name: "Stop decision and coverage schema hardening"
+      layer: "Acceptance Layer"
+      type: ["test", "docs", "schema"]
+      status: "pending"
+      source: ["docs/07_test_spec.md", "docs/08_acceptance.md", "schemas/stop_decision.schema.json"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit"]
+      depends_on: ["TASK-026A"]
+      description: "Make STOP_ALLOWED depend on valid round evidence and tighten PRD/task acceptance coverage schemas so prose-only or task-scoped-only evidence cannot pass."
+      inputs:
+        - "StopDecisionReport rules from docs/08_acceptance.md."
+        - "Coverage report rules from docs/07_test_spec.md."
+      outputs:
+        - "round_count_policy includes round_evidence with summary, review and fix/optimize report paths."
+        - "completed_round_count is derived from valid round_evidence entries."
+        - "PRD and task acceptance coverage schemas reject passed reports with uncovered items or non-full-stage evidence paths."
+      acceptance_criteria:
+        - "STOP_ALLOWED schema requires round_count_policy.round_evidence."
+        - "round_count_policy.status = PASS requires either 10 valid round evidence entries or a valid early_done_allowed case."
+        - "PRD coverage schema rejects status = passed when uncovered_acceptance_items is non-empty."
+        - "Task acceptance coverage schema rejects status = passed when uncovered_task_acceptance_items is non-empty."
+        - "unit stage result = pass for stop decision and coverage schema hardening."
+      failure_criteria:
+        - "FAIL if STOP_ALLOWED can become true while round_count_policy.status is not PASS."
+        - "FAIL if coverage can pass with prose-only evidence or coverage file self-reference."
+
+    - id: TASK-026C
+      name: "Acceptance evaluator enforcement"
+      layer: "Acceptance Layer"
+      type: ["test"]
+      status: "pending"
+      source: ["scripts/run_harness.py", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit"]
+      depends_on: ["TASK-026B", "TASK-025"]
+      description: "Teach the acceptance evaluator to compute valid completed rounds from parseable summary/review/fix evidence and to reject stale or failed local user acceptance."
+      inputs:
+        - "Report paths from workflows.md."
+        - "Stop decision schema and local user acceptance schema."
+      outputs:
+        - "Acceptance evaluator validates round_evidence and computes completed_round_count from valid entries."
+        - "Acceptance evaluator rejects early_done_allowed when unfinished work, failed gates, failed stop inputs or malformed round evidence exists."
+        - "Acceptance evaluator preserves failed local user acceptance findings and keeps STOP_ALLOWED false."
+      acceptance_criteria:
+        - "Unit tests prove fewer than 10 valid rounds with unfinished work keeps round_count_policy = FAIL."
+        - "Unit tests prove early_done_allowed is true only when all gates, stop inputs and round evidence preconditions are satisfied."
+        - "Unit tests prove local user acceptance failed findings keep local_user_acceptance_status and STOP_ALLOWED failed."
+        - "Task-scoped acceptance remains invalid and full acceptance with missing stop input writes STOP_ALLOWED = false."
+        - "unit stage result = pass for acceptance evaluator enforcement."
+      failure_criteria:
+        - "FAIL if acceptance trusts RoundSummaryReport.completed_round_count without validating linked review and fix/optimize reports."
+
     - id: TASK-026
       name: "PRD, workflow stop-rule, and test-spec audit"
       layer: "Acceptance Layer"
@@ -797,7 +889,7 @@ dag:
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static", "e2e"]
-      depends_on: ["TASK-021", "TASK-024", "TASK-025"]
+      depends_on: ["TASK-026A", "TASK-026B", "TASK-026C"]
       description: "Audit whether tasks.md covers every PRD requirement, whether workflows.md plus docs/08_acceptance.md can prevent premature long-running stop, and whether docs/07_test_spec.md has rigorous executable test plans for all PRD, acceptance, and task-level acceptance standards."
       inputs:
         - "Checklist-style acceptance statements from docs/01_prd.md."
@@ -813,6 +905,7 @@ dag:
         - "A PRD-to-task coverage audit listing each PRD requirement, source line, mapped task_id, acceptance gate, and missing-task finding when coverage is absent."
         - "A task acceptance coverage audit listing each tasks.md acceptance criterion, task_id, criterion source line, mapped assertion ids, report paths, and pass/fail status."
         - "A stop-rule audit proving workflows.md, docs/08_acceptance.md, and tasks.md all require every DAG node to be passed plus all gates and stop inputs to pass before DONE."
+        - "A round-lifecycle audit proving every completed round has plan, test, review, fix/optimize, and summary evidence, plus machine-readable round count policy evidence."
         - "A test-spec audit proving docs/07_test_spec.md has deterministic executable verification for every acceptance standard mentioned by docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
         - "reports/acceptance/local_user_acceptance.json conforming to schemas/local_user_acceptance.schema.json."
         - "STOP_ALLOWED.json lists unfinished tasks, uncovered PRD items, failed stop inputs, and user acceptance failures."
@@ -823,9 +916,10 @@ dag:
         - "Task acceptance coverage audit FAILS if any task acceptance criterion is unmapped, mapped only to prose, mapped only to task-scoped evidence when full-stage evidence is required, unexecuted, failed, flaky, skipped, or missing a report path."
         - "Stop-rule audit PASS only when workflows.md, docs/08_acceptance.md, and tasks.md all agree that DONE requires all dag.nodes[*].status == passed, ACC-STOP-001 through ACC-STOP-010 PASS, task_completion_status PASS, prd_coverage_status PASS, task_acceptance_coverage_status PASS, browser_e2e_status PASS, local_user_acceptance_status PASS, and STOP_ALLOWED = true."
         - "Stop-rule audit FAILS if task_blocked, pending, in_progress, missing browser E2E, incomplete PRD coverage, incomplete task acceptance coverage, missing local user acceptance, or failed local user acceptance can reach DONE."
+        - "Round-lifecycle audit PASS only when every passed task has a parseable RoundSummaryReport with round_index, completed_round_count, review evidence, fix_optimize evidence, and DONE before 10 rounds is allowed only by round_count_policy.early_done_allowed = true."
         - "Test-spec audit PASS only when docs/07_test_spec.md gives a deterministic, executable test method for every验收标准 mentioned in docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
         - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
-        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
+        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, round evidence schema enforcement, round count policy enforcement, coverage schema hardening, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
         - "Any PRD acceptance item without executed passing evidence appears in uncovered_acceptance_items and blocks STOP_ALLOWED."
         - "Any task acceptance criterion without executed passing evidence appears in uncovered_task_acceptance_items and blocks STOP_ALLOWED."
         - "Local user acceptance records local URL, port, database, checked surfaces, failed findings, and current status."
@@ -837,4 +931,5 @@ dag:
         - "FAIL if task acceptance coverage is generated from prose only without executed structured evidence."
         - "FAIL if local user acceptance omits failed findings reported by the user."
         - "FAIL if workflow, acceptance, or tasks stop rules allow task_blocked, pending, in_progress, missing browser E2E, missing PRD coverage, missing task acceptance coverage, or failed local user acceptance to reach DONE."
+        - "FAIL if completed rounds can be counted without review/fix_optimize evidence, or if STOP_ALLOWED can be true before 10 rounds without round_count_policy proving all stop conditions passed."
         - "FAIL if browser E2E evidence is replaced by API-only tests, static string scans, screenshots without assertions, or manual visual judgment."

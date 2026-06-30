@@ -89,7 +89,13 @@ schemas/
   test_report.schema.json
   stop_decision.schema.json
   task_plan_report.schema.json
+  review_report.schema.json
+  fix_optimize_report.schema.json
+  round_summary_report.schema.json
   tasks.schema.json
+  prd_coverage.schema.json
+  task_acceptance_coverage.schema.json
+  local_user_acceptance.schema.json
 scripts/
   run_harness.py
 reports/
@@ -112,3 +118,4 @@ Existing legacy root files may remain only until their owning bootstrap task rem
 - `frontend/src/pages/` may load data and compose final UI units, but must not derive pipeline state or map database fields.
 - `frontend/src/components/` contains only the final units listed in `docs/03_ui_spec.md`; component sub-units such as `NewsCardHeader` are out of scope.
 - `schemas/` defines machine-checkable report and task contracts consumed by the harness; schema changes must be reflected in `docs/07_test_spec.md` or `workflows.md`.
+- `reports/stages/` contains product-stage evidence for `static` through `e2e` only. Acceptance gate evidence lives under `reports/acceptance/` and must not be treated as a product-stage substitute.

@@ -111,7 +111,7 @@
 - 失败日志必须包含错误分类，否则无法统计失败来源。
 - 成功日志不得包含超过 `1KB` 的字段，否则必须裁剪。
 - 禁止打印 `content_raw`、`content_full`、raw article body、fallback raw text 或完整 prompt。
-- In debug mode only, full prompt logging is allowed but must not persist to production storage.
+- Debug mode may log prompt schema metadata, prompt length and prompt hash only. Full prompt text must not be written to logs, reports, stdout/stderr captures or persistent storage in any environment.
 - 日志可以记录 URL 和标题，但标题长度必须裁剪到 `300` 字符以内。
 - 刷新开始和结束必须记录日志，否则手动刷新无法回放。
 - 并发 refresh 被拒绝时必须记录日志，否则重复点击无法定位。

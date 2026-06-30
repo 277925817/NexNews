@@ -53,9 +53,11 @@ Task-scoped commands add `--task-id TASK-000` and write task evidence under `rep
 
 Report paths:
 
-- Full-stage reports: `reports/stages/<stage>.json`
+- Product full-stage reports: `reports/stages/<stage>.json`, where `<stage>` is one of `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot` or `e2e`.
 - Task reports: `reports/tasks/<task_id>/<stage>.json`
 - Task plans: `reports/tasks/<task_id>/plan.json`
+- Task review evidence: `reports/tasks/<task_id>/review.json`
+- Task fix/optimize evidence: `reports/tasks/<task_id>/fix_optimize.json`
 - Round summaries: `reports/tasks/<task_id>/summary.json`
 - Acceptance gates: `reports/acceptance/ACC-STOP-001.json` through `reports/acceptance/ACC-STOP-010.json`
 - PRD coverage: `reports/acceptance/prd_coverage.json`
@@ -63,11 +65,26 @@ Report paths:
 - Local user acceptance: `reports/acceptance/local_user_acceptance.json`
 - Stop decision: `reports/acceptance/STOP_ALLOWED.json`
 
+Acceptance report policy:
+
+- `acceptance` is a gate-evaluation command, not a product verification stage.
+- `python3 scripts/run_harness.py --stage acceptance --report-dir reports` writes `reports/acceptance/ACC-STOP-001.json` through `reports/acceptance/ACC-STOP-010.json`, coverage reports and `reports/acceptance/STOP_ALLOWED.json`.
+- `reports/stages/acceptance.json` must not be required, and if a compatibility runner creates it, that file is diagnostic only. It cannot satisfy product-stage, mandatory-assertion, PRD coverage, task acceptance coverage, browser E2E or stop-input evidence.
+
+Context recovery and stale evidence policy:
+
+- Chat history is never workflow memory. On every fresh start, resume or long-context recovery, Codex must reconstruct state only from `workflows.md`, `tasks.md`, `docs/01_prd.md` through `docs/08_acceptance.md`, existing structured reports and the current worktree.
+- Resume starts at `INIT`: read the source documents, load `tasks.md`, load the latest report paths named by each task node, then derive the next state from persisted `status`, `active_state`, `last_updated_state`, `plan_report`, `test_report`, `summary_report`, blocker fields and acceptance reports.
+- If `active_state != none`, Codex may resume that state only when all required prior-state reports exist, parse, match their schemas and are not stale. Otherwise it must rewind to the earliest state whose required evidence is missing or stale, or enter `WORKFLOW_BLOCKED` when the rewind target cannot be determined.
+- A report is stale when any source document, task record, fixture/mock/clock version, referenced file, schema file or required input covered by that report changed after the report was produced and the report's `data_hash` does not reflect the current content. Stale evidence is treated the same as missing evidence for `PASS` decisions.
+- Every state transition that changes task progress must persist the corresponding task fields or structured report before starting the next state. A process interruption after a persisted transition must be recoverable without relying on hidden in-memory state.
+
 Loop simplification policy:
 
 - The workflow loop is one product loop, not a chain of shallow stage approvals.
-- `static`, `unit`, `api`, `e2e` and `acceptance` are the core stop-verification stages.
-- `contract`, `integration`, `replay` and `snapshot` may exist as compatibility stages or evidence classes, but they cannot substitute for PRD coverage, real API behavior, browser-visible UI behavior or user acceptance.
+- Required product stop-verification stages are exactly `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot` and `e2e`, matching `docs/07_test_spec.md#2.13`.
+- `acceptance` is the full gate-evaluation command that consumes those product-stage reports, PRD coverage, task acceptance coverage, browser E2E evidence and local user acceptance. It is not a product verification stage and cannot replace any required product-stage report.
+- A shallow pass in any stage, or a stage report without behavior/assertion evidence, cannot substitute for PRD coverage, real API behavior, browser-visible UI behavior, replay/snapshot evidence or user acceptance.
 - A stage report may pass only when it contains behavior evidence for the current product slice. Directory existence, placeholder modules, scaffold files, snapshots without behavior assertions and synthetic pass reports do not count toward stop eligibility.
 - Any user acceptance failure invalidates the previous `STOP_ALLOWED=true` result and forces `ITERATE`.
 
@@ -157,6 +174,61 @@ Task plans must be persisted as machine-readable reports before implementation:
 reports/tasks/<task_id>/plan.json
 ```
 
+Task review reports must be persisted as machine-readable reports before `FIX_OPTIMIZE`:
+
+```json
+{
+  "schema_ref": "workflows.md#ReviewReport",
+  "schema_version": "v1",
+  "task_id": "TASK-000",
+  "status": "passed",
+  "method": ["static_diff", "schema_comparison", "dependency_graph_check"],
+  "dimensions": {
+    "requirements_fit": "passed",
+    "logic_correctness": "passed",
+    "test_sufficiency": "passed",
+    "architecture": "passed",
+    "maintainability": "passed",
+    "performance": "passed",
+    "security": "passed",
+    "compatibility": "passed"
+  },
+  "blocking_findings": [],
+  "referenced_files": ["path/to/file"],
+  "timestamp": "ISO8601"
+}
+```
+
+`ReviewReport` path:
+
+```text
+reports/tasks/<task_id>/review.json
+```
+
+Task fix/optimize reports must be persisted as machine-readable reports before `SUMMARIZE`:
+
+```json
+{
+  "schema_ref": "workflows.md#FixOptimizeReport",
+  "schema_version": "v1",
+  "task_id": "TASK-000",
+  "status": "passed",
+  "blocking_findings_resolved": true,
+  "optimization_rationale": "No scoped optimization was required after review.",
+  "changed_files": [],
+  "retest_reports": ["reports/tasks/TASK-000/unit.json"],
+  "regression_detected": false,
+  "referenced_files": ["path/to/file"],
+  "timestamp": "ISO8601"
+}
+```
+
+`FixOptimizeReport` path:
+
+```text
+reports/tasks/<task_id>/fix_optimize.json
+```
+
 Round summaries must be persisted as machine-readable reports before a task can be marked `passed`:
 
 ```json
@@ -164,6 +236,8 @@ Round summaries must be persisted as machine-readable reports before a task can 
   "schema_ref": "workflows.md#RoundSummaryReport",
   "schema_version": "v1",
   "task_id": "TASK-000",
+  "round_index": 1,
+  "completed_round_count": 1,
   "completed_work": ["implemented behavior completed in this round"],
   "prd_items": ["docs/01_prd.md#section-or-acceptance-id"],
   "changed_files": ["path/to/file"],
@@ -183,10 +257,74 @@ Round summaries must be persisted as machine-readable reports before a task can 
       "regression_detected": false
     }
   ],
+  "review": {
+    "status": "passed",
+    "report": "reports/tasks/TASK-000/review.json",
+    "method": ["static_diff", "schema_comparison", "dependency_graph_check"],
+    "dimensions": {
+      "requirements_fit": "passed",
+      "logic_correctness": "passed",
+      "test_sufficiency": "passed",
+      "architecture": "passed",
+      "maintainability": "passed",
+      "performance": "passed",
+      "security": "passed",
+      "compatibility": "passed"
+    },
+    "blocking_findings": []
+  },
+  "fix_optimize": {
+    "status": "passed",
+    "report": "reports/tasks/TASK-000/fix_optimize.json",
+    "blocking_findings_resolved": true,
+    "optimization_rationale": "No scoped optimization was required after review.",
+    "changed_files": [],
+    "retest_reports": ["reports/tasks/TASK-000/unit.json"],
+    "regression_detected": false
+  },
   "issues_found_and_fixed": ["blocking issue fixed in this round, or none"],
   "current_system_completion": "machine-derived completion status after this round",
   "remaining_gaps_and_risks": ["remaining gap or risk, or none"],
   "next_round_goal": "one unique and explicit next target, or full ACCEPTANCE when no task remains",
+  "round_end_decision": {
+    "branch_order": [
+      "required_tests",
+      "critical_security_blocking_risks",
+      "prd_core_flow",
+      "quality_gates",
+      "stop_conditions"
+    ],
+    "checks": {
+      "required_tests": {
+        "status": "pass",
+        "decision": "check_next_branch",
+        "evidence_paths": ["reports/tasks/TASK-000/unit.json"]
+      },
+      "critical_security_blocking_risks": {
+        "status": "pass",
+        "decision": "check_next_branch",
+        "evidence_paths": ["reports/tasks/TASK-000/review.json"]
+      },
+      "prd_core_flow": {
+        "status": "fail",
+        "decision": "implement_prd_core_submodule",
+        "evidence_paths": ["reports/acceptance/prd_coverage.json"]
+      },
+      "quality_gates": {
+        "status": "not_checked",
+        "decision": "check_next_branch",
+        "evidence_paths": ["reports/tasks/TASK-000/summary.json"]
+      },
+      "stop_conditions": {
+        "status": "not_checked",
+        "decision": "continue_next_round",
+        "evidence_paths": ["reports/tasks/TASK-000/summary.json"]
+      }
+    },
+    "selected_next_state": "LOAD_TASKS",
+    "selected_next_target": "TASK-001",
+    "selected_reason": "PRD core flow remains incomplete."
+  },
   "timestamp": "ISO8601"
 }
 ```
@@ -201,6 +339,8 @@ Machine-checkable JSON Schema:
 
 ```text
 schemas/task_plan_report.schema.json
+schemas/review_report.schema.json
+schemas/fix_optimize_report.schema.json
 schemas/round_summary_report.schema.json
 ```
 
@@ -330,15 +470,18 @@ Round count policy:
 - The workflow may enter `DONE` before 10 completed rounds only when every stop condition in section 6 is satisfied by the current `ACCEPTANCE` run.
 - Completing 10 rounds never authorizes `DONE` by itself. If any stop condition, required gate, stop input, PRD coverage item, task acceptance item, browser E2E input or local user acceptance input is not `PASS`, the workflow must keep iterating.
 - Round count is only a progress guard. It must not cause broad scope selection, cosmetic churn, fake work, skipped tests or weakened acceptance evidence.
+- Every completed round must persist `round_index` and `completed_round_count` in `RoundSummaryReport`; `ACCEPTANCE` must include a `round_count_policy` object in `STOP_ALLOWED.json`.
+- `ACCEPTANCE` must compute valid completed rounds from parseable `RoundSummaryReport`, `ReviewReport` and `FixOptimizeReport` evidence. It must not trust a task summary's self-reported `completed_round_count` unless the linked review/fix evidence is valid.
+- `DONE` before 10 completed rounds is valid only when `round_count_policy.early_done_allowed == true`, every required gate and stop input is `PASS`, and the latest `ACCEPTANCE` run proves no unfinished work remains.
 
 | Step | Required state evidence |
 | --- | --- |
 | 1. Understand and plan | `PLAN` must read `docs/01_prd.md`, compare it with completed task and acceptance evidence, list remaining unimplemented PRD functions, select a small related set of unfinished PRD functions for this round, map exact PRD items, split the work into the smallest deliverable submodule, define round acceptance criteria and persist `reports/tasks/<task_id>/plan.json`. If only one unfinished PRD function remains, `PLAN` must record that exception explicitly. |
 | 2. Implement code | `IMPLEMENT` must write or modify real runnable code and any required tests/docs inside the scoped plan files only. It must keep directory, module and responsibility boundaries clear, avoid duplicate logic, hidden dependencies and meaningless coupling, and reject fake implementations, placeholder implementations and new `TODO` markers. |
 | 3. Automated testing | `TEST` must verify that tests were added or updated for new or changed logic, execute the relevant deterministic tests, persist structured results, and cover normal flow, invalid input, boundary conditions and regression risk for the current scope. A required test that cannot run because of the environment must produce explicit `ENV_BLOCKED` evidence or structured substitute diagnostics; it must never be reported as `PASS`. |
-| 4. Code review | `REVIEW` must produce a structured self-check for PRD fit, logic correctness, test sufficiency, architecture, maintainability, performance, security and compatibility. Review remains static/design verification and must not replace machine test evidence. |
-| 5. Fix and optimize | `FIX_OPTIMIZE` is mandatory after `REVIEW`. It must confirm all blocking test and review findings from the round are fixed, perform necessary scoped maintainability/module-boundary optimization or record a no-op optimization rationale, rerun or validate relevant tests after any change, and confirm no new regression before `SUMMARIZE`. |
-| 6. Round summary | `SUMMARIZE` must persist `reports/tasks/<task_id>/summary.json` with completed work, PRD items, changed files, test results, issues found and fixed, current system completion, remaining gaps/risks and one unique next-round goal before marking the task `passed`. |
+| 4. Code review | `REVIEW` must produce a structured self-check for PRD fit, logic correctness, test sufficiency, architecture, maintainability, performance, security and compatibility, persist `reports/tasks/<task_id>/review.json`, and expose its path plus dimension results in `RoundSummaryReport.review`. Review remains static/design verification and must not replace machine test evidence. |
+| 5. Fix and optimize | `FIX_OPTIMIZE` is mandatory after `REVIEW`. It must confirm all blocking test and review findings from the round are fixed, perform necessary scoped maintainability/module-boundary optimization or record a no-op optimization rationale, rerun or validate relevant tests after any change, persist `reports/tasks/<task_id>/fix_optimize.json`, expose its path in `RoundSummaryReport.fix_optimize`, and confirm no new regression before `SUMMARIZE`. |
+| 6. Round summary | `SUMMARIZE` must persist `reports/tasks/<task_id>/summary.json` with round index, completed round count, completed work, PRD items, changed files, test results, review evidence, fix/optimize evidence, issues found and fixed, current system completion, remaining gaps/risks, one unique next-round goal and `round_end_decision` evidence for the exact branch order in section 5.7 before marking the task `passed`. |
 
 ### 2.5 Round Output Contract
 
@@ -483,7 +626,7 @@ After each completed round, Codex must output a human-readable summary in exactl
 | Field | Definition |
 | --- | --- |
 | entry condition | `FIX_OPTIMIZE` passed for a task that is not `task_blocked`. |
-| actions | Persist `RoundSummaryReport` to `reports/tasks/<task_id>/summary.json` with completed work, corresponding PRD items, code modification scope, test execution results, issues found and fixed, current system completion, remaining gaps and risks, and one unique explicit next-round goal. Then update only the MVP task summary fields in `tasks.md`: task status, `active_state: none`, evidence path, test report path, summary report path and acceptance mapping through `acceptance_gate`. |
+| actions | Persist `RoundSummaryReport` to `reports/tasks/<task_id>/summary.json` with round index, completed round count, completed work, corresponding PRD items, code modification scope, test execution results, review evidence, fix/optimize evidence, issues found and fixed, current system completion, remaining gaps and risks, and one unique explicit next-round goal. Then update only the MVP task summary fields in `tasks.md`: task status, `active_state: none`, evidence path, test report path, summary report path and acceptance mapping through `acceptance_gate`. |
 | exit condition | The round summary report is parseable and task state is persisted as `passed`. |
 | failure handling | If the summary report cannot be written or parsed, or `tasks.md` cannot be updated, enter `WORKFLOW_BLOCKED` with a persistence failure. Missing summary persistence must never advance to `ACCEPTANCE`. |
 
@@ -492,7 +635,7 @@ After each completed round, Codex must output a human-readable summary in exactl
 | Field | Definition |
 | --- | --- |
 | entry condition | Acceptance entry is triggered: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`. |
-| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing full-stage reports under `reports/stages/<stage>.json`. This is where task completion, PRD coverage, task acceptance coverage, browser E2E evidence, local user acceptance, gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, evidence exists and `test_report` exists. Any `task_blocked` task makes task completion fail and must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
+| actions | Create one immutable `tasks_snapshot = load_tasks("tasks.md")` and `tasks_hash_before = hash_file("tasks.md")` at entry. Run exactly one full gate command: `python3 scripts/run_harness.py --stage acceptance --report-dir reports`. Do not pass `--task-id`. Always evaluate all required gates in `docs/08_acceptance.md`: `ACC-STOP-001` to `ACC-STOP-010`, using only `tasks_snapshot` for task-derived evidence and existing non-stale full-stage reports under `reports/stages/<stage>.json` for product stages. This is where task completion, PRD coverage, task acceptance coverage, browser E2E evidence, local user acceptance, gate coverage, existing evidence, linked test reports, mandatory assertions and leak checks are validated. Gate coverage may use only tasks where `status == passed`, evidence exists, `test_report` exists and the linked reports are not stale under the context recovery policy. Any `task_blocked` task makes task completion fail and must not contribute to any gate coverage. Before `DONE`, recompute `tasks_hash_after = hash_file("tasks.md")` and require `tasks_hash_before == tasks_hash_after`. Use only structured evidence allowed by `docs/08_acceptance.md#3`. Never reuse previous task status or previous gate status as a substitute for full gate validation. |
 | exit condition | Every gate has status `PASS`, `FAIL`, `UNKNOWN`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, and `STOP_ALLOWED` has been computed. |
 | failure handling | If any gate is `FAIL` or `UNKNOWN`, enter `ITERATE` with the failed or unproven gate evidence. If a task-local unresolved blocker prevents a gate from being proven, enter `TASK_BLOCKED`. If workflow metadata, task records or report generation logic are inconsistent, enter `WORKFLOW_BLOCKED`. If the local environment cannot execute required verification, enter `ENV_BLOCKED`. Missing evidence is a failed gate unless the evidence generator itself is unavailable. |
 
@@ -627,6 +770,7 @@ All test and acceptance results must produce machine-readable evidence:
 - Command surface and report paths must follow `workflows.md#1.Overview`.
 - Acceptance gate reports must map to `ACC-STOP-001` through `ACC-STOP-010`.
 - Missing report means failure.
+- Stale report means failure. A report is stale when its `data_hash`, fixture/mock/clock version, referenced files or source-document inputs no longer match the current worktree and source documents.
 - Invalid schema means failure.
 - `failed`, `flaky` or `skipped` required reports mean failure.
 - Every core stop-verification stage declared in `docs/07_test_spec.md#2.13` must execute. Compatibility stages may produce useful evidence, but they do not reduce the need for PRD coverage or real browser E2E evidence.
@@ -759,6 +903,7 @@ The workflow may enter `DONE` only when all conditions are true:
 - `tasks.md` acceptance coverage matrix is complete: every task acceptance criterion is mapped to executed structured evidence.
 - Browser-visible E2E evidence exists for Home News Feed, 30-day HighScoreList, ArticleView and Sources page. API-only tests, string scans and static snapshots cannot satisfy this condition.
 - The latest local deployment acceptance record exists at `reports/acceptance/local_user_acceptance.json` and has no failed user findings.
+- `reports/acceptance/STOP_ALLOWED.json.round_count_policy.status == PASS`, proving either at least 10 valid completed rounds with linked summary/review/fix evidence or a valid early-DONE case where every stop condition is already satisfied.
 - If the user reports any acceptance failure after `STOP_ALLOWED=true`, the previous stop decision is stale and the workflow must return to `ITERATE`.
 - All required gates are covered only by tasks where `status == passed`, evidence exists and test report exists.
 - `task_blocked` tasks must not contribute to any acceptance gate coverage.
@@ -1166,14 +1311,37 @@ while True:
     elif state == "SUMMARIZE":
         summary_report = persist_round_summary_report(
             task_id=task.id,
+            round_index=derive_next_round_index(),
+            completed_round_count=derive_completed_round_count_after_current_round(),
             completed_work=derive_completed_work(task),
             prd_items=derive_prd_items_from_plan(task.plan_report),
             changed_files=derive_changed_files(task),
             test_results=derive_test_results(task),
+            review=derive_review_evidence(task, path=f"reports/tasks/{task.id}/review.json"),
+            fix_optimize=derive_fix_optimize_evidence(
+                task,
+                path=f"reports/tasks/{task.id}/fix_optimize.json",
+            ),
             issues_found_and_fixed=derive_issues_found_and_fixed(task),
             current_system_completion=derive_current_system_completion(),
             remaining_gaps_and_risks=derive_remaining_gaps_and_risks(),
             next_round_goal=derive_unique_next_round_goal(),
+            round_end_decision=derive_round_end_decision(
+                branch_order=[
+                    "required_tests",
+                    "critical_security_blocking_risks",
+                    "prd_core_flow",
+                    "quality_gates",
+                    "stop_conditions",
+                ],
+                latest_test_results=derive_test_results(task),
+                latest_review=derive_review_evidence(
+                    task,
+                    path=f"reports/tasks/{task.id}/review.json",
+                ),
+                remaining_gaps_and_risks=derive_remaining_gaps_and_risks(),
+                next_round_goal=derive_unique_next_round_goal(),
+            ),
             path=f"reports/tasks/{task.id}/summary.json",
         )
         if not summary_report.parseable:

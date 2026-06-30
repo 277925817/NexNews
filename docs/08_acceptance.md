@@ -61,6 +61,7 @@ acceptance_gate:
       - content_raw
       - content_full
       - has_translate_failed
+      - deleted_at
     allowlist_fields:
       safe_tokens:
         - next_cursor
@@ -187,7 +188,7 @@ isolation: strict_mock
 | Evidence | Required content |
 | --- | --- |
 | Gate report | `schema_ref`、`schema_version`、`test_id`、`stage`、`status`、`assertions`、`expected`、`actual`、`diff`、`trace_id`、`referenced_files`、`data_hash`、`artifact_paths`。 |
-| Stop decision report | `schema_ref`、`schema_version`、`STOP_ALLOWED`、`gate_status`、`passed_gates`、`failed_gates`、`blocked_gates`、`unknown_gates`、`stop_inputs`、`failed_stop_inputs`、`failure_reasons`、`unfinished_tasks`、`uncovered_prd_items`、`uncovered_task_acceptance_items`、`user_acceptance_failures`、`generated_from_reports`。 |
+| Stop decision report | `schema_ref`、`schema_version`、`STOP_ALLOWED`、`gate_status`、`passed_gates`、`failed_gates`、`blocked_gates`、`unknown_gates`、`stop_inputs`、`failed_stop_inputs`、`failure_reasons`、`unfinished_tasks`、`uncovered_prd_items`、`uncovered_task_acceptance_items`、`user_acceptance_failures`、`round_count_policy`、`generated_from_reports`。 |
 | Assertion record | Assertion id、assertion type、visibility、status、expected、actual、diff。 |
 | API JSON evidence | Response envelope、DTO fields、status code、forbidden field scan result。 |
 | DB state evidence | Table schema、state transition、dedupe、translation field facts。 |
@@ -196,7 +197,7 @@ isolation: strict_mock
 | Leak evidence | Forbidden field count、forbidden pattern count、allowlisted token field count。 |
 | PRD coverage evidence | Every acceptance statement from `docs/01_prd.md` mapped to stable PRD id、source line、task id、acceptance gate、assertion id、stage、report path and pass/fail status。 |
 | Task acceptance coverage evidence | Every acceptance criterion from `tasks.md` mapped to task id、source line、assertion id、stage、report path and pass/fail status。 |
-| Local user acceptance evidence | Local URL、port、database、browser check result、user acceptance findings and current status。 |
+| Local user acceptance evidence | Local URL、port、database、browser check result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
 
 Codex 不得把“看起来正常”“页面能打开”“日志没有明显错误”作为验收证据。
 
@@ -395,6 +396,7 @@ Policy validation:
   - `content_raw`
   - `content_full`
   - `has_translate_failed`
+  - `deleted_at`
 - `acceptance_gate.leak_policy.allowlist_fields.safe_tokens` 中的字段名不计为 token 泄漏。
 - `acceptance_gate.leak_policy.forbidden_token_patterns` 命中数为 `0`。
 
@@ -413,12 +415,14 @@ Policy validation:
 - 修改数据字段或状态事实时，同步更新 `04_data_model.md`。
 - 修改 UI 行为或组件字段时，同步更新 `03_ui_spec.md`。
 - 修改测试报告结构时，同步更新 `07_test_spec.md#6`。
+- 修改 source document、task record、schema、fixture、mock 或 referenced file 后，相关旧报告必须通过 current `data_hash` 重新证明；过期报告不得继续作为 gate 通过证据。
 - 未新增 MVP non-goal 能力，例如 user/login/search/category/comment/favorite/share/task progress/retry/admin/versioning。
 
 ✘ Fail:
 
 - 代码行为与文档契约不一致。
 - 新增 endpoint、UI 行为或数据字段未写入对应契约文档。
+- 使用 stale report、旧 task snapshot 或旧 source-document hash 作为通过证据。
 - 实现了 MVP 明确排除的功能。
 
 ## 5. Stop Decision
@@ -505,6 +509,32 @@ The machine-checkable JSON Schema for this report lives at `schemas/stop_decisio
   "uncovered_prd_items": [],
   "uncovered_task_acceptance_items": [],
   "user_acceptance_failures": [],
+  "round_count_policy": {
+    "status": "FAIL",
+    "completed_round_count": 1,
+    "minimum_recommended_rounds": 10,
+    "unfinished_work_exists": true,
+    "early_done_allowed": false,
+    "summary_reports": [
+      "reports/tasks/TASK-000/summary.json"
+    ],
+    "round_evidence": [
+      {
+        "task_id": "TASK-000",
+        "summary_report": "reports/tasks/TASK-000/summary.json",
+        "review_report": "reports/tasks/TASK-000/review.json",
+        "fix_optimize_report": "reports/tasks/TASK-000/fix_optimize.json",
+        "round_index": 1,
+        "valid": false,
+        "failure_reasons": [
+          "review:missing"
+        ]
+      }
+    ],
+    "failure_reasons": [
+      "round_count:unfinished_work_exists"
+    ]
+  },
   "generated_from_reports": [
     "reports/acceptance/ACC-STOP-001.json",
     "reports/acceptance/ACC-STOP-002.json",
@@ -527,6 +557,7 @@ Rules:
 - `schema_version` MUST equal `v1`.
 - `STOP_ALLOWED` MUST be `true` only when every required gate status is `PASS` and every stop input status is `PASS`.
 - `STOP_ALLOWED` MUST be `false` when any task is not `passed`, PRD coverage is incomplete, task acceptance coverage is incomplete, browser E2E evidence is missing, or latest local user acceptance has failed findings.
+- When `STOP_ALLOWED = true`, `failure_reasons`、`failed_gates`、`blocked_gates`、`unknown_gates`、`failed_stop_inputs`、`unfinished_tasks`、`uncovered_prd_items`、`uncovered_task_acceptance_items` and `user_acceptance_failures` MUST all be empty.
 - `gate_status` values MUST use `PASS`、`FAIL`、`UNKNOWN`、`TASK_BLOCKED`、`WORKFLOW_BLOCKED` or `ENV_BLOCKED`.
 - `stop_inputs` MUST contain exactly `task_completion_status`、`prd_coverage_status`、`task_acceptance_coverage_status`、`browser_e2e_status` and `local_user_acceptance_status`.
 - `failed_stop_inputs` MUST list every stop input whose status is not `PASS`.
@@ -535,10 +566,17 @@ Rules:
 - `uncovered_prd_items` MUST list every PRD acceptance item not mapped to executed passing evidence.
 - `uncovered_task_acceptance_items` MUST list every task acceptance criterion not mapped to executed passing evidence.
 - `user_acceptance_failures` MUST list every failed local user acceptance finding.
+- `round_count_policy` MUST list `completed_round_count`、`minimum_recommended_rounds`、`unfinished_work_exists`、`early_done_allowed`、`summary_reports`、`round_evidence`、`failure_reasons` and `status`.
+- `round_evidence` MUST contain one entry for each candidate completed round and list `task_id`、`summary_report`、`review_report`、`fix_optimize_report`、`round_index`、`valid` and any machine-readable failure reasons.
+- `completed_round_count` MUST be derived from `round_evidence[*].valid == true`, not copied from a task summary's self-reported count.
+- `round_count_policy.status = PASS` requires either at least 10 valid round evidence entries or `early_done_allowed = true`, and `round_count_policy.failure_reasons` MUST be empty.
+- `round_count_policy.early_done_allowed = true` is permitted only when `completed_round_count < 10`, no unfinished work exists, no malformed round evidence exists, every required gate is `PASS`, every stop input is `PASS`, PRD coverage is complete, task acceptance coverage is complete, browser E2E has passed, and latest local user acceptance has no failed findings.
+- `STOP_ALLOWED = true` requires `round_count_policy.status = PASS`.
 - `timestamp` MUST be derived from `fixed_clock_fixture@v1` for acceptance runs.
-- `generated_from_reports` MUST contain stable relative paths, never absolute paths. Paths MAY be repo-relative (`reports/acceptance/ACC-STOP-001.json`) or report-dir-relative (`acceptance/ACC-STOP-001.json`) when `--report-dir` points outside the repository default.
+- `generated_from_reports` MUST contain exactly one stable relative path for each `ACC-STOP-001` through `ACC-STOP-010` report, never absolute paths. Paths MAY be repo-relative (`reports/acceptance/ACC-STOP-001.json`) or report-dir-relative (`acceptance/ACC-STOP-001.json`) when `--report-dir` points outside the repository default.
 - `STOP_ALLOWED = true` MUST be produced only by the workflow `ACCEPTANCE` state running `python3 scripts/run_harness.py --stage acceptance --report-dir reports` without `--task-id`.
 - A previous `STOP_ALLOWED = true` MUST be considered stale when a later local user acceptance finding fails.
+- A failed local user acceptance finding MUST be preserved in `reports/acceptance/local_user_acceptance.json`, force workflow `ITERATE`, and be mapped to a regression assertion before a later acceptance run may restore `local_user_acceptance_status = PASS`.
 
 Codex 可以成功停止编程并进入 `DONE`，当且仅当：
 
@@ -547,6 +585,7 @@ Codex 可以成功停止编程并进入 `DONE`，当且仅当：
 - Task acceptance coverage matrix 覆盖 `tasks.md` 的全部 task acceptance criteria。
 - 真实浏览器或等价 DOM runner 已验证主页新闻流、30 天高分榜单、详情页和信源页。
 - 最新本地用户验收记录无失败项。
+- Round count policy 证明已经完成至少 10 轮，或在 10 轮前已满足全部停止条件并允许提前 DONE。
 - 没有 `failed`、`flaky`、`skipped` required report。
 - 没有 API/UI/log/report 数据泄漏。
 - 没有未解释的验收证据缺口。

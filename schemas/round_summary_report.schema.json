@@ -8,14 +8,19 @@
     "schema_ref",
     "schema_version",
     "task_id",
+    "round_index",
+    "completed_round_count",
     "completed_work",
     "prd_items",
     "changed_files",
     "test_results",
+    "review",
+    "fix_optimize",
     "issues_found_and_fixed",
     "current_system_completion",
     "remaining_gaps_and_risks",
     "next_round_goal",
+    "round_end_decision",
     "timestamp"
   ],
   "properties": {
@@ -28,6 +33,14 @@
     "task_id": {
       "type": "string",
       "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+    },
+    "round_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "completed_round_count": {
+      "type": "integer",
+      "minimum": 1
     },
     "completed_work": {
       "type": "array",
@@ -147,6 +160,215 @@
         }
       }
     },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "report",
+        "method",
+        "dimensions",
+        "blocking_findings"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked"
+          ]
+        },
+        "report": {
+          "type": "string",
+          "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/review\\.json$"
+        },
+        "method": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "static_diff",
+              "schema_comparison",
+              "dependency_graph_check"
+            ]
+          }
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requirements_fit",
+            "logic_correctness",
+            "test_sufficiency",
+            "architecture",
+            "maintainability",
+            "performance",
+            "security",
+            "compatibility"
+          ],
+          "properties": {
+            "requirements_fit": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "logic_correctness": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "test_sufficiency": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "architecture": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "maintainability": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "performance": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "security": {
+              "$ref": "#/$defs/review_dimension_status"
+            },
+            "compatibility": {
+              "$ref": "#/$defs/review_dimension_status"
+            }
+          }
+        },
+        "blocking_findings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "blocking_findings": {
+                "maxItems": 0
+              },
+              "dimensions": {
+                "properties": {
+                  "requirements_fit": {
+                    "const": "passed"
+                  },
+                  "logic_correctness": {
+                    "const": "passed"
+                  },
+                  "test_sufficiency": {
+                    "const": "passed"
+                  },
+                  "architecture": {
+                    "const": "passed"
+                  },
+                  "maintainability": {
+                    "const": "passed"
+                  },
+                  "performance": {
+                    "const": "passed"
+                  },
+                  "security": {
+                    "const": "passed"
+                  },
+                  "compatibility": {
+                    "const": "passed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "fix_optimize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "report",
+        "blocking_findings_resolved",
+        "optimization_rationale",
+        "changed_files",
+        "retest_reports",
+        "regression_detected"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked"
+          ]
+        },
+        "report": {
+          "type": "string",
+          "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/fix_optimize\\.json$"
+        },
+        "blocking_findings_resolved": {
+          "type": "boolean"
+        },
+        "optimization_rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "retest_reports": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^reports/.+\\.json$"
+          }
+        },
+        "regression_detected": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "blocking_findings_resolved": {
+                "const": true
+              },
+              "retest_reports": {
+                "minItems": 1
+              },
+              "regression_detected": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
     "issues_found_and_fixed": {
       "type": "array",
       "minItems": 1,
@@ -171,9 +393,128 @@
       "type": "string",
       "minLength": 1
     },
+    "round_end_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch_order",
+        "checks",
+        "selected_next_state",
+        "selected_next_target",
+        "selected_reason"
+      ],
+      "properties": {
+        "branch_order": {
+          "const": [
+            "required_tests",
+            "critical_security_blocking_risks",
+            "prd_core_flow",
+            "quality_gates",
+            "stop_conditions"
+          ]
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_tests",
+            "critical_security_blocking_risks",
+            "prd_core_flow",
+            "quality_gates",
+            "stop_conditions"
+          ],
+          "properties": {
+            "required_tests": {
+              "$ref": "#/$defs/round_end_check"
+            },
+            "critical_security_blocking_risks": {
+              "$ref": "#/$defs/round_end_check"
+            },
+            "prd_core_flow": {
+              "$ref": "#/$defs/round_end_check"
+            },
+            "quality_gates": {
+              "$ref": "#/$defs/round_end_check"
+            },
+            "stop_conditions": {
+              "$ref": "#/$defs/round_end_check"
+            }
+          }
+        },
+        "selected_next_state": {
+          "enum": [
+            "FIX",
+            "RE_TEST",
+            "LOAD_TASKS",
+            "ITERATE",
+            "ACCEPTANCE",
+            "TASK_BLOCKED",
+            "WORKFLOW_BLOCKED",
+            "ENV_BLOCKED"
+          ]
+        },
+        "selected_next_target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "timestamp": {
       "type": "string",
       "minLength": 1
+    }
+  },
+  "$defs": {
+    "review_dimension_status": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "round_end_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "decision",
+        "evidence_paths"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_checked"
+          ]
+        },
+        "decision": {
+          "enum": [
+            "fix_retest",
+            "prioritize_risk",
+            "implement_prd_core_submodule",
+            "continue_boundary_quality",
+            "iterate_failed_gate",
+            "check_stop_conditions",
+            "continue_next_round",
+            "done",
+            "blocked",
+            "check_next_branch"
+          ]
+        },
+        "evidence_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^reports/.+\\.json$"
+          }
+        }
+      }
     }
   }
 }

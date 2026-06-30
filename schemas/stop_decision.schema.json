@@ -20,6 +20,7 @@
     "uncovered_prd_items",
     "uncovered_task_acceptance_items",
     "user_acceptance_failures",
+    "round_count_policy",
     "generated_from_reports",
     "timestamp"
   ],
@@ -52,16 +53,16 @@
       "additionalProperties": false
     },
     "passed_gates": {
-      "$ref": "#/$defs/gate_list"
+      "$ref": "#/$defs/unique_gate_list"
     },
     "failed_gates": {
-      "$ref": "#/$defs/gate_list"
+      "$ref": "#/$defs/unique_gate_list"
     },
     "blocked_gates": {
-      "$ref": "#/$defs/gate_list"
+      "$ref": "#/$defs/unique_gate_list"
     },
     "unknown_gates": {
-      "$ref": "#/$defs/gate_list"
+      "$ref": "#/$defs/unique_gate_list"
     },
     "stop_inputs": {
       "type": "object",
@@ -165,18 +166,413 @@
         "type": "object"
       }
     },
+    "round_count_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "completed_round_count",
+        "minimum_recommended_rounds",
+        "unfinished_work_exists",
+        "early_done_allowed",
+        "summary_reports",
+        "round_evidence",
+        "failure_reasons"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "completed_round_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_recommended_rounds": {
+          "const": 10
+        },
+        "unfinished_work_exists": {
+          "type": "boolean"
+        },
+        "early_done_allowed": {
+          "type": "boolean"
+        },
+        "summary_reports": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/summary\\.json$"
+          },
+          "uniqueItems": true
+        },
+        "round_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "task_id",
+              "summary_report",
+              "review_report",
+              "fix_optimize_report",
+              "round_index",
+              "valid"
+            ],
+            "properties": {
+              "task_id": {
+                "type": "string",
+                "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+              },
+              "summary_report": {
+                "type": "string",
+                "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/summary\\.json$"
+              },
+              "review_report": {
+                "type": "string",
+                "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/review\\.json$"
+              },
+              "fix_optimize_report": {
+                "type": "string",
+                "pattern": "^reports/tasks/TASK-[0-9]{3}[A-Z]?/fix_optimize\\.json$"
+              },
+              "round_index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "valid": {
+                "type": "boolean"
+              },
+              "failure_reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "failure_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "failure_reasons": {
+                "maxItems": 0
+              },
+              "round_evidence": {
+                "items": {
+                  "properties": {
+                    "valid": {
+                      "const": true
+                    },
+                    "failure_reasons": {
+                      "maxItems": 0
+                    }
+                  }
+                }
+              }
+            },
+            "anyOf": [
+              {
+                "properties": {
+                  "completed_round_count": {
+                    "minimum": 10
+                  },
+                  "round_evidence": {
+                    "minItems": 10
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "early_done_allowed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "early_done_allowed": {
+                "const": true
+              }
+            },
+            "required": [
+              "early_done_allowed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              },
+              "completed_round_count": {
+                "maximum": 9
+              },
+              "unfinished_work_exists": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
     "generated_from_reports": {
       "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "uniqueItems": true,
       "items": {
         "type": "string",
         "pattern": "^(reports/)?acceptance/ACC-STOP-00[1-9]\\.json$|^(reports/)?acceptance/ACC-STOP-010\\.json$"
-      }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-001\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-002\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-003\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-004\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-005\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-006\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-007\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-008\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-009\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "string",
+            "pattern": "^(reports/)?acceptance/ACC-STOP-010\\.json$"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
     },
     "timestamp": {
       "type": "string",
       "minLength": 1
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "STOP_ALLOWED": {
+            "const": true
+          }
+        },
+        "required": [
+          "STOP_ALLOWED"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gate_status": {
+            "properties": {
+              "ACC-STOP-001": {
+                "const": "PASS"
+              },
+              "ACC-STOP-002": {
+                "const": "PASS"
+              },
+              "ACC-STOP-003": {
+                "const": "PASS"
+              },
+              "ACC-STOP-004": {
+                "const": "PASS"
+              },
+              "ACC-STOP-005": {
+                "const": "PASS"
+              },
+              "ACC-STOP-006": {
+                "const": "PASS"
+              },
+              "ACC-STOP-007": {
+                "const": "PASS"
+              },
+              "ACC-STOP-008": {
+                "const": "PASS"
+              },
+              "ACC-STOP-009": {
+                "const": "PASS"
+              },
+              "ACC-STOP-010": {
+                "const": "PASS"
+              }
+            }
+          },
+          "stop_inputs": {
+            "properties": {
+              "task_completion_status": {
+                "const": "PASS"
+              },
+              "prd_coverage_status": {
+                "const": "PASS"
+              },
+              "task_acceptance_coverage_status": {
+                "const": "PASS"
+              },
+              "browser_e2e_status": {
+                "const": "PASS"
+              },
+              "local_user_acceptance_status": {
+                "const": "PASS"
+              }
+            }
+          },
+          "passed_gates": {
+            "minItems": 10,
+            "maxItems": 10
+          },
+          "failed_gates": {
+            "maxItems": 0
+          },
+          "blocked_gates": {
+            "maxItems": 0
+          },
+          "unknown_gates": {
+            "maxItems": 0
+          },
+          "failed_stop_inputs": {
+            "maxItems": 0
+          },
+          "unfinished_tasks": {
+            "maxItems": 0
+          },
+          "uncovered_prd_items": {
+            "maxItems": 0
+          },
+          "uncovered_task_acceptance_items": {
+            "maxItems": 0
+          },
+          "user_acceptance_failures": {
+            "maxItems": 0
+          },
+          "failure_reasons": {
+            "maxProperties": 0
+          },
+          "round_count_policy": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              },
+              "failure_reasons": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "round_count_policy": {
+            "properties": {
+              "early_done_allowed": {
+                "const": true
+              }
+            },
+            "required": [
+              "early_done_allowed"
+            ]
+          }
+        },
+        "required": [
+          "round_count_policy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "STOP_ALLOWED": {
+            "const": true
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "status_value": {
       "enum": [
@@ -199,6 +595,14 @@
     },
     "gate_list": {
       "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^ACC-STOP-00[1-9]$|^ACC-STOP-010$"
+      }
+    },
+    "unique_gate_list": {
+      "type": "array",
+      "uniqueItems": true,
       "items": {
         "type": "string",
         "pattern": "^ACC-STOP-00[1-9]$|^ACC-STOP-010$"

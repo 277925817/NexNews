@@ -191,11 +191,13 @@ isolation: strict_mock
 - Required stages for acceptance are exactly: `static`, `unit`, `contract`, `api`, `integration`, `replay`, `snapshot`, `e2e`.
 - `acceptance` is a harness gate-evaluation stage. It runs after required stages, consumes their reports, and emits ACC-STOP reports plus `STOP_ALLOWED.json`; it is not one of the required product verification stages.
 - `acceptance` must run only as a full-stage command without `--task-id`; task-scoped acceptance is invalid and must emit structured failure evidence.
+- Acceptance gate reports are written under `reports/acceptance/ACC-STOP-*.json`; acceptance must not be required to write `reports/stages/acceptance.json`, and any compatibility file at that path is diagnostic only.
 - Stage commands, report paths and workflow loop strategy are defined by `workflows.md`.
 - The historical stage list is supported for compatibility, but final stop eligibility depends on PRD coverage, browser-visible E2E evidence and latest local user acceptance. A shallow pass in each stage is not sufficient.
 - Each stage must start from clean isolated state。
 - Stage failure must stop downstream execution。
 - No shared global state across stages。
+- Any stage with behavior-only evidence and no mandatory assertion must still emit at least one `report_metadata` assertion in its `TestReport`; prose-only non-assertion evidence is not a valid report.
 
 ### 2.14 Assertion Hierarchy
 - Failure priority: Static rule violation → Contract violation → Data model violation → Data leakage violation → Replay inconsistency → API behavior mismatch → Integration mismatch → Snapshot diff → UI visual regression。
@@ -253,9 +255,14 @@ Mandatory catalog:
 | `A-snapshot-ACC-STOP-004-public-snapshots` | snapshot | ACC-STOP-004 | public_surface | API JSON, DOM, DB schema and public schema snapshots match or carry structured approval evidence. |
 | `A-e2e-ACC-STOP-008-clean-run-isolation` | e2e | ACC-STOP-008 | report_metadata | E2E run uses only fixture/mock/fixed clock/temp SQLite and no live dependency. |
 | `A-acceptance-ACC-STOP-001-mandatory-catalog-covered` | acceptance | ACC-STOP-001 | report_metadata | Acceptance confirms every mandatory assertion ID is present and passed in allowed reports. |
-| `A-static-ACC-STOP-001-test-report-schema-contract` | static | ACC-STOP-001 | report_metadata | TestReport, StopDecisionReport, TaskPlanReport and task DAG schemas are parseable and self-consistent. |
+| `A-static-ACC-STOP-001-test-report-schema-contract` | static | ACC-STOP-001 | report_metadata | TestReport, StopDecisionReport, TaskPlanReport, ReviewReport, FixOptimizeReport and task DAG schemas are parseable and self-consistent. |
 | `A-acceptance-ACC-STOP-001-stop-decision-schema` | acceptance | ACC-STOP-001 | report_metadata | `STOP_ALLOWED.json` conforms to `docs/08_acceptance.md#5.1` and contains only relative `generated_from_reports` paths. |
 | `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | acceptance | ACC-STOP-001 | report_metadata | Acceptance rejects task-scoped gate evaluation and task-scoped reports as substitutes for full-stage stop evidence. |
+| `A-static-ACC-STOP-001-round-evidence-report-schemas` | static | ACC-STOP-001 | report_metadata | ReviewReport, FixOptimizeReport and RoundSummaryReport schemas prevent counting rounds without review/fix evidence or summary-selected DONE. |
+| `A-unit-ACC-STOP-001-round-count-policy-enforced` | unit | ACC-STOP-001 | report_metadata | Acceptance computes completed round count only from valid summary/review/fix evidence and rejects malformed round evidence. |
+| `A-unit-ACC-STOP-001-coverage-schema-tightened` | unit | ACC-STOP-001 | report_metadata | PRD and task coverage reports cannot pass with uncovered items, prose-only evidence or coverage self-reference. |
+| `A-unit-ACC-STOP-001-acceptance-evaluator-enforcement` | unit | ACC-STOP-001 | report_metadata | Acceptance evaluator rejects STOP_ALLOWED when round policy, task completion or required stop inputs are inconsistent. |
+| `A-unit-ACC-STOP-001-local-user-acceptance-regression` | unit | ACC-STOP-001 | report_metadata | Failed local user acceptance findings keep STOP_ALLOWED false until converted into regression assertion evidence. |
 | `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 7 documented default sources once. |
 | `A-api-ACC-STOP-002-default-source-exact-list` | api | ACC-STOP-002 | public_surface | Empty database initialization creates a source URL set exactly equal to the 7 URLs listed in `docs/01_prd.md`. |
 | `A-api-ACC-STOP-002-source-crud-errors` | api | ACC-STOP-002 | public_surface | Source create, update and delete APIs return documented success and structured error responses for invalid, duplicate, private, deleted and missing source cases. |
@@ -331,6 +338,11 @@ Rules:
 | `A-static-ACC-STOP-001-test-report-schema-contract` | ACC-STOP-001 | TASK-000 | static | reports/stages/static.json |
 | `A-acceptance-ACC-STOP-001-stop-decision-schema` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
 | `A-acceptance-ACC-STOP-001-no-task-scoped-substitution` | ACC-STOP-001 | TASK-021 | acceptance | reports/acceptance/ACC-STOP-001.json |
+| `A-static-ACC-STOP-001-round-evidence-report-schemas` | ACC-STOP-001 | TASK-026A | static | reports/stages/static.json |
+| `A-unit-ACC-STOP-001-round-count-policy-enforced` | ACC-STOP-001 | TASK-026B | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-001-coverage-schema-tightened` | ACC-STOP-001 | TASK-026B | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-001-acceptance-evaluator-enforcement` | ACC-STOP-001 | TASK-026C | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-001-local-user-acceptance-regression` | ACC-STOP-001 | TASK-026C | unit | reports/stages/unit.json |
 | `A-api-ACC-STOP-002-default-source-seed` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-default-source-exact-list` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-source-crud-errors` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
@@ -724,7 +736,7 @@ Field rules:
 - `schema_version` MUST equal `v2`.
 - `test_id` MUST be stable across runs and unique within the test suite.
 - `stage` MUST match the orchestration stages defined in section 2.13.
-- `stage = acceptance` is allowed only for gate-evaluation reports written under `reports/stages/acceptance.json` or `reports/acceptance/ACC-STOP-*.json`.
+- `stage = acceptance` is allowed only for gate-evaluation reports written under `reports/acceptance/ACC-STOP-*.json`.
 - `status` MUST use only the documented values; failed retry results MUST be reported as `flaky` only when a retry passes.
 - `failure_type` MUST use this closed enum for `failed` and `flaky` reports: `api`、`scheduler`、`integration`、`contract`、`data_model`、`ui`、`observability`、`leak`.
 - `failure_type` MUST be `null` for `passed` and `skipped` reports.
@@ -747,9 +759,10 @@ Field rules:
 - `regression_detected` MUST be `true` when the run found a regression in previously completed behavior, and `false` otherwise.
 - `referenced_files` MUST be present and MUST be an array of repository-relative paths involved in the assertion, failure, or owning harness logic.
 - For `failed` and `flaky` reports, `referenced_files` MUST be non-empty so `workflows.md#5.4` can compute a deterministic fix boundary.
-- `data_hash` MUST be present and MUST be a stable `sha256:` hash of the deterministic fixture/mock/report input facts used by the report.
+- `data_hash` MUST be present and MUST be a stable `sha256:` hash of the deterministic fixture/mock/report input facts, referenced files, source documents, schema files and task records used by the report.
+- A report whose `data_hash` no longer matches the current referenced files, source documents, schema files, fixture/mock/clock versions or task records is stale. Stale reports MUST NOT be counted as `passed` evidence for acceptance or `DONE`.
 - `artifact_paths` MUST be present and MUST be an array of repository-relative or report-directory-relative evidence artifacts written by the run.
-- `assertions` MUST be present and non-empty for all `ACC-STOP-*` reports.
+- `assertions` MUST be present and non-empty for every `TestReport`. A behavior-only stage with no mandatory assertion must represent its behavior evidence as a `report_metadata` assertion.
 - Each assertion MUST include `id`、`type`、`status`、`expected`、`actual` and `diff`.
 - Assertion `type` MUST use the closed enum in section 6.2.
 - Each assertion MUST include `visibility`.
@@ -925,6 +938,14 @@ Rules:
 - `uncovered_task_acceptance_items` MUST list every criterion that is unmapped, unexecuted, failed, flaky, skipped, mapped only to prose, or missing report paths.
 - `task_acceptance_coverage_status = PASS` requires this report to exist, match `schemas/task_acceptance_coverage.schema.json`, report `status = passed`, and contain no uncovered task acceptance item.
 
+### 6.5 Review And Fix/Optimize Reports
+
+`reports/tasks/<task_id>/review.json` records the mandatory static review step. It MUST match `schemas/review_report.schema.json`, use `schema_ref = workflows.md#ReviewReport`, include all eight review dimensions, and report `status = passed` only when every dimension is `passed` and `blocking_findings` is empty.
+
+`reports/tasks/<task_id>/fix_optimize.json` records the mandatory fix/optimize step. It MUST match `schemas/fix_optimize_report.schema.json`, use `schema_ref = workflows.md#FixOptimizeReport`, and report `status = passed` only when blocking findings are resolved, at least one relevant retest report is referenced, and `regression_detected = false`.
+
+Round counting MUST validate these two reports through schema and status checks. A `RoundSummaryReport` that merely embeds review/fix prose or paths without parseable reports is not a completed round.
+
 ## 7. 验收标准
 - Static compliance tests pass。
 - 所有 API tests pass。
@@ -939,6 +960,9 @@ Rules:
 - Test report collection 必须符合 `Test Report Contract`。
 - Test report collection 必须覆盖 `static`、`unit`、`contract`、`api`、`integration`、`replay`、`snapshot`、`e2e` stage。
 - Task acceptance coverage report 必须覆盖 `tasks.md` 中每条 acceptance criterion，且不得以 prose-only 或 task-scoped-only evidence 满足最终 stop eligibility。
+- ReviewReport 和 FixOptimizeReport 必须分别符合 `schemas/review_report.schema.json` 与 `schemas/fix_optimize_report.schema.json`；缺失、schema 不匹配、review 维度不全、fix 未复测或存在回归时，该轮不得计入 completed round。
+- Round summary report 必须包含 `round_index`、`completed_round_count`、`review`、`fix_optimize` 和 `round_end_decision`，并指向本轮 review、fix/optimize 与轮末分支决策的结构化证据；`round_end_decision.selected_next_state` 不得为 `DONE`。
+- Acceptance stop decision 必须包含可计算 `round_count_policy`，用来证明未完成工作存在时持续迭代，或证明 10 轮前提前 DONE 只发生在全部停止条件已通过时。
 - Test failure 必须输出 fixture version 和 data hash。
 - Test execution 必须按 orchestration order 执行。
 - Test execution command surface and report paths must match `workflows.md`.

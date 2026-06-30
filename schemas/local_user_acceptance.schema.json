@@ -59,6 +59,7 @@
     "checked_surfaces": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "enum": [
           "home_news_feed",
@@ -104,6 +105,10 @@
           },
           "evidence": {
             "type": "string"
+          },
+          "regression_assertion_id": {
+            "type": "string",
+            "pattern": "^A-(static|unit|contract|api|integration|replay|snapshot|e2e|acceptance)-ACC-STOP-(00[1-9]|010)-[a-z0-9]+(-[a-z0-9]+)*$"
           }
         }
       }
@@ -112,5 +117,74 @@
       "type": "string",
       "minLength": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "checked_surfaces": {
+            "allOf": [
+              {
+                "contains": {
+                  "const": "home_news_feed"
+                }
+              },
+              {
+                "contains": {
+                  "const": "high_score_list"
+                }
+              },
+              {
+                "contains": {
+                  "const": "article_view"
+                }
+              },
+              {
+                "contains": {
+                  "const": "sources_page"
+                }
+              },
+              {
+                "contains": {
+                  "const": "refresh_action"
+                }
+              }
+            ]
+          },
+          "failed_findings": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failed_findings": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
 }

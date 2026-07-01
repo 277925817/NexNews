@@ -151,11 +151,39 @@ def article_metrics(page: Page) -> dict[str, Any]:
     )
 
 
+def fetch_article_detail_for_smoke(
+    page: Page,
+    base_url: str,
+    news_id: str,
+    findings: list[dict[str, str]],
+    timeout_ms: int,
+) -> dict[str, Any]:
+    try:
+        response = page.request.get(f"{base_url}/api/news/{news_id}", timeout=timeout_ms)
+    except Exception as error:
+        findings.append(build_finding("article_view", f"article {news_id} detail API request failed: {error.__class__.__name__}"))
+        return {}
+    if response.status != 200:
+        findings.append(build_finding("article_view", f"article {news_id} detail API status {response.status}"))
+        return {}
+    try:
+        payload = response.json()
+    except Exception as error:
+        findings.append(build_finding("article_view", f"article {news_id} detail API JSON decode failed: {error.__class__.__name__}"))
+        return {}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        findings.append(build_finding("article_view", f"article {news_id} detail API payload is not dict"))
+        return {}
+    return data
+
+
 def append_article_readability_findings(
     metrics: dict[str, Any],
     status: str,
     surface: str,
     findings: list[dict[str, str]],
+    expected_original_url: str = "",
 ) -> None:
     if metrics.get("article_exists") is not True:
         findings.append(build_finding(surface, "article view missing"))
@@ -179,6 +207,12 @@ def append_article_readability_findings(
         findings.append(build_finding(surface, "unreadable detail reason missing"))
     if status == "translation_failed" and not is_public_original_url(str(metrics.get("original_href") or "")):
         findings.append(build_finding(surface, "failed detail original link is not public article URL"))
+    if (
+        status != "ready"
+        and expected_original_url
+        and str(metrics.get("original_href") or "") != expected_original_url
+    ):
+        findings.append(build_finding(surface, "article original link mismatch with detail API"))
 
 
 def check_article_id(
@@ -192,8 +226,15 @@ def check_article_id(
     before_count = len(findings)
     try:
         page.goto(f"{base_url}/news/{news_id}", wait_until="networkidle", timeout=timeout_ms)
+        detail = fetch_article_detail_for_smoke(page, base_url, news_id, findings, timeout_ms)
         metrics = article_metrics(page)
-        append_article_readability_findings(metrics, status, "article_view", findings)
+        append_article_readability_findings(
+            metrics,
+            status,
+            "article_view",
+            findings,
+            str(detail.get("original_url") or ""),
+        )
         return {
             "mode": "direct",
             "news_id": news_id,
@@ -228,8 +269,15 @@ def check_article_click(
         if not status:
             findings.append(build_finding("article_view", f"clicked article {news_id} missing from home payload"))
             return {"mode": "click", "selector": selector, "news_id": news_id, "passed": False}
+        detail = fetch_article_detail_for_smoke(page, base_url, news_id, findings, timeout_ms)
         metrics = article_metrics(page)
-        append_article_readability_findings(metrics, status, "article_view", findings)
+        append_article_readability_findings(
+            metrics,
+            status,
+            "article_view",
+            findings,
+            str(detail.get("original_url") or ""),
+        )
         return {
             "mode": "click",
             "selector": selector,

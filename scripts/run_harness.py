@@ -133,15 +133,58 @@ TASK_002A_SCORE_SOURCE_LOG_SQL = (
     "INSERT INTO processing_log (source_id, stage, success, trace_id, created_at) "
     "VALUES (1, 'score', 1, 'trace', '2026-06-28T09:00:00Z')"
 )
-TASK_002B_DEFAULT_SOURCE_URLS = {
-    "https://developers.openai.com/rss.xml",
-    "https://openai.com/news/rss.xml",
-    "https://dreyx.com/digest/rss",
-    "https://news.ycombinator.com/rss",
-    "https://hnrss.org/frontpage",
-    "https://hnrss.org/newest",
-    "https://hnrss.org/bestcomments",
-}
+DEFAULT_SOURCES_FIXTURE_PATH = Path("fixtures/sources/default_sources.json")
+RSS_FEEDS_FIXTURE_PATH = Path("fixtures/rss/feeds.json")
+
+
+def normalize_default_source_record(record: object) -> dict[str, str]:
+    if isinstance(record, str):
+        return {"name": "", "rss_url": record.strip()}
+    if isinstance(record, dict):
+        return {
+            "name": str(record.get("name") or "").strip(),
+            "rss_url": str(record.get("rss_url") or "").strip(),
+        }
+    return {"name": "", "rss_url": ""}
+
+
+def default_source_records() -> list[dict[str, str]]:
+    payload = json.loads(DEFAULT_SOURCES_FIXTURE_PATH.read_text())
+    records = payload.get("sources") if isinstance(payload, dict) else []
+    if not isinstance(records, list):
+        return []
+    return [normalize_default_source_record(record) for record in records]
+
+
+def default_source_urls() -> set[str]:
+    return {record["rss_url"] for record in default_source_records() if record["rss_url"]}
+
+
+def default_source_count() -> int:
+    return len(default_source_urls())
+
+
+def rss_fixture_counts() -> dict[str, int]:
+    payload = json.loads(RSS_FEEDS_FIXTURE_PATH.read_text())
+    feeds = payload.get("feeds") if isinstance(payload, dict) else []
+    feeds = feeds if isinstance(feeds, list) else []
+    success_count = sum(1 for feed in feeds if isinstance(feed, dict) and feed.get("status") == "success")
+    failure_count = sum(1 for feed in feeds if isinstance(feed, dict) and feed.get("status") != "success")
+    item_count = 0
+    for feed in feeds:
+        if not isinstance(feed, dict) or feed.get("status") != "success":
+            continue
+        items = feed.get("items", [])
+        if isinstance(items, list):
+            item_count += len(items)
+    return {
+        "feed_count": len(feeds),
+        "source_success_count": success_count,
+        "source_failure_count": failure_count,
+        "rss_item_count": item_count,
+    }
+
+
 CONTRACT_FRONTEND_ENDPOINTS = {
     "/api/home",
     "/api/news/",
@@ -407,8 +450,10 @@ PRD_FLOW_ASSERTION_MAP = {
     "5.1": [
         "A-e2e-ACC-STOP-006-home-news-density",
         "A-api-ACC-STOP-004-home-translated-only",
+        "A-api-ACC-STOP-004-home-pagination",
         "A-integration-ACC-STOP-006-ui-render-contract",
         "A-integration-ACC-STOP-006-ui-forbidden-rendering",
+        "A-e2e-ACC-STOP-006-home-infinite-scroll",
         "A-e2e-ACC-STOP-006-news-card-summary-text-only",
         "A-snapshot-ACC-STOP-006-layout-visual-contract",
     ],
@@ -561,6 +606,11 @@ TASK_FALLBACK_ASSERTION_MAP = {
         "A-e2e-ACC-STOP-006-click-to-read-readability",
         "A-e2e-ACC-STOP-006-home-news-density",
         "A-e2e-ACC-STOP-006-high-score-list-browser",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-035": [
+        "A-api-ACC-STOP-004-home-pagination",
+        "A-e2e-ACC-STOP-006-home-infinite-scroll",
         "A-static-ACC-STOP-010-contract-doc-sync",
     ],
 }
@@ -1666,7 +1716,8 @@ def source_management_api_evidence() -> dict[str, Any]:
             (source_id,),
         ).fetchone()
 
-    # 1) Baseline: exactly 7 seeded defaults
+    # 1) Baseline: exactly the documented seeded defaults
+    expected_seed_count = default_source_count()
     seeds_payload, _ = request_json("sources_list_initial", client.get("/api/sources"), 200)
     if seeds_payload is None:
         return {"checks": checks, "issues": issues}
@@ -1677,8 +1728,9 @@ def source_management_api_evidence() -> dict[str, Any]:
 
     seed_count = len(seed_data)
     checks["seed_count"] = seed_count
-    if seed_count != 7:
-        add_issue(f"sources_seed_count={seed_count}!=7")
+    checks["expected_seed_count"] = expected_seed_count
+    if seed_count != expected_seed_count:
+        add_issue(f"sources_seed_count={seed_count}!={expected_seed_count}")
 
     seed_ids = [str(item.get("id")) for item in seed_data if isinstance(item, dict)]
     if not seed_ids:
@@ -2675,6 +2727,7 @@ def task_013_source_item_issues(label: str, items: list[Any]) -> list[str]:
 
 def task_013_contract_observations() -> dict[str, Any]:
     _, client = task_013_client()
+    expected_default_urls = default_source_urls()
     payload, issues = task_013_json(client.get("/api/sources"), "sources_get", 200)
     data = payload.get("data") if isinstance(payload, dict) else []
     data = data if isinstance(data, list) else []
@@ -2682,13 +2735,13 @@ def task_013_contract_observations() -> dict[str, Any]:
     checks = {
         "source_count": len(data),
         "created_sorted": created_values == sorted(created_values),
-        "default_urls_match": {item.get("rss_url") for item in data if isinstance(item, dict)} == TASK_002B_DEFAULT_SOURCE_URLS,
+        "default_urls_match": {item.get("rss_url") for item in data if isinstance(item, dict)} == expected_default_urls,
         "visible_has_only_source_item_fields": not task_013_source_item_issues("sources_get", data),
         "leak_scan": scan_public_payload(payload),
     }
     issues += task_013_source_item_issues("sources_get", data)
-    if len(data) != 7:
-        issues.append(f"sources_get:count={len(data)}!=7")
+    if len(data) != len(expected_default_urls):
+        issues.append(f"sources_get:count={len(data)}!={len(expected_default_urls)}")
     if not checks["created_sorted"]:
         issues.append("sources_get:not_sorted_by_created_at")
     if not checks["default_urls_match"]:
@@ -3303,7 +3356,10 @@ def task_015_source_checks(sources: dict[str, str]) -> dict[str, Any]:
     joined_sources = "\n".join(sources.values())
     checks = {
         "all_planned_files_present": all(Path(path).exists() for path in TASK_015_SOURCE_FILES),
-        "api_client_has_home_endpoint": "fetch('/api/home')" in sources["frontend/src/api/news.ts"],
+        "api_client_has_home_endpoint": (
+            "fetch('/api/home')" in sources["frontend/src/api/news.ts"]
+            or "return query ? `/api/home?${query}` : '/api/home'" in sources["frontend/src/api/news.ts"]
+        ),
         "api_client_has_refresh_endpoint": "fetch('/api/refresh'" in sources["frontend/src/api/news.ts"],
         "api_client_has_detail_route": "/api/news/" in sources["frontend/src/api/news.ts"],
         "home_uses_api_client": "client.fetchHome()" in sources["frontend/src/pages/HomePage.tsx"],
@@ -4940,6 +4996,10 @@ def stage_behavior_evidence(stage: str) -> dict[str, Any]:
         evidence["checks"]["backend_api_responses"] = api_response_evidence
         evidence["issues"].extend(api_response_evidence["issues"])
     if stage in {"api", "integration", "e2e"}:
+        home_pagination = task_035_api_pagination_observations()
+        evidence["checks"]["home_pagination"] = home_pagination
+        evidence["issues"].extend(home_pagination["issues"])
+    if stage in {"api", "integration", "e2e"}:
         source_management = source_management_api_evidence()
         evidence["checks"]["source_management_api"] = source_management
         evidence["issues"].extend(source_management["issues"])
@@ -6071,7 +6131,8 @@ def task_002b_seed_observations(
         "second_seed_count": len(second_rows),
         "first_seed_urls": sorted(first_urls),
         "second_seed_urls": sorted(second_urls),
-        "expected_urls": sorted(TASK_002B_DEFAULT_SOURCE_URLS),
+        "expected_count": default_source_count(),
+        "expected_urls": sorted(default_source_urls()),
         "all_enabled": all(row[1] == 1 for row in second_rows),
         "all_not_deleted": all(row[2] is None for row in second_rows),
         "all_twice_daily": all(row[3] == "twice_daily" for row in second_rows),
@@ -6084,8 +6145,8 @@ def run_task_002b_unit(report_dir: Path, task_id: str) -> int:
     passed = (
         observations["initial_tables"] == ["news_item", "processing_log", "source"]
         and observations["initial_source_count"] == 0
-        and observations["first_seed_count"] == 7
-        and observations["second_seed_count"] == 7
+        and observations["first_seed_count"] == observations["expected_count"]
+        and observations["second_seed_count"] == observations["expected_count"]
         and observations["first_seed_urls"] == observations["expected_urls"]
         and observations["second_seed_urls"] == observations["expected_urls"]
         and observations["all_enabled"]
@@ -6166,8 +6227,9 @@ def task_004_integration_observations() -> dict[str, Any]:
 
 def run_task_004_unit(report_dir: Path, task_id: str) -> int:
     actual = task_004_unit_observations()
+    expected_counts = rss_fixture_counts()
     passed = (
-        actual["feed_count"] == 7
+        actual["feed_count"] == expected_counts["feed_count"]
         and actual["developer_item_count"] == 3
         and actual["developer_unique_canonical_count"] == 2
         and actual["duplicate_canonical_collapsed"]
@@ -6192,16 +6254,17 @@ def run_task_004_unit(report_dir: Path, task_id: str) -> int:
 
 def run_task_004_integration(report_dir: Path, task_id: str) -> int:
     actual = task_004_integration_observations()
+    expected_counts = rss_fixture_counts()
     passed = (
         actual["inserted_count"] == 14
-        and actual["source_success_count"] == 6
-        and actual["source_failure_count"] == 1
+        and actual["source_success_count"] == expected_counts["source_success_count"]
+        and actual["source_failure_count"] == expected_counts["source_failure_count"]
         and actual["news_item_count"] == 14
         and actual["states"] == ["raw"]
         and actual["score_null_count"] == 14
         and actual["content_full_null_count"] == 14
         and actual["title_zh_null_count"] == 14
-        and actual["crawl_log_count"] == 7
+        and actual["crawl_log_count"] == expected_counts["feed_count"]
         and actual["crawl_failure_errors"] == ["parsing"]
         and actual["all_logs_are_crawl_source_logs"]
     )
@@ -6880,12 +6943,13 @@ def task_009_integration_observations() -> dict[str, Any]:
 
 def run_task_009_integration(report_dir: Path, task_id: str) -> int:
     actual = task_009_integration_observations()
+    expected_counts = rss_fixture_counts()
     passed = (
         actual["started_at"] == "2026-06-28T09:00:00Z"
         and actual["finished_at"] == "2026-06-28T09:00:00Z"
-        and actual["source_success_count"] == 6
-        and actual["source_failure_count"] == 1
-        and actual["rss_item_count"] == 15
+        and actual["source_success_count"] == expected_counts["source_success_count"]
+        and actual["source_failure_count"] == expected_counts["source_failure_count"]
+        and actual["rss_item_count"] == expected_counts["rss_item_count"]
         and actual["new_item_count"] == 14
         and actual["scored_item_count"] == 14
         and actual["selected_item_count"] == 13
@@ -7602,9 +7666,14 @@ def materialized_stage_behavior(stage: str) -> dict[str, Any]:
     if stage == "e2e":
         observed = task_024_e2e_observations()
         runtime = deployed_runtime_http_probe()
+        home_infinite = task_035_home_infinite_observations()
         return {
-            "checks": {**observed["checks"], "deployed_runtime_http": runtime},
-            "issues": [*observed["issues"], *runtime["issues"]],
+            "checks": {
+                **observed["checks"],
+                "deployed_runtime_http": runtime,
+                "home_infinite_scroll": home_infinite,
+            },
+            "issues": [*observed["issues"], *runtime["issues"], *home_infinite["issues"]],
         }
     if stage == "integration":
         return materialized_integration_behavior()
@@ -8855,6 +8924,8 @@ def run_pipeline_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_033_integration(report_dir, task_id)
     if task_id == "TASK-034" and stage == "integration":
         return run_task_034_integration(report_dir, task_id)
+    if task_id == "TASK-035" and stage == "integration":
+        return run_task_035_integration(report_dir, task_id)
     if task_id == "TASK-009" and stage == "integration":
         return run_task_009_integration(report_dir, task_id)
     if task_id == "TASK-010" and stage == "integration":
@@ -8893,6 +8964,8 @@ def run_verification_task_stage(report_dir: Path, stage: str, task_id: str) -> i
         return run_task_034_snapshot(report_dir, task_id)
     if task_id == "TASK-034" and stage == "e2e":
         return run_task_034_e2e(report_dir, task_id)
+    if task_id == "TASK-035" and stage == "e2e":
+        return run_task_035_e2e(report_dir, task_id)
     if task_id == "TASK-030" and stage == "snapshot":
         return run_task_030_stage(report_dir, task_id, stage)
     if task_id == "TASK-030" and stage == "e2e":
@@ -8925,6 +8998,8 @@ def run_api_task_stage(report_dir: Path, stage: str, task_id: str) -> int | None
         return run_task_033_api(report_dir, task_id)
     if task_id == "TASK-034" and stage == "api":
         return run_task_034_api(report_dir, task_id)
+    if task_id == "TASK-035" and stage == "api":
+        return run_task_035_api(report_dir, task_id)
     return None
 
 
@@ -8971,6 +9046,8 @@ def run_workflow_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_031_unit(report_dir, task_id)
     if task_id == "TASK-032" and stage == "static":
         return run_task_032_static(report_dir, task_id)
+    if task_id == "TASK-035" and stage == "static":
+        return run_task_035_static(report_dir, task_id)
     return None
 
 
@@ -10967,6 +11044,299 @@ def run_task_034_snapshot(report_dir: Path, task_id: str) -> int:
 
 def run_task_034_e2e(report_dir: Path, task_id: str) -> int:
     return run_task_034_stage(report_dir, task_id, "e2e")
+
+
+def task_035_home_request(
+    client: Any,
+    issues: list[str],
+    name: str,
+    *,
+    limit: int,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    response = client.get("/api/home", params=params)
+    issues.extend(
+        envelope_issue(
+            name=name,
+            response=response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"latest_news", "top_ranked_news"},
+        )
+    )
+    payload, parse_issues = _safe_json(response)
+    issues.extend(f"{name}:{issue}" for issue in parse_issues)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        issues.append(f"{name}:data_not_object")
+        return {}
+    return data
+
+
+def task_035_api_pagination_observations() -> dict[str, Any]:
+    app, import_issue = import_backend_app()
+    if import_issue:
+        return {"checks": {"backend_imported": False}, "issues": [import_issue], "pages": []}
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as error:
+        return {
+            "checks": {"backend_imported": True, "test_client_imported": False},
+            "issues": [f"fastapi_testclient_import_failed:{error.__class__.__name__}"],
+            "pages": [],
+        }
+
+    client = TestClient(app)
+    issues: list[str] = []
+    issues.extend(
+        envelope_issue(
+            name="task_035_refresh",
+            response=client.post("/api/refresh"),
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"refreshed_at"},
+        )
+    )
+    pages = [task_035_home_request(client, issues, "task_035_home_page_1", limit=3)]
+    first_cursor = pages[0].get("next_cursor")
+    if isinstance(first_cursor, str):
+        pages.append(
+            task_035_home_request(
+                client,
+                issues,
+                "task_035_home_page_2",
+                limit=3,
+                cursor=first_cursor,
+            )
+        )
+    else:
+        issues.append("home_pagination:first_next_cursor_missing")
+
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    for page_index in range(3, 8):
+        cursor = pages[-1].get("next_cursor") if pages else None
+        if not isinstance(cursor, str):
+            break
+        pages.append(
+            task_035_home_request(
+                client,
+                issues,
+                f"task_035_home_page_{page_index}",
+                limit=3,
+                cursor=cursor,
+            )
+        )
+
+    latest_items = [
+        item
+        for page in pages
+        for item in page.get("latest_news", [])
+        if isinstance(item, dict)
+    ]
+    for item in latest_items:
+        item_id = str(item.get("id") or "")
+        if item_id in seen_ids:
+            duplicate_ids.add(item_id)
+        seen_ids.add(item_id)
+    dates = [str(item.get("published_at") or "") for item in latest_items]
+    first_ids = [str(item.get("id")) for item in pages[0].get("latest_news", [])]
+    second_ids = [str(item.get("id")) for item in pages[1].get("latest_news", [])] if len(pages) > 1 else []
+    first_top = [str(item.get("id")) for item in pages[0].get("top_ranked_news", [])]
+    second_top = [str(item.get("id")) for item in pages[1].get("top_ranked_news", [])] if len(pages) > 1 else []
+    checks = {
+        "backend_imported": True,
+        "first_page_limited": len(first_ids) == 3,
+        "first_next_cursor_present": isinstance(first_cursor, str) and bool(first_cursor),
+        "second_page_limited": len(second_ids) == 3,
+        "first_second_non_overlapping": not (set(first_ids) & set(second_ids)),
+        "combined_sorted_desc": dates == sorted(dates, reverse=True),
+        "all_pages_non_duplicate": not duplicate_ids,
+        "terminal_page_omits_next_cursor": bool(pages) and "next_cursor" not in pages[-1],
+        "top_ranked_unpaginated": bool(first_top) and first_top == second_top,
+        "latest_translated_only": all(item.get("status") == "translated" for item in latest_items),
+    }
+    issues.extend(f"home_pagination:{name}=false" for name, passed in checks.items() if not passed)
+    return {
+        "checks": checks,
+        "issues": sorted(set(issues)),
+        "page_lengths": [len(page.get("latest_news", [])) for page in pages],
+        "page_ids": [
+            [str(item.get("id")) for item in page.get("latest_news", []) if isinstance(item, dict)]
+            for page in pages
+        ],
+        "duplicate_ids": sorted(duplicate_ids),
+    }
+
+
+def task_035_frontend_observations() -> dict[str, Any]:
+    api_source, api_issues = _safe_text_read(Path("frontend/src/api/news.ts"), "news_api")
+    home_source, home_issues = _safe_text_read(Path("frontend/src/pages/HomePage.tsx"), "home_page")
+    high_score_source, high_score_issues = _safe_text_read(
+        Path("frontend/src/components/HighScoreList.tsx"),
+        "high_score_list",
+    )
+    app_css, css_issues = _safe_text_read(Path("frontend/src/styles/app.css"), "app_css")
+    issues = api_issues + home_issues + high_score_issues + css_issues
+    checks = {
+        "api_client_accepts_cursor_limit": all(
+            token in api_source for token in ["FetchHomeOptions", "URLSearchParams", "cursor", "limit"]
+        ),
+        "page_level_scroll_listener": "window.addEventListener('scroll'" in home_source
+        and "document.documentElement" in home_source,
+        "loads_next_cursor": "loadMoreHome" in home_source
+        and "client.fetchHome({ cursor: nextCursor })" in home_source,
+        "append_unique_news": "mergeUniqueLatestNews" in home_source
+        and "new Set" in home_source
+        and "[...current.latest_news, ...appendedNews]" in home_source,
+        "preserves_top_ranked_news": "top_ranked_news: current.top_ranked_news" in home_source,
+        "failure_keeps_retryable_cursor": "setLoadingMoreState('error')" in home_source
+        and "loadingMoreState === 'loading'" in home_source
+        and "loadingMoreState !== 'idle'" not in home_source,
+        "end_state_stops_requests": "if (!nextCursor" in home_source
+        and "setNextCursor(nextPage.next_cursor)" in home_source,
+        "no_nested_scroll_container": "overflow-y" not in app_css,
+        "high_score_not_paginated": "fetchHome" not in high_score_source
+        and "next_cursor" not in high_score_source
+        and "overflow-y" not in high_score_source,
+    }
+    issues.extend(f"frontend_infinite_scroll:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues))}
+
+
+def task_035_static_observations(task_id: str) -> dict[str, Any]:
+    plan = read_report(Path(f"reports/tasks/{task_id}/plan.json"))
+    plan_issues = validate_against_schema(
+        plan,
+        SCHEMA_FILES["task_plan_report"],
+        "TaskPlanReport",
+    )
+    harness_source = Path("scripts/run_harness.py").read_text(encoding="utf-8")
+    docs = {
+        path.as_posix(): path.read_text(encoding="utf-8")
+        for path in (
+            Path("docs/01_prd.md"),
+            Path("docs/03_ui_spec.md"),
+            Path("docs/05_api_contract.md"),
+            Path("docs/07_test_spec.md"),
+            Path("docs/08_acceptance.md"),
+        )
+    }
+    checks = {
+        "plan_schema_valid": not plan_issues,
+        "prd_mentions_scroll_loading": all(
+            token in docs["docs/01_prd.md"]
+            for token in ["向下滚动", "新闻列表底部", "next_cursor"]
+        ),
+        "ui_mentions_page_level_scroll": "page-level scroll" in docs["docs/03_ui_spec.md"],
+        "api_contract_mentions_next_cursor": "next_cursor" in docs["docs/05_api_contract.md"],
+        "mandatory_api_assertion_documented": "A-api-ACC-STOP-004-home-pagination" in docs["docs/07_test_spec.md"],
+        "mandatory_e2e_assertion_documented": "A-e2e-ACC-STOP-006-home-infinite-scroll" in docs["docs/07_test_spec.md"],
+        "acceptance_mentions_infinite_loading": "Home page 向下滚动接近底部" in docs["docs/08_acceptance.md"],
+        "task_harness_dispatch_present": "run_task_035_stage" in harness_source,
+        "task_fallback_assertions_present": '"TASK-035"' in harness_source
+        and "A-api-ACC-STOP-004-home-pagination" in harness_source
+        and "A-e2e-ACC-STOP-006-home-infinite-scroll" in harness_source,
+    }
+    issues = plan_issues + [f"task_035_static:{name}=false" for name, passed in checks.items() if not passed]
+    return {"checks": checks, "issues": sorted(set(issues))}
+
+
+def task_035_home_infinite_observations() -> dict[str, Any]:
+    api = task_035_api_pagination_observations()
+    frontend = task_035_frontend_observations()
+    checks = {
+        "api_cursor_pagination": all(api["checks"].values()),
+        "scroll_triggers_cursor_request": frontend["checks"].get("page_level_scroll_listener") is True
+        and frontend["checks"].get("loads_next_cursor") is True,
+        "append_without_duplicates": frontend["checks"].get("append_unique_news") is True
+        and api["checks"].get("all_pages_non_duplicate") is True,
+        "failure_retryable": frontend["checks"].get("failure_keeps_retryable_cursor") is True,
+        "end_state_stop": frontend["checks"].get("end_state_stops_requests") is True
+        and api["checks"].get("terminal_page_omits_next_cursor") is True,
+        "high_score_unpaginated": frontend["checks"].get("high_score_not_paginated") is True
+        and api["checks"].get("top_ranked_unpaginated") is True,
+        "no_nested_scroll_container": frontend["checks"].get("no_nested_scroll_container") is True,
+    }
+    issues = [*api["issues"], *frontend["issues"]]
+    issues.extend(f"home_infinite_scroll:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "api": api, "frontend": frontend}
+
+
+def run_task_035_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    if stage == "static":
+        observed = task_035_static_observations(task_id)
+        assertion_id = "A-static-ACC-STOP-010-contract-doc-sync"
+        visibility = "report_metadata"
+        failure_type = "contract"
+    elif stage == "api":
+        observed = task_035_api_pagination_observations()
+        assertion_id = "A-api-ACC-STOP-004-home-pagination"
+        visibility = "public_surface"
+        failure_type = "api"
+    elif stage == "integration":
+        observed = task_035_home_infinite_observations()
+        assertion_id = "task-035-integration-home-pagination-ui-contract"
+        visibility = "internal_evidence"
+        failure_type = "integration"
+    else:
+        observed = task_035_home_infinite_observations()
+        assertion_id = "A-e2e-ACC-STOP-006-home-infinite-scroll"
+        visibility = "public_surface"
+        failure_type = "ui"
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-home-infinite-loading-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"home_infinite_loading": "cursor_append_retry_end_state"},
+                {"checks": observed["checks"]},
+                {"issues": observed["issues"]},
+                visibility=visibility,
+            )
+        ],
+        expected={"home_infinite_loading": "cursor_append_retry_end_state"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else failure_type,
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/main.py",
+            "frontend/src/api/news.ts",
+            "frontend/src/pages/HomePage.tsx",
+            "frontend/src/components/HighScoreList.tsx",
+            "frontend/src/styles/app.css",
+            "tests/test_api_contract.py",
+            "tests/test_frontend_contract.py",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_035_static(report_dir: Path, task_id: str) -> int:
+    return run_task_035_stage(report_dir, task_id, "static")
+
+
+def run_task_035_api(report_dir: Path, task_id: str) -> int:
+    return run_task_035_stage(report_dir, task_id, "api")
+
+
+def run_task_035_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_035_stage(report_dir, task_id, "integration")
+
+
+def run_task_035_e2e(report_dir: Path, task_id: str) -> int:
+    return run_task_035_stage(report_dir, task_id, "e2e")
 
 
 def prd_coverage_evidence(report_dir: Path) -> dict[str, Any]:

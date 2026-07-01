@@ -3,6 +3,7 @@ import type { NewsStatus } from '../types/news'
 const STATUS_LABELS: Record<NewsStatus, string> = {
   ready: '翻译中',
   translated: '已翻译',
+  untranslated: '未翻译',
   translation_failed: '翻译失败',
 }
 

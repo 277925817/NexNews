@@ -28,13 +28,50 @@ class LiveRuntimeConfig:
     mode: str
     allow_live_network: bool
     allow_live_llm: bool
+    allow_live_article_fetch: bool
     request_timeout_seconds: float
     request_retry_count: int
     request_retry_backoff_seconds: float
+    live_rss_concurrency: int
+    llm_api_key: str | None
+    llm_base_url: str | None
+    llm_model: str | None
+    llm_request_timeout_seconds: float
+    live_llm_retry_count: int
+    live_llm_max_items: int
+    live_llm_concurrency: int
+    live_llm_max_score_items: int
+    live_llm_score_concurrency: int
+
+
+def _read_env_file(root: Path) -> dict[str, str]:
+    env_path = root / ".env"
+    if not env_path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        values[key.strip()] = value
+    return values
+
+
+def _config_value(name: str, env_file_values: dict[str, str]) -> str | None:
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    return env_file_values.get(name)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
+    return _value_bool(value, default)
+
+
+def _value_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     normalized = value.strip().lower()
@@ -43,6 +80,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 def _env_int(name: str, default: int) -> int:
     value = os.getenv(name)
+    return _value_int(value, default)
+
+
+def _value_int(value: str | None, default: int) -> int:
     if not value:
         return default
     try:
@@ -53,6 +94,10 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name)
+    return _value_float(value, default)
+
+
+def _value_float(value: str | None, default: float) -> float:
     if not value:
         return default
     try:
@@ -77,18 +122,60 @@ def get_local_runtime_config(root: Path | None = None) -> LocalRuntimeConfig:
     )
 
 
-def get_live_runtime_config() -> LiveRuntimeConfig:
-    mode = (os.getenv("RSS_RUNTIME_MODE", "fixture") or "fixture").strip().lower()
-    allow_live_network = mode == "live" and _env_bool("RSS_ALLOW_LIVE_NETWORK", True)
-    allow_live_llm = mode == "live" and _env_bool("RSS_ALLOW_LIVE_LLM", False)
-    timeout = _env_float("RSS_HTTP_TIMEOUT_SECONDS", 12)
-    retries = _env_int("RSS_HTTP_RETRY_COUNT", 3)
-    backoff = _env_float("RSS_HTTP_RETRY_BACKOFF_SECONDS", 0.5)
+def get_live_runtime_config(root: Path | None = None) -> LiveRuntimeConfig:
+    repo_root = root or Path(__file__).resolve().parents[3]
+    env_file_values = _read_env_file(repo_root)
+    mode = (_config_value("RSS_RUNTIME_MODE", env_file_values) or "fixture").strip().lower()
+    llm_api_key = _config_value("LLM_API_KEY", env_file_values)
+    llm_base_url = _config_value("LLM_BASE_URL", env_file_values)
+    llm_model = _config_value("LLM_MODEL", env_file_values)
+    llm_configured = bool(llm_api_key and llm_base_url and llm_model)
+    allow_live_llm_value = _config_value("RSS_ALLOW_LIVE_LLM", env_file_values)
+    allow_live_network = mode == "live" and _value_bool(
+        _config_value("RSS_ALLOW_LIVE_NETWORK", env_file_values),
+        True,
+    )
+    allow_live_llm = (
+        mode == "live"
+        and llm_configured
+        and _value_bool(allow_live_llm_value, llm_configured)
+    )
+    allow_live_article_fetch = mode == "live" and _value_bool(
+        _config_value("RSS_FETCH_LIVE_ARTICLES", env_file_values),
+        True,
+    )
+    timeout = _value_float(_config_value("RSS_HTTP_TIMEOUT_SECONDS", env_file_values), 2)
+    retries = _value_int(_config_value("RSS_HTTP_RETRY_COUNT", env_file_values), 0)
+    backoff = _value_float(_config_value("RSS_HTTP_RETRY_BACKOFF_SECONDS", env_file_values), 0.2)
+    live_rss_concurrency = _value_int(_config_value("RSS_LIVE_RSS_CONCURRENCY", env_file_values), 23)
+    llm_timeout = _value_float(_config_value("RSS_LIVE_LLM_TIMEOUT_SECONDS", env_file_values), 30)
+    live_llm_retry_count = max(0, _value_int(_config_value("RSS_LIVE_LLM_RETRY_COUNT", env_file_values), 2))
+    live_llm_max_items = _value_int(_config_value("RSS_LIVE_LLM_MAX_ITEMS", env_file_values), 20)
+    live_llm_concurrency = max(1, _value_int(_config_value("RSS_LIVE_LLM_CONCURRENCY", env_file_values), 2))
+    live_llm_max_score_items = _value_int(
+        _config_value("RSS_LIVE_LLM_MAX_SCORE_ITEMS", env_file_values),
+        20,
+    )
+    live_llm_score_concurrency = max(
+        1,
+        _value_int(_config_value("RSS_LIVE_LLM_SCORE_CONCURRENCY", env_file_values), 2),
+    )
     return LiveRuntimeConfig(
         mode=mode,
         allow_live_network=allow_live_network,
         allow_live_llm=allow_live_llm,
+        allow_live_article_fetch=allow_live_article_fetch,
         request_timeout_seconds=timeout,
         request_retry_count=retries,
         request_retry_backoff_seconds=backoff,
+        live_rss_concurrency=live_rss_concurrency,
+        llm_api_key=llm_api_key,
+        llm_base_url=llm_base_url,
+        llm_model=llm_model,
+        llm_request_timeout_seconds=llm_timeout,
+        live_llm_retry_count=live_llm_retry_count,
+        live_llm_max_items=live_llm_max_items,
+        live_llm_concurrency=live_llm_concurrency,
+        live_llm_max_score_items=live_llm_max_score_items,
+        live_llm_score_concurrency=live_llm_score_concurrency,
     )

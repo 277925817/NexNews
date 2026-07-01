@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import sqlite3
 import json
@@ -115,6 +117,13 @@ def public_source(source: dict[str, object]) -> dict[str, object]:
 
 def display_status(row: dict[str, object]) -> str:
     if row["title_zh"] and row["summary_zh"] and row["content_zh"]:
+        fallback_content = row["content_full"] or row["content_raw"]
+        if (
+            row["title_zh"] == row["original_title"]
+            and row["summary_zh"] == row["content_raw"]
+            and row["content_zh"] == fallback_content
+        ):
+            return "untranslated"
         return "translated"
     if bool(row["has_translate_failed"]):
         return "translation_failed"
@@ -146,6 +155,28 @@ def detail_item(row: dict[str, object]) -> dict[str, object]:
     return item
 
 
+def encode_home_cursor(row: dict[str, object]) -> str:
+    payload = json.dumps(
+        {"published_at": row["published_at"], "id": int(row["id"])},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_home_cursor(value: str) -> tuple[str, int] | None:
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(raw)
+        published_at = str(payload["published_at"])
+        item_id = int(payload["id"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error):
+        return None
+    if not published_at or item_id < 1:
+        return None
+    return published_at, item_id
+
+
 def displayable_news_query(
     extra_where: str = "",
     order_by: str = "news_item.published_at DESC",
@@ -174,6 +205,8 @@ def displayable_news_query(
           news_item.title_zh,
           news_item.summary_zh,
           news_item.content_zh,
+          news_item.content_raw,
+          news_item.content_full,
           news_item.has_translate_failed,
           source.name AS source_name
         FROM news_item
@@ -276,15 +309,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def get_home(limit: int = 50, cursor: str | None = None) -> JSONResponse:
         bounded_limit = min(max(limit, 1), 100)
         hidden_guids = app.state.hidden_api_rss_guids
+        cursor_where = ""
+        cursor_params: list[object] = []
+        if cursor:
+            decoded_cursor = decode_home_cursor(cursor)
+            if decoded_cursor is None:
+                return error_response("VALIDATION_ERROR", "Invalid cursor", 400)
+            published_at, item_id = decoded_cursor
+            cursor_where = """
+          AND (
+            news_item.published_at < ?
+            OR (news_item.published_at = ? AND news_item.id < ?)
+          )
+            """
+            cursor_params = [published_at, published_at, item_id]
+
         latest_query, latest_params = displayable_news_query(
-            order_by="news_item.published_at DESC",
+            extra_where=cursor_where,
+            order_by="news_item.published_at DESC, news_item.id DESC",
             translated_only=True,
             excluded_rss_guids=hidden_guids,
         )
         latest_rows = db().execute(
             f"{latest_query} LIMIT ?",
-            tuple(latest_params + [bounded_limit]),
+            tuple(latest_params + cursor_params + [bounded_limit + 1]),
         ).fetchall()
+        latest_page = latest_rows[:bounded_limit]
 
         # Keep top list bounded as before; top ranking is already
         # filtered by translation completeness + 30-day window + hidden samples.
@@ -298,12 +348,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             f"{top_query} LIMIT 10",
             tuple(top_params + [TOP_RANKED_WINDOW_START]),
         ).fetchall()
-        return data_response(
-            {
-                "latest_news": [list_item(row) for row in latest_rows],
-                "top_ranked_news": [list_item(row) for row in top_rows],
-            }
-        )
+        home_data = {
+            "latest_news": [list_item(row) for row in latest_page],
+            "top_ranked_news": [list_item(row) for row in top_rows],
+        }
+        if len(latest_rows) > bounded_limit and latest_page:
+            home_data["next_cursor"] = encode_home_cursor(latest_page[-1])
+        return data_response(home_data)
 
     @app.get("/api/news/{id}")
     def get_news(id: str) -> JSONResponse:
@@ -339,9 +390,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 use_live_data=runtime.mode == "live",
                 allow_live_network=runtime.allow_live_network,
                 allow_live_llm=runtime.allow_live_llm,
+                allow_live_article_fetch=runtime.allow_live_article_fetch,
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 request_retry_count=runtime.request_retry_count,
                 request_retry_backoff_seconds=runtime.request_retry_backoff_seconds,
+                live_rss_concurrency=runtime.live_rss_concurrency,
+                live_llm_base_url=runtime.llm_base_url,
+                live_llm_api_key=runtime.llm_api_key,
+                live_llm_model=runtime.llm_model,
+                live_llm_timeout_seconds=runtime.llm_request_timeout_seconds,
+                live_llm_retry_count=runtime.live_llm_retry_count,
+                live_llm_max_items=runtime.live_llm_max_items,
+                live_llm_concurrency=runtime.live_llm_concurrency,
+                live_llm_max_score_items=runtime.live_llm_max_score_items,
+                live_llm_score_concurrency=runtime.live_llm_score_concurrency,
             )
             if result["started"]:
                 app.state.last_successful_refresh_at = result["summary"]["finished_at"]

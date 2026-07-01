@@ -18,8 +18,17 @@
 
 - 本地用户验收入口必须是 `http://127.0.0.1:8010/`。
 - 本地长期服务必须用 `python3 scripts/local_service.py start` 启动；该脚本先构建 `frontend/dist`，再用 FastAPI `create_app` 在同一端口服务 SPA 和 `/api/*`。
+- 本地长期服务供人工验收时必须默认注入 live runtime：`RSS_RUNTIME_MODE=live`、`RSS_ALLOW_LIVE_NETWORK=1`、`RSS_FETCH_LIVE_ARTICLES=1`；不得在未显式说明的情况下使用 fixture RSS、article fixture、LLM mock 或 fixed clock。
+- 本地长期服务的 refresh 全流程必须使用真实数据源：真实 RSS 抓取、真实网页正文抓取、`.env` / 环境变量中的真实 LLM scoring、真实 LLM translation 和本地 SQLite 运行库。
+- 本地长期服务为保持人工验收响应性，默认只做小批量真实 LLM 工作：`RSS_LIVE_LLM_MAX_ITEMS=3`、`RSS_LIVE_LLM_MAX_SCORE_ITEMS=3`、`RSS_LIVE_LLM_TIMEOUT_SECONDS=20`、`RSS_LIVE_LLM_RETRY_COUNT=0`；需要批量追赶积压时可显式覆盖这些环境变量。
 - Vite dev server 只允许用于开发调试，不得作为本地长期验收服务；否则 shell/terminal 结束会导致 8010 失效。
 - 本地长期服务的 PID 和日志必须写入 `.local/rss-service/`，该目录不得进入版本控制。
+- live 运行时允许从进程环境或仓库根目录 `.env` 读取 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；密钥不得写入日志、报告、API 响应或前端产物。
+- live 运行时每次刷新最多翻译 `RSS_LIVE_LLM_MAX_ITEMS` 条待翻译新闻，默认 `20`；设为 `0` 或负数表示不限制。
+- live 运行时 LLM 翻译请求并发数由 `RSS_LIVE_LLM_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
+- live 运行时每次刷新最多评分 `RSS_LIVE_LLM_MAX_SCORE_ITEMS` 条 raw 新闻，默认 `20`；评分候选必须按 `published_at DESC, id DESC` 选择，超出上限的 raw 新闻保留到后续刷新。
+- live 运行时 LLM 评分请求并发数由 `RSS_LIVE_LLM_SCORE_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
+- live 运行时 LLM 重试次数由 `RSS_LIVE_LLM_RETRY_COUNT` 控制，通用默认 `2`；本地长期服务默认 `0`，避免真实限流或配置错误把单次刷新拖成长时间阻塞。
 
 ## 1. Code Style Rules（代码风格规范）
 
@@ -89,20 +98,22 @@
 ## 5. LLM Interaction Rules（LLM 调用规范）
 
 - LLM 请求必须通过统一 client 入口，否则 mock 和限流无法集中处理。
+- live LLM translation 必须使用环境变量或 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`，并调用统一 client 入口。
 - LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `score`。
 - LLM translation 输出必须按 JSON schema 校验，否则不得写入中文字段。
 - If LLM output fails JSON schema validation, classify as `validation_llm_error`, not `llm_error`.
-- 无效 LLM response 必须在 `processing_log` 中记录为 `llm` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
-- LLM retry max = `2`，超过后必须写入失败 `processing_log`。
+- 无效 LLM response 必须在 `processing_log` 中记录为 `llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
+- LLM retry max = `2`，超过后必须写入失败 `processing_log`；HTTP 400/401/403/404/429 是终止性错误，必须 fail fast，不得通过重试放大限流或配置错误。
 - If LLM scoring or translation fails after retry max, `pipeline_state` must remain unchanged; scoring failure must not advance the item, and translation failure must set `has_translate_failed = 1` without writing partial Chinese fields.
 - Missing title or original URL is deterministic input validation and may assign `score = 0` without an LLM call; invalid, timeout, or schema-invalid LLM output must not be converted into a successful `score = 0`.
 - LLM prompt 变更必须有测试 fixture 更新，否则输出契约无法验证。
 - LLM prompt 不得包含完整 `content_full` 之外的敏感配置，否则日志和错误处理会泄漏。
 - LLM mock 必须覆盖 scoring 和 translation，否则 pipeline 测试会依赖外部服务。
+- live LLM 未启用或配置缺失时，原文兜底只能投影为 `untranslated`，不得计入 translation success。
 
 ## 6. Error Handling Rules（错误处理规范）
 
-- 所有异常必须归类为 `network`、`parsing`、`llm`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
+- 所有异常必须归类为 `network`、`parsing`、`llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
 - 禁止 silent fail，任何失败必须写入 `processing_log` 或应用日志。
 - API validation error 必须返回结构化 error，否则前端无法稳定处理。
 - RSS 解析失败必须归类为 `parsing`，否则源质量无法判断。

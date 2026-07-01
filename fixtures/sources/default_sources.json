@@ -1,12 +1,97 @@
 {
   "version": "mvp_acceptance_fixture@v1",
   "sources": [
-    "https://developers.openai.com/rss.xml",
-    "https://openai.com/news/rss.xml",
-    "https://dreyx.com/digest/rss",
-    "https://news.ycombinator.com/rss",
-    "https://hnrss.org/frontpage",
-    "https://hnrss.org/newest",
-    "https://hnrss.org/bestcomments"
+    {
+      "name": "OpenAI Developers",
+      "rss_url": "https://developers.openai.com/rss.xml"
+    },
+    {
+      "name": "OpenAI News",
+      "rss_url": "https://openai.com/news/rss.xml"
+    },
+    {
+      "name": "DreyX Digest",
+      "rss_url": "https://dreyx.com/digest/rss"
+    },
+    {
+      "name": "Hacker News RSS",
+      "rss_url": "https://news.ycombinator.com/rss"
+    },
+    {
+      "name": "Hacker News Front Page",
+      "rss_url": "https://hnrss.org/frontpage"
+    },
+    {
+      "name": "Hacker News Newest",
+      "rss_url": "https://hnrss.org/newest"
+    },
+    {
+      "name": "Hacker News Best Comments",
+      "rss_url": "https://hnrss.org/bestcomments"
+    },
+    {
+      "name": "Google DeepMind News",
+      "rss_url": "https://deepmind.google/blog/rss.xml"
+    },
+    {
+      "name": "Google AI Blog",
+      "rss_url": "https://blog.google/innovation-and-ai/technology/ai/rss/"
+    },
+    {
+      "name": "Google Research Blog",
+      "rss_url": "https://research.google/blog/rss/"
+    },
+    {
+      "name": "Hugging Face Blog",
+      "rss_url": "https://huggingface.co/blog/feed.xml"
+    },
+    {
+      "name": "AWS Machine Learning Blog",
+      "rss_url": "https://aws.amazon.com/blogs/machine-learning/feed/"
+    },
+    {
+      "name": "NVIDIA Deep Learning Blog",
+      "rss_url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/"
+    },
+    {
+      "name": "InfoQ AI ML Data Engineering",
+      "rss_url": "https://feed.infoq.com/ai-ml-data-eng"
+    },
+    {
+      "name": "arXiv Artificial Intelligence",
+      "rss_url": "https://rss.arxiv.org/rss/cs.AI"
+    },
+    {
+      "name": "arXiv Machine Learning",
+      "rss_url": "https://rss.arxiv.org/rss/cs.LG"
+    },
+    {
+      "name": "arXiv Computation and Language",
+      "rss_url": "https://rss.arxiv.org/rss/cs.CL"
+    },
+    {
+      "name": "arXiv Computer Vision",
+      "rss_url": "https://rss.arxiv.org/rss/cs.CV"
+    },
+    {
+      "name": "arXiv Statistics Machine Learning",
+      "rss_url": "https://rss.arxiv.org/rss/stat.ML"
+    },
+    {
+      "name": "MIT Technology Review AI",
+      "rss_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/"
+    },
+    {
+      "name": "VentureBeat AI",
+      "rss_url": "https://venturebeat.com/category/ai/feed/"
+    },
+    {
+      "name": "TechCrunch AI",
+      "rss_url": "https://techcrunch.com/category/artificial-intelligence/feed/"
+    },
+    {
+      "name": "The Decoder",
+      "rss_url": "https://the-decoder.com/feed/"
+    }
   ]
 }

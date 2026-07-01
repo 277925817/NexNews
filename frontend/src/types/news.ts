@@ -1,4 +1,4 @@
-export type NewsStatus = 'ready' | 'translated' | 'translation_failed'
+export type NewsStatus = 'ready' | 'translated' | 'untranslated' | 'translation_failed'
 
 export type NewsItem = {
   id: string

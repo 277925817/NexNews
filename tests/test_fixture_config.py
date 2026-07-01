@@ -67,6 +67,69 @@ def test_local_runtime_config_points_to_fixture_and_mock_inputs():
     assert config.allow_live_llm is False
 
 
+def test_live_runtime_config_loads_llm_settings_from_env_file(monkeypatch, tmp_path):
+    from backend.app.core.config import get_live_runtime_config
+
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "LLM_API_KEY=env-file-secret",
+                "LLM_BASE_URL=https://llm.example.test/api/v4",
+                "LLM_MODEL=glm-test",
+                "RSS_LIVE_LLM_MAX_ITEMS=7",
+                "RSS_LIVE_LLM_CONCURRENCY=3",
+                "RSS_LIVE_LLM_RETRY_COUNT=1",
+                "RSS_LIVE_LLM_MAX_SCORE_ITEMS=9",
+                "RSS_LIVE_LLM_SCORE_CONCURRENCY=4",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_RUNTIME_MODE", "live")
+    monkeypatch.setenv("RSS_ALLOW_LIVE_NETWORK", "1")
+    monkeypatch.delenv("RSS_ALLOW_LIVE_LLM", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    config = get_live_runtime_config(tmp_path)
+
+    assert config.allow_live_llm is True
+    assert config.llm_api_key == "env-file-secret"
+    assert config.llm_base_url == "https://llm.example.test/api/v4"
+    assert config.llm_model == "glm-test"
+    assert config.allow_live_article_fetch is True
+    assert config.live_llm_max_items == 7
+    assert config.live_llm_concurrency == 3
+    assert config.live_llm_retry_count == 1
+    assert config.live_llm_max_score_items == 9
+    assert config.live_llm_score_concurrency == 4
+
+
+def test_local_service_defaults_to_live_real_dependency_runtime():
+    from scripts.local_service import local_acceptance_environment
+
+    env = local_acceptance_environment(
+        {
+            "PATH": "/usr/bin",
+            "RSS_HTTP_TIMEOUT_SECONDS": "7",
+            "RSS_LIVE_LLM_MAX_ITEMS": "5",
+        }
+    )
+
+    assert env["RSS_RUNTIME_MODE"] == "live"
+    assert env["RSS_ALLOW_LIVE_NETWORK"] == "1"
+    assert env["RSS_FETCH_LIVE_ARTICLES"] == "1"
+    assert env["RSS_HTTP_TIMEOUT_SECONDS"] == "7"
+    assert env["RSS_HTTP_RETRY_COUNT"] == "2"
+    assert env["RSS_LIVE_LLM_MAX_ITEMS"] == "5"
+    assert env["RSS_LIVE_LLM_CONCURRENCY"] == "3"
+    assert env["RSS_LIVE_LLM_TIMEOUT_SECONDS"] == "20"
+    assert env["RSS_LIVE_LLM_RETRY_COUNT"] == "0"
+    assert env["RSS_LIVE_LLM_MAX_SCORE_ITEMS"] == "3"
+    assert env["RSS_LIVE_LLM_SCORE_CONCURRENCY"] == "3"
+
+
 def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     rss = read_fixture("fixtures/rss/feeds.json")
     scoring = read_fixture("fixtures/llm/scoring.json")
@@ -84,7 +147,17 @@ def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     assert source_cases["version"] == "mvp_acceptance_fixture@v1"
     assert articles["version"] == "mvp_acceptance_fixture@v1"
 
+    source_records = sources["sources"]
+    assert len(source_records) == 23
+    assert all(set(record) == {"name", "rss_url"} for record in source_records)
+    assert len({record["rss_url"] for record in source_records}) == 23
+    assert all(record["name"].strip() for record in source_records)
+
     feeds = rss["feeds"]
+    assert len(feeds) == 23
+    assert {feed["rss_url"] for feed in feeds} == {
+        record["rss_url"] for record in source_records
+    }
     assert any(feed["status"] == "success" for feed in feeds)
     assert any(feed["status"] == "failure" for feed in feeds)
 

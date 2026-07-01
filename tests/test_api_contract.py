@@ -160,6 +160,97 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert translated_detail["content_zh"]
 
 
+def test_home_latest_news_cursor_pagination_does_not_repeat_or_paginate_top(tmp_path):
+    client = make_client(tmp_path)
+    assert_json_response(client.post("/api/refresh"), 200)
+
+    first = assert_json_response(client.get("/api/home", params={"limit": 3}), 200)["data"]
+    assert len(first["latest_news"]) == 3
+    assert isinstance(first.get("next_cursor"), str)
+    assert first["next_cursor"]
+    first_top_ids = [item["id"] for item in first["top_ranked_news"]]
+
+    second = assert_json_response(
+        client.get("/api/home", params={"limit": 3, "cursor": first["next_cursor"]}),
+        200,
+    )["data"]
+    assert len(second["latest_news"]) == 3
+    assert [item["id"] for item in second["top_ranked_news"]] == first_top_ids
+
+    first_ids = [item["id"] for item in first["latest_news"]]
+    second_ids = [item["id"] for item in second["latest_news"]]
+    assert not (set(first_ids) & set(second_ids))
+
+    combined = first["latest_news"] + second["latest_news"]
+    assert [item["published_at"] for item in combined] == sorted(
+        [item["published_at"] for item in combined],
+        reverse=True,
+    )
+
+    seen_ids = set(first_ids)
+    page = second
+    while page.get("next_cursor"):
+        cursor = page["next_cursor"]
+        page = assert_json_response(
+            client.get("/api/home", params={"limit": 3, "cursor": cursor}),
+            200,
+        )["data"]
+        page_ids = [item["id"] for item in page["latest_news"]]
+        assert not (seen_ids & set(page_ids))
+        seen_ids.update(page_ids)
+
+    assert "next_cursor" not in page
+
+
+def test_live_fallback_items_are_labeled_untranslated(monkeypatch, tmp_path):
+    monkeypatch.setenv("RSS_RUNTIME_MODE", "live")
+    monkeypatch.setenv("RSS_ALLOW_LIVE_NETWORK", "1")
+    monkeypatch.setenv("RSS_ALLOW_LIVE_LLM", "0")
+    monkeypatch.setenv("RSS_FETCH_LIVE_ARTICLES", "0")
+    monkeypatch.setenv("RSS_HTTP_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("RSS_HTTP_RETRY_COUNT", "0")
+
+    def fake_fetch_url_text(url, **_kwargs):
+        if url == "https://openai.com/news/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI refresh exposes untranslated fallback</title>
+                <link>https://openai.com/index/live-ai-refresh-untranslated/</link>
+                <guid>live-untranslated-fallback</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>Live refresh stores this English RSS summary until Chinese translation is available.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "not_under_test"
+
+    monkeypatch.setattr("backend.app.services.pipeline.fetch_url_text", fake_fetch_url_text)
+    client = make_client(tmp_path)
+    conn = client.app.state.db
+
+    assert_json_response(client.post("/api/refresh"), 200)
+
+    row = conn.execute(
+        """
+        SELECT id
+        FROM news_item
+        WHERE rss_guid = 'live-untranslated-fallback'
+        """
+    ).fetchone()
+    home = assert_json_response(client.get("/api/home"), 200)["data"]
+    home_item = next(item for item in home["latest_news"] if item["id"] == str(row["id"]))
+    detail = assert_json_response(client.get(f"/api/news/{row['id']}"), 200)["data"]
+
+    assert home_item["status"] == "untranslated"
+    assert home_item["title"] == "Live AI refresh exposes untranslated fallback"
+    assert "summary_zh" not in home_item
+    assert detail["status"] == "untranslated"
+    assert detail["title"] == "Live AI refresh exposes untranslated fallback"
+    assert "summary_zh" not in detail
+    assert "content_zh" not in detail
+
+
 def test_hidden_translation_probes_are_not_retrievable_by_id(tmp_path):
     client = make_client(tmp_path)
     assert_json_response(client.post("/api/refresh"), 200)

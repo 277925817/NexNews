@@ -5,7 +5,7 @@
 UI 只消费展示层需要的数据，不直接依赖数据库表结构。新闻列表和榜单消费 `NewsListItem`，详情页消费 `NewsDetailItem`；二者都以不含正文的 `NewsItem` 作为基础数据对象。
 
 ```ts
-type NewsStatus = "ready" | "translated" | "translation_failed";
+type NewsStatus = "ready" | "translated" | "untranslated" | "translation_failed";
 
 type NewsItem = {
   id: string;
@@ -40,12 +40,13 @@ type NewsDetailItem = NewsItem & {
 - `discussion_url`：来源站内讨论链接，是后端内部字段；当前 UI 不消费、不渲染。
 - `published_at`：RSS 信息源发布时间。
 - `score`：LLM 新闻价值评分，范围为 `0-100`。
-- `status`：UI 可展示状态，只允许 `ready`、`translated`、`translation_failed`。
+- `status`：UI 可展示状态，只允许 `ready`、`translated`、`untranslated`、`translation_failed`。
 
 状态规则：
 
 - `ready`：新闻可展示但翻译未完成；UI 只能展示原文标题、来源、发布时间、评分和 `翻译中`，不得展示英文摘要或英文正文。
 - `translated`：翻译完成；UI 展示中文标题、中文摘要、中文正文、来源、发布时间和评分。
+- `untranslated`：live RSS 兜底状态；UI 展示原文标题、来源、发布时间、评分和 `未翻译`，不得把英文摘要或英文正文作为中文字段展示。
 - `translation_failed`：翻译失败；UI 只能展示原文标题、来源、发布时间、评分、`翻译失败` 和原文链接，不得展示英文摘要或英文正文。
 
 组件字段依赖：
@@ -63,22 +64,22 @@ type NewsDetailItem = NewsItem & {
 
 每个字段只能在指定状态和指定组件中渲染。未在下表允许的字段不得渲染。
 
-| UI field | `ready` | `translated` | `translation_failed` |
-| --- | --- | --- | --- |
-| `title` 展示位 | 渲染 `original_title`，显示为原文标题 | 渲染 `title`，显示为中文标题 | 渲染 `original_title`，显示为原文标题 |
-| `summary_zh` | 不渲染 | 仅 NewsCard / ArticleView 可显示 | 不渲染 |
-| `content_zh` | 不渲染 | 仅 ArticleView 可显示 | 不渲染 |
-| `score` | 可显示，只读 | 可显示，只读 | 可显示，只读 |
-| `source_name` | 可显示 | 可显示 | 可显示 |
-| `published_at` | 可显示 | 可显示 | 可显示 |
+| UI field | `ready` | `translated` | `untranslated` | `translation_failed` |
+| --- | --- | --- | --- | --- |
+| `title` 展示位 | 渲染 `original_title`，显示为原文标题 | 渲染 `title`，显示为中文标题 | 渲染 `original_title`，显示为原文标题 | 渲染 `original_title`，显示为原文标题 |
+| `summary_zh` | 不渲染 | 仅 NewsCard / ArticleView 可显示 | 不渲染 | 不渲染 |
+| `content_zh` | 不渲染 | 仅 ArticleView 可显示 | 不渲染 | 不渲染 |
+| `score` | 可显示，只读 | 可显示，只读 | 可显示，只读 | 可显示，只读 |
+| `source_name` | 可显示 | 可显示 | 可显示 | 可显示 |
+| `published_at` | 可显示 | 可显示 | 可显示 | 可显示 |
 
 字段渲染禁止项：
 
-- `ready` 和 `translation_failed` 状态不得渲染 `summary_zh`。
-- `ready` 和 `translation_failed` 状态不得渲染 `content_zh`。
+- `ready`、`untranslated` 和 `translation_failed` 状态不得渲染 `summary_zh`。
+- `ready`、`untranslated` 和 `translation_failed` 状态不得渲染 `content_zh`。
 - NewsCard 不得在任何状态下渲染 `content_zh`。
 - `score` 只读展示，不得触发排序、筛选或跳转。
-- Home News Feed 和 Top 30 Days 是用户主要阅读入口，只允许渲染 `translated` 新闻条目；`ready` / `translation_failed` 只作为 ArticleView 异常态、测试 fixture 或后续专门状态区处理。
+- Home News Feed 和 Top 30 Days 是用户主要阅读入口；fixture/mock 验收只允许渲染 `translated` 新闻条目，live RSS 兜底可渲染 `untranslated` 新闻条目并必须显示 `未翻译`。`ready` / `translation_failed` 只作为 ArticleView 异常态、测试 fixture 或后续专门状态区处理。
 
 ### 0.2 UI 禁止容错逻辑
 
@@ -333,11 +334,21 @@ web layout:
 - Ranked items inside the card must render as compact list rows separated by dividers, not as independent cards nested inside the overall card.
 - Ranked item hover may use `Surface subtle`, but the row must not introduce its own 1px card border or separate card radius.
 
+#### 5.1.2 News Feed Infinite Loading Rule
+
+- Home uses one page-level scroll. News Feed must not introduce a nested scroll container for loading more items.
+- When the user scrolls near the bottom of the Home page and `HomeData.next_cursor` exists, News Feed automatically requests the next `latest_news` page.
+- Newly loaded NewsCards append below existing NewsCards, preserve already-rendered cards and keep the full feed sorted by `published_at DESC`.
+- Pagination loading state is local to News Feed and must not replace the whole Home page loading state.
+- Pagination failure must keep already-rendered NewsCards visible and provide a retry path for the failed page.
+- When `next_cursor` is absent, further scrolling must not issue more pagination requests.
+- HighScoreList remains fixed to the Home page response's `top_ranked_news`; it has no cursor, no independent pagination and no separate scroll container.
+
 ### 5.2 新闻卡片
 
 目的：帮助用户在列表中判断是否值得点开并进入中文全文阅读。
 
-Home News Feed 的 NewsCard 只渲染 `translated` 新闻：
+Home News Feed 的 NewsCard 在 fixture/mock 验收中只渲染 `translated` 新闻；live RSS 兜底可渲染 `untranslated` 新闻并必须显示 `未翻译`：
 
 - `translated`
   - 中文标题
@@ -346,6 +357,13 @@ Home News Feed 的 NewsCard 只渲染 `translated` 新闻：
   - 信息源发布时间
   - 评分
   - 原文标题仅作为辅助信息或详情页保留字段，不替代中文标题
+- `untranslated`
+  - 原文标题
+  - `未翻译` 状态
+  - 来源
+  - 信息源发布时间
+  - 评分
+  - 不展示英文摘要或英文正文
 
 卡片结构：
 
@@ -425,6 +443,14 @@ Home News Feed 的 NewsCard 只渲染 `translated` 新闻：
 - 展示 `翻译中` 状态。
 - 展示明确状态标题：`摘要和正文暂不可用`。
 - 展示说明：`翻译完成后将自动显示中文摘要和正文。`
+- 不展示英文摘要或英文正文。
+
+未翻译状态：
+
+- 标题区域展示原文标题。
+- 展示 `未翻译` 状态。
+- 展示明确状态标题：`摘要和正文暂不可用`。
+- 展示说明：`当前仅有原文信息，中文翻译尚未生成。`
 - 不展示英文摘要或英文正文。
 
 翻译失败状态：

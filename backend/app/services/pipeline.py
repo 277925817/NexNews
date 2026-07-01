@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -23,7 +24,30 @@ TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
 TRACE_ID = "refresh-fixture-20260628T090000Z"
 SELECTION_THRESHOLD = 60
 SCORING_RETRY_MAX = 2
+LIVE_LLM_RETRY_MAX = 2
+LIVE_LLM_RETRY_BACKOFF_SECONDS = 0.5
+TERMINAL_LIVE_LLM_STATUS_CODES = {400, 401, 403, 404, 429}
+LIVE_LLM_AVAILABILITY_ERRORS = {
+    "llm_bad_request",
+    "llm_auth",
+    "llm_endpoint",
+    "llm_rate_limited",
+}
 LIVE_RSS_MAX_AGE_DAYS = 30
+LIVE_TRANSLATION_SYSTEM_PROMPT = (
+    "你是 AI 新闻聚合系统的中文翻译器。"
+    "请根据用户提供的 JSON，将同一条新闻翻译并改写为可阅读中文。"
+    "只返回 JSON 对象，不要 Markdown，不要解释。"
+    "必须包含非空字段：title_zh、summary_zh、content_zh、category_zh。"
+    "summary_zh 用一到两句话概括同一条新闻；content_zh 至少两段，保留事实，不编造。"
+)
+LIVE_SCORING_SYSTEM_PROMPT = (
+    "你是 AI 新闻聚合系统的新闻价值评分器。"
+    "请根据用户提供的 JSON 判断该新闻对 AI 从业者的信息价值。"
+    "只返回 JSON 对象，不要 Markdown，不要解释。"
+    "必须包含字段：score、reason。"
+    "score 必须是 0 到 100 的整数；reason 必须用一句话说明评分依据。"
+)
 
 LIVE_REQUEST_HEADERS = {
     "Accept": "text/html,application/xml,application/xhtml+xml;q=0.9,*/*;q=0.8",
@@ -74,17 +98,25 @@ def fetch_url_text(
     last_error = "network"
     attempts = max(0, int(retry_count)) + 1
     for _ in range(attempts):
-        try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                response = client.get(url, headers=request_headers)
-            if 200 <= response.status_code < 300:
-                if response.text:
-                    return response.text, None
-                last_error = "empty_body"
-            else:
-                last_error = f"status_{response.status_code}"
-        except httpx.HTTPError:
-            last_error = "http_error"
+        for trust_env in (True, False):
+            try:
+                with httpx.Client(timeout=timeout, follow_redirects=True, trust_env=trust_env) as client:
+                    response = client.get(url, headers=request_headers)
+                if 200 <= response.status_code < 300:
+                    if response.text:
+                        return response.text, None
+                    last_error = "empty_body"
+                else:
+                    last_error = f"status_{response.status_code}"
+                break
+            except ValueError:
+                last_error = "proxy_config"
+                if trust_env:
+                    continue
+                break
+            except httpx.HTTPError:
+                last_error = "http_error"
+                break
         if _ < attempts - 1:
             if retry_backoff_seconds > 0:
                 time.sleep(retry_backoff_seconds)
@@ -159,8 +191,20 @@ def xml_item_text(item: object, tag_name: str) -> str | None:
     return text or None
 
 
+def atom_entry_link(entry: object) -> str | None:
+    alternate = entry.find("link", attrs={"rel": "alternate"}) if entry else None
+    node = alternate or entry.find("link") if entry else None
+    if node is None:
+        return None
+    href = node.get("href")
+    if isinstance(href, str) and href.strip():
+        return href.strip()
+    text = node.get_text("", strip=True)
+    return text or None
+
+
 def _rss_published_at(item: dict[str, object]) -> str:
-    return str(
+    raw_value = str(
         item.get("published_at")
         or item.get("pubDate")
         or item.get("published")
@@ -168,6 +212,10 @@ def _rss_published_at(item: dict[str, object]) -> str:
         or item.get("date")
         or FIXED_NOW
     )
+    parsed = parse_rss_datetime(raw_value)
+    if parsed is None:
+        return raw_value
+    return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def parse_rss_datetime(value: object) -> datetime | None:
@@ -236,6 +284,27 @@ def parse_rss_feed_text(payload: str) -> list[dict[str, object]]:
                     }
                 ),
                 "summary": str(xml_item_text(item, "description") or xml_item_text(item, "content") or ""),
+            }
+        )
+    for entry in soup.find_all("entry"):
+        title = xml_item_text(entry, "title")
+        link = atom_entry_link(entry)
+        guid = xml_item_text(entry, "id") or link
+        if not title or not link:
+            continue
+        parsed_items.append(
+            {
+                "guid": str(guid),
+                "title": str(title),
+                "link": str(link),
+                "discussion_url": None,
+                "published_at": _rss_published_at(
+                    {
+                        "published": xml_item_text(entry, "published"),
+                        "updated": xml_item_text(entry, "updated"),
+                    }
+                ),
+                "summary": str(xml_item_text(entry, "summary") or xml_item_text(entry, "content") or ""),
             }
         )
     return parsed_items
@@ -309,18 +378,28 @@ def ingest_live_rss(
     timeout: float = 12,
     retry_count: int = 3,
     retry_backoff_seconds: float = 0.5,
+    max_workers: int = 8,
 ) -> dict[str, int]:
     result = {"source_success_count": 0, "source_failure_count": 0, "inserted_count": 0}
     seen_canonical_urls: set[str] = set()
-    for source in active_sources(conn):
-        source_id = int(source["id"])
-        source_url = str(source["rss_url"])
+
+    sources = active_sources(conn)
+
+    def fetch_source(source: dict[str, object]) -> tuple[dict[str, object], str | None, str | None]:
         feed_text, error = fetch_url_text(
-            source_url,
+            str(source["rss_url"]),
             timeout=timeout,
             retry_count=retry_count,
             retry_backoff_seconds=retry_backoff_seconds,
         )
+        return source, feed_text, error
+
+    worker_count = max(1, min(max_workers, len(sources) or 1))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        fetched_sources = list(executor.map(fetch_source, sources))
+
+    for source, feed_text, error in fetched_sources:
+        source_id = int(source["id"])
         if not feed_text:
             result["source_failure_count"] += 1
             log_processing(
@@ -512,6 +591,29 @@ def raw_news_for_scoring(conn: sqlite3.Connection) -> list[dict[str, object]]:
     ).fetchall()
 
 
+def raw_news_for_live_scoring(
+    conn: sqlite3.Connection,
+    *,
+    max_items: int,
+) -> list[dict[str, object]]:
+    limit_clause = "LIMIT ?" if max_items > 0 else ""
+    params: tuple[object, ...] = (max_items,) if max_items > 0 else ()
+    return conn.execute(
+        f"""
+        SELECT
+          news_item.id, news_item.rss_guid, news_item.original_title,
+          news_item.content_raw, news_item.published_at, news_item.original_url,
+          source.name AS source_name
+        FROM news_item
+        JOIN source ON source.id = news_item.source_id
+        WHERE news_item.pipeline_state = 'raw'
+        ORDER BY news_item.published_at DESC, news_item.id DESC
+        {limit_clause}
+        """,
+        params,
+    ).fetchall()
+
+
 def score_raw_news(
     conn: sqlite3.Connection,
     *,
@@ -536,26 +638,89 @@ def score_raw_news(
     return result
 
 
+def request_live_scoring_rows(
+    rows: list[dict[str, object]],
+    *,
+    base_url: str | None,
+    api_key: str | None,
+    model: str | None,
+    timeout_seconds: float,
+    retry_count: int,
+    concurrency: int,
+) -> list[tuple[dict[str, object], dict[str, object] | None, str | None]]:
+    def score_live_row(row: dict[str, object]) -> tuple[dict[str, object], dict[str, object] | None, str | None]:
+        record, error = request_live_scoring(
+            build_scoring_request(row),
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            retry_count=retry_count,
+        )
+        return row, record, error
+
+    max_workers = min(max(1, concurrency), len(rows)) if rows else 1
+    if max_workers == 1:
+        return [score_live_row(row) for row in rows]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(score_live_row, rows))
+
+
 def score_raw_news_live(
     conn: sqlite3.Connection,
     *,
     now: str = FIXED_NOW,
+    use_live_llm: bool = False,
+    live_llm_base_url: str | None = None,
+    live_llm_api_key: str | None = None,
+    live_llm_model: str | None = None,
+    live_llm_timeout_seconds: float = 30,
+    live_llm_retry_count: int = LIVE_LLM_RETRY_MAX,
+    live_llm_max_score_items: int = 20,
+    live_llm_score_concurrency: int = 2,
 ) -> dict[str, int]:
-    result = {"scored_count": 0, "failed_count": 0, "selected_count": 0}
-    for row in raw_news_for_scoring(conn):
-        score = live_score_for_record(row)
+    result = {"scored_count": 0, "failed_count": 0, "selected_count": 0, "llm_unavailable_count": 0}
+    rows = (
+        raw_news_for_live_scoring(conn, max_items=live_llm_max_score_items)
+        if use_live_llm
+        else raw_news_for_scoring(conn)
+    )
+    live_results = (
+        request_live_scoring_rows(
+            rows,
+            base_url=live_llm_base_url,
+            api_key=live_llm_api_key,
+            model=live_llm_model,
+            timeout_seconds=live_llm_timeout_seconds,
+            retry_count=live_llm_retry_count,
+            concurrency=live_llm_score_concurrency,
+        )
+        if use_live_llm
+        else []
+    )
+    live_results_by_id = {int(row["id"]): (record, error) for row, record, error in live_results}
+    for row in rows:
+        request = build_scoring_request(row)
+        if use_live_llm:
+            record, error = live_results_by_id[int(row["id"])]
+            score = apply_missing_summary_penalty(int(record["score"]), request) if record else None
+        else:
+            score = live_score_for_record(row)
+            error = None
         if isinstance(score, int):
             selected = apply_score(conn, news_item_id=int(row["id"]), score=score, now=now)
             result["scored_count"] += 1
             result["selected_count"] += 1 if selected else 0
             continue
         result["failed_count"] += 1
+        if use_live_llm and error in LIVE_LLM_AVAILABILITY_ERRORS:
+            result["llm_unavailable_count"] += 1
         log_processing(
             conn,
             news_item_id=int(row["id"]),
             stage="score",
             success=0,
-            error="live_scoring_error",
+            error=error or "live_scoring_error",
             now=now,
         )
     conn.commit()
@@ -793,88 +958,284 @@ def has_valid_translation_record(record: dict[str, object] | None) -> bool:
     )
 
 
+def strip_json_code_fence(value: str) -> str:
+    text = value.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def post_live_llm_response(
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    payload: dict[str, object],
+    timeout_seconds: float,
+) -> tuple[httpx.Response | None, str]:
+    response = None
+    last_request_error = "llm"
+    for trust_env in (False, True):
+        try:
+            with httpx.Client(
+                timeout=timeout_seconds,
+                follow_redirects=True,
+                trust_env=trust_env,
+            ) as client:
+                response = client.post(endpoint, headers=headers, json=payload)
+            break
+        except ValueError:
+            last_request_error = "llm"
+        except httpx.TimeoutException:
+            last_request_error = "timeout"
+        except httpx.HTTPError:
+            last_request_error = "llm"
+        if trust_env:
+            break
+    return response, last_request_error
+
+
+def live_llm_http_error(response: httpx.Response) -> str:
+    if response.status_code == 400:
+        return "llm_bad_request"
+    if response.status_code in {401, 403}:
+        return "llm_auth"
+    if response.status_code == 404:
+        return "llm_endpoint"
+    if response.status_code == 429:
+        return "llm_rate_limited"
+    if response.status_code >= 500:
+        return "llm_server"
+    return "llm"
+
+
+def is_terminal_live_llm_response(response: httpx.Response) -> bool:
+    return response.status_code in TERMINAL_LIVE_LLM_STATUS_CODES
+
+
+def parse_live_translation_response(response: httpx.Response) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        response_payload = response.json()
+        choices = response_payload.get("choices", [])
+        if not choices:
+            return None, "validation_llm_error"
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        content = message.get("content", "") if isinstance(message, dict) else ""
+        record = json.loads(strip_json_code_fence(str(content)))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, "validation_llm_error"
+    if isinstance(record, dict) and has_valid_translation_record(record):
+        return record, None
+    return None, "validation_llm_error"
+
+
+def parse_live_scoring_response(response: httpx.Response) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        response_payload = response.json()
+        choices = response_payload.get("choices", [])
+        if not choices:
+            return None, "validation_llm_error"
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        content = message.get("content", "") if isinstance(message, dict) else ""
+        record = json.loads(strip_json_code_fence(str(content)))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, "validation_llm_error"
+    score, error = validate_scoring_response(record)
+    if error:
+        return None, error
+    assert score is not None
+    return {"score": score, "reason": str(record["reason"])}, None
+
+
+def request_live_scoring(
+    request: dict[str, object],
+    *,
+    base_url: str | None,
+    api_key: str | None,
+    model: str | None,
+    timeout_seconds: float = 30,
+    retry_count: int = SCORING_RETRY_MAX,
+) -> tuple[dict[str, object] | None, str | None]:
+    if not base_url or not api_key or not model:
+        return None, "llm_config_missing"
+    endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": LIVE_SCORING_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(request, ensure_ascii=False, separators=(",", ":"))},
+        ],
+        "temperature": 0.1,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    last_request_error = "llm"
+    retry_max = max(0, int(retry_count))
+    for attempt in range(retry_max + 1):
+        response, last_request_error = post_live_llm_response(
+            endpoint=endpoint,
+            headers=headers,
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+        if response is None:
+            if attempt < retry_max:
+                time.sleep(LIVE_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            return None, last_request_error
+        if not 200 <= response.status_code < 300:
+            last_request_error = live_llm_http_error(response)
+            if is_terminal_live_llm_response(response):
+                return None, last_request_error
+        else:
+            record, last_request_error = parse_live_scoring_response(response)
+            if record:
+                return record, None
+        if attempt < retry_max:
+            time.sleep(LIVE_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    return None, last_request_error
+
+
+def request_live_translation(
+    request: dict[str, object],
+    *,
+    base_url: str | None,
+    api_key: str | None,
+    model: str | None,
+    timeout_seconds: float = 30,
+    retry_count: int = LIVE_LLM_RETRY_MAX,
+) -> tuple[dict[str, object] | None, str | None]:
+    if not base_url or not api_key or not model:
+        return None, "llm_config_missing"
+    endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": LIVE_TRANSLATION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": json.dumps(request, ensure_ascii=False, separators=(",", ":")),
+            },
+        ],
+        "temperature": 0.2,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    last_request_error = "llm"
+    retry_max = max(0, int(retry_count))
+    for attempt in range(retry_max + 1):
+        response, last_request_error = post_live_llm_response(
+            endpoint=endpoint,
+            headers=headers,
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+        if response is None:
+            if attempt < retry_max:
+                time.sleep(LIVE_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            return None, last_request_error
+        if not 200 <= response.status_code < 300:
+            last_request_error = live_llm_http_error(response)
+            if is_terminal_live_llm_response(response):
+                return None, last_request_error
+            if attempt < retry_max:
+                time.sleep(LIVE_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            return None, last_request_error
+        record, last_request_error = parse_live_translation_response(response)
+        if record:
+            return record, None
+        if attempt < retry_max:
+            time.sleep(LIVE_LLM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    return None, last_request_error
+
+
 def fetched_news_for_translation(conn: sqlite3.Connection) -> list[dict[str, object]]:
     return conn.execute(
         """
         SELECT
           news_item.id, news_item.rss_guid, news_item.original_title,
           news_item.content_raw, news_item.content_full, news_item.score,
+          news_item.title_zh, news_item.summary_zh, news_item.content_zh,
+          news_item.has_translate_failed,
           source.name AS source_name
         FROM news_item
         JOIN source ON source.id = news_item.source_id
         WHERE news_item.pipeline_state = 'fetched'
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
-        ORDER BY news_item.id ASC
+        ORDER BY news_item.published_at DESC, news_item.id DESC
         """
     ).fetchall()
 
 
-def apply_translation(
+def is_original_fallback_translation(row: dict[str, object]) -> bool:
+    fallback_content = row["content_full"] or row["content_raw"]
+    return bool(
+        row["title_zh"]
+        and row["summary_zh"]
+        and row["content_zh"]
+        and row["title_zh"] == row["original_title"]
+        and row["summary_zh"] == row["content_raw"]
+        and row["content_zh"] == fallback_content
+    )
+
+
+def has_complete_non_fallback_translation(row: dict[str, object]) -> bool:
+    return bool(
+        row["title_zh"]
+        and row["summary_zh"]
+        and row["content_zh"]
+        and not is_original_fallback_translation(row)
+    )
+
+
+def write_translation_success(
     conn: sqlite3.Connection,
     *,
     news_item_id: int,
-    guid: str,
-    translation_payload: dict[str, object],
+    record: dict[str, object],
     now: str,
-    fallback_to_original: bool = False,
-    fallback_title: str = "",
-    fallback_summary: str = "",
-    fallback_content: str = "",
 ) -> None:
-    if guid in pending_translation_guids(translation_payload):
-        return
+    conn.execute(
+        """
+        UPDATE news_item
+        SET title_zh = ?,
+            summary_zh = ?,
+            content_zh = ?,
+            has_translate_failed = 0,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            str(record["title_zh"]),
+            str(record["summary_zh"]),
+            str(record["content_zh"]),
+            now,
+            news_item_id,
+        ),
+    )
+    log_processing(
+        conn,
+        news_item_id=news_item_id,
+        stage="translate",
+        success=1,
+        now=now,
+    )
 
-    record = translation_records(translation_payload).get(guid)
-    if has_valid_translation_record(record):
-        conn.execute(
-            """
-            UPDATE news_item
-            SET title_zh = ?,
-                summary_zh = ?,
-                content_zh = ?,
-                has_translate_failed = 0,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                str(record["title_zh"]),
-                str(record["summary_zh"]),
-                str(record["content_zh"]),
-                now,
-                news_item_id,
-            ),
-        )
-        log_processing(
-            conn,
-            news_item_id=news_item_id,
-            stage="translate",
-            success=1,
-            now=now,
-        )
-        return
 
-    if fallback_to_original and fallback_summary and fallback_content:
-        conn.execute(
-            """
-            UPDATE news_item
-            SET title_zh = ?,
-                summary_zh = ?,
-                content_zh = ?,
-                has_translate_failed = 0,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (fallback_title, fallback_summary, fallback_content, now, news_item_id),
-        )
-        log_processing(
-            conn,
-            news_item_id=news_item_id,
-            stage="translate",
-            success=1,
-            now=now,
-        )
-        return
-
+def write_translation_failure(
+    conn: sqlite3.Connection,
+    *,
+    news_item_id: int,
+    error: str,
+    now: str,
+) -> None:
     conn.execute(
         """
         UPDATE news_item
@@ -892,31 +1253,211 @@ def apply_translation(
         news_item_id=news_item_id,
         stage="translate",
         success=0,
-        error="validation_llm_error",
+        error=error,
         now=now,
     )
 
 
-def translate_fetched_content(
+def write_original_fallback_translation(
     conn: sqlite3.Connection,
     *,
-    fixture_root: Path = ROOT_DIR,
-    now: str = FIXED_NOW,
+    news_item_id: int,
+    fallback_title: str,
+    fallback_summary: str,
+    fallback_content: str,
+    now: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE news_item
+        SET title_zh = ?,
+            summary_zh = ?,
+            content_zh = ?,
+            has_translate_failed = 0,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (fallback_title, fallback_summary, fallback_content, now, news_item_id),
+    )
+    log_processing(
+        conn,
+        news_item_id=news_item_id,
+        stage="translate",
+        success=0,
+        error="live_llm_disabled_fallback",
+        now=now,
+    )
+
+
+def apply_translation(
+    conn: sqlite3.Connection,
+    *,
+    news_item_id: int,
+    guid: str,
+    translation_payload: dict[str, object],
+    now: str,
     fallback_to_original: bool = False,
+    fallback_title: str = "",
+    fallback_summary: str = "",
+    fallback_content: str = "",
+) -> str:
+    if guid in pending_translation_guids(translation_payload):
+        return "pending"
+
+    record = translation_records(translation_payload).get(guid)
+    if has_valid_translation_record(record):
+        write_translation_success(
+            conn,
+            news_item_id=news_item_id,
+            record=record,
+            now=now,
+        )
+        return "translated"
+
+    if fallback_to_original and fallback_summary and fallback_content:
+        write_original_fallback_translation(
+            conn,
+            news_item_id=news_item_id,
+            fallback_title=fallback_title,
+            fallback_summary=fallback_summary,
+            fallback_content=fallback_content,
+            now=now,
+        )
+        return "fallback"
+
+    write_translation_failure(
+        conn,
+        news_item_id=news_item_id,
+        error="validation_llm_error",
+        now=now,
+    )
+    return "failed"
+
+
+def select_live_translation_rows(
+    rows: list[dict[str, object]],
+    *,
+    max_items: int,
+) -> tuple[list[dict[str, object]], int]:
+    live_rows: list[dict[str, object]] = []
+    pending_count = 0
+    for row in rows:
+        if has_complete_non_fallback_translation(row):
+            continue
+        if max_items > 0 and len(live_rows) >= max_items:
+            pending_count += 1
+            continue
+        live_rows.append(row)
+    return live_rows, pending_count
+
+
+def request_live_translation_rows(
+    rows: list[dict[str, object]],
+    *,
+    base_url: str | None,
+    api_key: str | None,
+    model: str | None,
+    timeout_seconds: float,
+    retry_count: int,
+    concurrency: int,
+) -> list[tuple[dict[str, object], dict[str, object] | None, str | None]]:
+    def translate_live_row(
+        row: dict[str, object],
+    ) -> tuple[dict[str, object], dict[str, object] | None, str | None]:
+        record, error = request_live_translation(
+            build_translation_request(row),
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            retry_count=retry_count,
+        )
+        return row, record, error
+
+    max_workers = min(max(1, concurrency), len(rows)) if rows else 1
+    if max_workers == 1:
+        return [translate_live_row(row) for row in rows]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(translate_live_row, rows))
+
+
+def write_live_translation_results(
+    conn: sqlite3.Connection,
+    translated_rows: list[tuple[dict[str, object], dict[str, object] | None, str | None]],
+    *,
+    now: str,
 ) -> dict[str, int]:
-    translation_payload = read_json(fixture_root / "fixtures" / "llm" / "translation.json")
+    result = {"translated_count": 0, "failed_count": 0, "pending_count": 0, "fallback_count": 0}
+    for row, record, error in translated_rows:
+        if record:
+            write_translation_success(
+                conn,
+                news_item_id=int(row["id"]),
+                record=record,
+                now=now,
+            )
+            result["translated_count"] += 1
+            continue
+        write_translation_failure(
+            conn,
+            news_item_id=int(row["id"]),
+            error=error or "validation_llm_error",
+            now=now,
+        )
+        result["failed_count"] += 1
+    return result
+
+
+def translate_live_fetched_content(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, object]],
+    *,
+    now: str,
+    live_llm_base_url: str | None,
+    live_llm_api_key: str | None,
+    live_llm_model: str | None,
+    live_llm_timeout_seconds: float,
+    live_llm_retry_count: int,
+    live_llm_max_items: int,
+    live_llm_concurrency: int,
+) -> dict[str, int]:
+    live_rows, pending_count = select_live_translation_rows(rows, max_items=live_llm_max_items)
+    translated_rows = request_live_translation_rows(
+        live_rows,
+        base_url=live_llm_base_url,
+        api_key=live_llm_api_key,
+        model=live_llm_model,
+        timeout_seconds=live_llm_timeout_seconds,
+        retry_count=live_llm_retry_count,
+        concurrency=live_llm_concurrency,
+    )
+    result = write_live_translation_results(conn, translated_rows, now=now)
+    result["pending_count"] = pending_count
+    conn.commit()
+    return result
+
+
+def translate_mock_fetched_content(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, object]],
+    *,
+    translation_payload: dict[str, object],
+    now: str,
+    fallback_to_original: bool,
+) -> dict[str, int]:
     pending_guids = pending_translation_guids(translation_payload)
-    result = {"translated_count": 0, "failed_count": 0, "pending_count": 0}
-    for row in fetched_news_for_translation(conn):
+    result = {"translated_count": 0, "failed_count": 0, "pending_count": 0, "fallback_count": 0}
+    for row in rows:
+        if has_complete_non_fallback_translation(row):
+            continue
         guid = str(row["rss_guid"] or "")
         if guid in pending_guids:
             result["pending_count"] += 1
             continue
-        build_translation_request(row)
         fallback_title = str(row["original_title"] or "")
         fallback_summary = str(row["content_raw"] or "")
         fallback_content = str(row["content_full"] or row["content_raw"] or "")
-        apply_translation(
+        status = apply_translation(
             conn,
             news_item_id=int(row["id"]),
             guid=guid,
@@ -927,16 +1468,57 @@ def translate_fetched_content(
             fallback_summary=fallback_summary,
             fallback_content=fallback_content,
         )
-        stored = conn.execute(
-            "SELECT title_zh, summary_zh, content_zh, has_translate_failed FROM news_item WHERE id = ?",
-            (row["id"],),
-        ).fetchone()
-        if stored and stored["title_zh"] and stored["summary_zh"] and stored["content_zh"]:
+        if status == "translated":
             result["translated_count"] += 1
-        elif stored and stored["has_translate_failed"] == 1:
+        elif status == "failed":
             result["failed_count"] += 1
+        elif status == "fallback":
+            result["fallback_count"] += 1
     conn.commit()
     return result
+
+
+def translate_fetched_content(
+    conn: sqlite3.Connection,
+    *,
+    fixture_root: Path = ROOT_DIR,
+    now: str = FIXED_NOW,
+    fallback_to_original: bool = False,
+    use_live_llm: bool = False,
+    live_llm_base_url: str | None = None,
+    live_llm_api_key: str | None = None,
+    live_llm_model: str | None = None,
+    live_llm_timeout_seconds: float = 30,
+    live_llm_retry_count: int = LIVE_LLM_RETRY_MAX,
+    live_llm_max_items: int = 20,
+    live_llm_concurrency: int = 2,
+) -> dict[str, int]:
+    translation_payload = (
+        {}
+        if use_live_llm
+        else read_json(fixture_root / "fixtures" / "llm" / "translation.json")
+    )
+    rows = fetched_news_for_translation(conn)
+    if use_live_llm:
+        return translate_live_fetched_content(
+            conn,
+            rows,
+            now=now,
+            live_llm_base_url=live_llm_base_url,
+            live_llm_api_key=live_llm_api_key,
+            live_llm_model=live_llm_model,
+            live_llm_timeout_seconds=live_llm_timeout_seconds,
+            live_llm_retry_count=live_llm_retry_count,
+            live_llm_max_items=live_llm_max_items,
+            live_llm_concurrency=live_llm_concurrency,
+        )
+    return translate_mock_fetched_content(
+        conn,
+        rows,
+        translation_payload=translation_payload,
+        now=now,
+        fallback_to_original=fallback_to_original,
+    )
 
 
 def rss_fixture_item_count(conn: sqlite3.Connection, fixture_root: Path = ROOT_DIR) -> int:
@@ -996,9 +1578,20 @@ def run_live_pipeline_summary(
     now: str | None = None,
     allow_live_network: bool = True,
     allow_live_llm: bool = False,
+    allow_live_article_fetch: bool = False,
     request_timeout_seconds: float = 12,
     request_retry_count: int = 3,
     request_retry_backoff_seconds: float = 0.5,
+    live_rss_concurrency: int = 8,
+    live_llm_base_url: str | None = None,
+    live_llm_api_key: str | None = None,
+    live_llm_model: str | None = None,
+    live_llm_timeout_seconds: float = 30,
+    live_llm_retry_count: int = LIVE_LLM_RETRY_MAX,
+    live_llm_max_items: int = 20,
+    live_llm_concurrency: int = 2,
+    live_llm_max_score_items: int = 20,
+    live_llm_score_concurrency: int = 2,
 ) -> dict[str, object]:
     now_value = now or utcnow_iso()
     started_at = now_value
@@ -1013,21 +1606,44 @@ def run_live_pipeline_summary(
         timeout=request_timeout_seconds,
         retry_count=request_retry_count,
         retry_backoff_seconds=request_retry_backoff_seconds,
+        max_workers=live_rss_concurrency,
     )
-    score_result = score_raw_news_live(conn, now=now_value)
+    score_result = score_raw_news_live(
+        conn,
+        now=now_value,
+        use_live_llm=allow_live_llm,
+        live_llm_base_url=live_llm_base_url,
+        live_llm_api_key=live_llm_api_key,
+        live_llm_model=live_llm_model,
+        live_llm_timeout_seconds=live_llm_timeout_seconds,
+        live_llm_retry_count=live_llm_retry_count,
+        live_llm_max_score_items=live_llm_max_score_items,
+        live_llm_score_concurrency=live_llm_score_concurrency,
+    )
     fetch_result = fetch_selected_content(
         conn,
         now=now_value,
-        allow_live_network=True,
+        allow_live_network=allow_live_article_fetch,
         live_timeout_seconds=request_timeout_seconds,
         live_retry_count=request_retry_count,
         live_retry_backoff_seconds=request_retry_backoff_seconds,
     )
-    translate_result = translate_fetched_content(
-        conn,
-        now=now_value,
-        fallback_to_original=not allow_live_llm,
-    )
+    if allow_live_llm and int(score_result.get("llm_unavailable_count", 0)) > 0:
+        translate_result = {"translated_count": 0, "failed_count": 0, "pending_count": 0, "fallback_count": 0}
+    else:
+        translate_result = translate_fetched_content(
+            conn,
+            now=now_value,
+            use_live_llm=allow_live_llm,
+            live_llm_base_url=live_llm_base_url,
+            live_llm_api_key=live_llm_api_key,
+            live_llm_model=live_llm_model,
+            live_llm_timeout_seconds=live_llm_timeout_seconds,
+            live_llm_retry_count=live_llm_retry_count,
+            live_llm_max_items=live_llm_max_items,
+            live_llm_concurrency=live_llm_concurrency,
+            fallback_to_original=not allow_live_llm,
+        )
     return {
         "started_at": started_at,
         "finished_at": now_value,
@@ -1039,6 +1655,7 @@ def run_live_pipeline_summary(
         "selected_item_count": score_result["selected_count"],
         "fetched_item_count": fetch_result["fetched_count"],
         "translated_item_count": translate_result["translated_count"],
+        "llm_unavailable_count": score_result.get("llm_unavailable_count", 0),
         "failure_details": processing_failure_details(conn),
         "runtime_mode": "live",
     }
@@ -1167,16 +1784,38 @@ def run_live_refresh(
     now: str | None = None,
     allow_live_network: bool = True,
     allow_live_llm: bool = False,
+    allow_live_article_fetch: bool = False,
     request_timeout_seconds: float = 12,
     request_retry_count: int = 3,
     request_retry_backoff_seconds: float = 0.5,
+    live_rss_concurrency: int = 8,
+    live_llm_base_url: str | None = None,
+    live_llm_api_key: str | None = None,
+    live_llm_model: str | None = None,
+    live_llm_timeout_seconds: float = 30,
+    live_llm_retry_count: int = LIVE_LLM_RETRY_MAX,
+    live_llm_max_items: int = 20,
+    live_llm_concurrency: int = 2,
+    live_llm_max_score_items: int = 20,
+    live_llm_score_concurrency: int = 2,
 ) -> None:
     run_live_pipeline_summary(
         conn,
         now=now,
         allow_live_network=allow_live_network,
         allow_live_llm=allow_live_llm,
+        allow_live_article_fetch=allow_live_article_fetch,
         request_timeout_seconds=request_timeout_seconds,
         request_retry_count=request_retry_count,
         request_retry_backoff_seconds=request_retry_backoff_seconds,
+        live_rss_concurrency=live_rss_concurrency,
+        live_llm_base_url=live_llm_base_url,
+        live_llm_api_key=live_llm_api_key,
+        live_llm_model=live_llm_model,
+        live_llm_timeout_seconds=live_llm_timeout_seconds,
+        live_llm_retry_count=live_llm_retry_count,
+        live_llm_max_items=live_llm_max_items,
+        live_llm_concurrency=live_llm_concurrency,
+        live_llm_max_score_items=live_llm_max_score_items,
+        live_llm_score_concurrency=live_llm_score_concurrency,
     )

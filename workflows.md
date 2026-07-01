@@ -12,7 +12,7 @@ Plan -> Implement -> Test -> Review -> Fix -> Re-test -> Summarize -> Iterate
 
 直到 `tasks.md` 中每个 `dag.nodes[*].status == passed`、`docs/08_acceptance.md` 中 `ACC-STOP-001` 到 `ACC-STOP-010` 全部为 `PASS`、全部 stop inputs 为 `PASS`，并且 `STOP_ALLOWED = true`。
 
-本 workflow 只依赖当前仓库、项目文档、本地测试、fixture、mock 和 fixed clock。不得依赖 GitHub Actions、外部 CI、真实 RSS、真实网页、真实 LLM、生产数据库、网络时间或人工主观判断。
+本 workflow 的自动测试、harness gate 和 STOP_ALLOWED 判定只依赖当前仓库、项目文档、本地测试、fixture、mock 和 fixed clock。不得用 GitHub Actions、外部 CI、真实 RSS、真实网页、真实 LLM、生产数据库、网络时间或人工主观判断替代自动 gate 证据。独立的本地人工验收入口 `http://127.0.0.1:8010/` 必须运行 live runtime，使用真实 RSS、真实网页正文抓取、真实 LLM scoring/translation 和本地 SQLite 运行库。
 
 Source of truth:
 
@@ -452,7 +452,7 @@ If a task exceeds retry limit:
 - For fields other than `priority`, missing task fields must be filled with explicit defaults, not inferred values: `status: pending`, `active_state: none`, `last_updated_state: none`, `acceptance_gate: none`, `attempts: 0`, `evidence: none`, `test_report: none`, `plan_report: none`, `summary_report: none`, `intentionally_out_of_scope: false`, `blocker: none`.
 - Test stage order must follow `docs/07_test_spec.md#2.13`. Compatibility stages may still run in the historical order `static -> unit -> contract -> api -> integration -> replay -> snapshot -> e2e`, but stop eligibility depends on PRD coverage and browser-visible E2E evidence, not on shallow stage count.
 - Each test stage must start from clean isolated state.
-- Tests and acceptance must use fixture, mock and fixed clock.
+- Tests and automatic acceptance gates must use fixture, mock and fixed clock; local user acceptance service must use live runtime and real dependencies.
 - Structured reports are the source of truth. Free-form logs are diagnostic only.
 - If evidence is missing, malformed or not machine-readable, the state result is `FAIL`, `TASK_BLOCKED`, `WORKFLOW_BLOCKED` or `ENV_BLOCKED`, never `PASS`.
 - Acceptance entry is intentionally lightweight but strict. It only means the workflow should start stop-gate validation: `tasks.md` is loaded, `tasks.count > 0`, every task has `status == passed`, no task is `pending`、`in_progress` or `task_blocked`, and no task has `active_state` in `FIX`, `RE_TEST` or `FIX_OPTIMIZE`. Evidence, reports, mandatory assertions and gate coverage are validated inside `ACCEPTANCE`, not before it.
@@ -903,7 +903,7 @@ The workflow may enter `DONE` only when all conditions are true:
 - `docs/01_prd.md` acceptance coverage matrix is complete: every PRD acceptance statement is mapped to executed structured evidence.
 - `tasks.md` acceptance coverage matrix is complete: every task acceptance criterion is mapped to executed structured evidence.
 - Browser-visible E2E evidence exists for Home News Feed, 30-day HighScoreList, ArticleView and Sources page. API-only tests, string scans and static snapshots cannot satisfy this condition.
-- The latest deployed browser smoke record exists at `reports/acceptance/deployed_browser_smoke.json`, targets `http://127.0.0.1:8010/`, proves the app mounted in a real browser with no console/page errors, and has no failed findings.
+- The latest deployed browser smoke record exists at `reports/acceptance/deployed_browser_smoke.json`, targets `http://127.0.0.1:8010/`, proves the app mounted in a real browser with no console/page errors, proves the deployed service is using live runtime rather than fixture/mock runtime, and has no failed findings.
 - The latest local deployment acceptance record exists at `reports/acceptance/local_user_acceptance.json`, is derived from the deployed browser smoke record, and has no failed user findings.
 - `reports/acceptance/STOP_ALLOWED.json.round_count_policy.status == PASS`, proving either at least 10 valid completed rounds with linked summary/review/fix evidence or a valid early-DONE case where every stop condition is already satisfied.
 - If the user reports any acceptance failure after `STOP_ALLOWED=true`, the previous stop decision is stale and the workflow must return to `ITERATE`.

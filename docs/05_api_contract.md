@@ -83,12 +83,13 @@ API stability rules:
 ### 3.1 NewsStatus
 
 ```ts
-type NewsStatus = "ready" | "translated" | "translation_failed";
+type NewsStatus = "ready" | "translated" | "untranslated" | "translation_failed";
 ```
 
 Status mapping:
 
-- `translated`: `title_zh`、`summary_zh`、`content_zh` all exist.
+- `translated`: `title_zh`、`summary_zh`、`content_zh` all exist and represent Chinese translated content.
+- `untranslated`: live RSS fallback content exists, but it is the original untranslated title/summary/content because live LLM translation is disabled or unavailable.
 - `translation_failed`: not `translated` and `has_translate_failed = 1`.
 - `ready`: not `translated` and not `translation_failed`.
 
@@ -96,9 +97,10 @@ Status is an API/UI projection. It is not stored as a database column.
 
 Status derivation priority:
 
-1. If all translated fields exist, return `translated`.
-2. Else if `has_translate_failed = 1`, return `translation_failed`.
-3. Otherwise return `ready`.
+1. If all translated fields exist but exactly match the live original-title/RSS-summary fallback, return `untranslated`.
+2. Else if all translated fields exist, return `translated`.
+3. Else if `has_translate_failed = 1`, return `translation_failed`.
+4. Otherwise return `ready`.
 
 Partial translated fields must not change `status` by themselves and must not be returned by the API.
 
@@ -106,6 +108,7 @@ Status consistency rules:
 
 - `status = "translated"` requires `title_zh`、`summary_zh`、`content_zh` to exist.
 - `status = "translated"` must never be returned if any translated field is missing.
+- `status = "untranslated"` must not include `summary_zh` or `content_zh` in API responses; UI labels it as `未翻译`.
 - `status = "ready"` must not include `summary_zh` or `content_zh`.
 - `status = "translation_failed"` must not include `summary_zh` or `content_zh`.
 
@@ -212,7 +215,7 @@ Forbidden API content exposure:
 - Raw ingestion sources must be sanitized before persistence.
 - Raw RSS content, raw scraped HTML, raw extracted article text, and fallback raw text must not appear in API responses.
 
-Do not return `summary_zh` or `content_zh` for `ready` or `translation_failed` items.
+Do not return `summary_zh` or `content_zh` for `ready`, `untranslated`, or `translation_failed` items.
 
 ### 3.5 FetchFrequency
 
@@ -269,21 +272,25 @@ Query:
 
 | Name | Type | Required | Rule |
 | --- | --- | --- | --- |
-| `cursor` | string | No | Cursor for `latest_news`; optional in MVP. |
+| `cursor` | string | No | Opaque cursor returned by the previous `next_cursor`; applies only to `latest_news`. |
 | `limit` | number | No | Default `50`, max `100`; applies to `latest_news`. |
 
 Data rule:
 
-- `latest_news` returns `translated` displayable news sorted by `published_at DESC`.
+- `latest_news` returns displayable news sorted by `published_at DESC`; fixture/mock acceptance items are `translated`, while live RSS fallback items may be `untranslated`.
 - Only `latest_news` is cursor paginated in MVP.
-- `top_ranked_news` returns `translated` displayable news from the last 30 days.
+- `limit` controls the `latest_news` page size; default is `50`, minimum effective value is `1`, max is `100`.
+- When another `latest_news` page exists, response MUST include `next_cursor`.
+- When no further `latest_news` page exists, response MUST omit `next_cursor`.
+- A request using a returned `cursor` MUST return the next page after the previous page and MUST NOT repeat items from earlier pages for the same sort order.
+- `top_ranked_news` returns displayable news from the last 30 days; fixture/mock acceptance items are `translated`, while live RSS fallback items may be `untranslated`.
 - `top_ranked_news` sorts by `score DESC, published_at DESC`.
 - `top_ranked_news` returns at most 10 items.
 - `top_ranked_news` is a fixed-size window query and does not use cursor pagination.
 - Both lists share `NewsListItem` shape and are independent semantic groups.
 - Response type is `HomeData`.
-- Do not return raw English summary or raw English content.
-- Every item in `latest_news` and `top_ranked_news` MUST have `status = "translated"` and include non-empty `summary_zh`.
+- Do not return raw English summary or raw English content as `summary_zh` / `content_zh`.
+- Every fixture/mock item in `latest_news` and `top_ranked_news` MUST have `status = "translated"` and include non-empty `summary_zh`; live fallback items MUST have `status = "untranslated"` and omit `summary_zh` / `content_zh`.
 - `ready` and `translation_failed` remain valid detail statuses for direct/stale routes and regression tests, but they MUST NOT appear in the primary Home lists.
 
 Response:

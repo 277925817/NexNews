@@ -26,6 +26,7 @@ function renderContentParagraphs(content: string) {
 
 const UNREADABLE_DETAIL_TITLE = '摘要和正文暂不可用'
 const READY_UNREADABLE_COPY = '翻译完成后将自动显示中文摘要和正文。'
+const UNTRANSLATED_UNREADABLE_COPY = '当前仅有原文信息，中文翻译尚未生成。'
 const FAILED_UNREADABLE_COPY = '翻译失败，当前无法显示中文摘要和正文。'
 
 export function ArticleView({ client, newsId }: ArticleViewProps) {
@@ -121,6 +122,13 @@ function renderArticleContent(detail: NewsDetailItem) {
           <strong className="article-view__state-title">{UNREADABLE_DETAIL_TITLE}</strong>
           <span className="article-view__state-label">翻译中</span>
           <p className="article-view__state-copy">{READY_UNREADABLE_COPY}</p>
+        </div>
+      ) : null}
+      {detail.status === 'untranslated' ? (
+        <div className="article-view__waiting" role="status">
+          <strong className="article-view__state-title">{UNREADABLE_DETAIL_TITLE}</strong>
+          <span className="article-view__state-label">未翻译</span>
+          <p className="article-view__state-copy">{UNTRANSLATED_UNREADABLE_COPY}</p>
         </div>
       ) : null}
       {detail.status === 'translation_failed' ? (

@@ -13,6 +13,13 @@
 - 内容抓取：RSS/XML 解析器、HTML 正文抽取器
 - LLM：用于新闻价值评分、中文翻译，所有调用必须使用结构化 JSON 输入输出
 
+## 运行模式边界
+
+- 测试阶段只允许运行 fixture/mock/fixed-clock 流程；单元、API、集成、replay、snapshot、E2E 和 stop gate 证据不得访问真实 RSS、真实网页、真实 LLM、生产数据或当前网络时间。
+- 本地长期服务 `http://127.0.0.1:8010/` 是人工验收入口，必须默认运行 live/production-like 流程：抓取真实 RSS、按真实页面抓取正文、调用 `.env` 或进程环境里的 LLM 进行评分和翻译，并写入本地 SQLite 运行库。
+- 本地人工验收不得使用 fixture RSS、article fixture、LLM mock 或 fixed clock 作为运行时数据来源；只有自动测试和 harness 报告可以使用这些 deterministic 输入。
+- 如果本地长期服务缺少 LLM 配置或无法访问真实依赖，该次人工验收应判定为环境未就绪或验收失败，而不是退回 fixture/mock 流程冒充真实数据。
+
 ## 功能 1：RSS 信息源管理
 
 ### 闭环流程 1.1：初始化和新增 RSS 信息源
@@ -29,6 +36,22 @@
   - `https://hnrss.org/frontpage`
   - `https://hnrss.org/newest`
   - `https://hnrss.org/bestcomments`
+  - `https://deepmind.google/blog/rss.xml`
+  - `https://blog.google/innovation-and-ai/technology/ai/rss/`
+  - `https://research.google/blog/rss/`
+  - `https://huggingface.co/blog/feed.xml`
+  - `https://aws.amazon.com/blogs/machine-learning/feed/`
+  - `https://blogs.nvidia.com/blog/category/deep-learning/feed/`
+  - `https://feed.infoq.com/ai-ml-data-eng`
+  - `https://rss.arxiv.org/rss/cs.AI`
+  - `https://rss.arxiv.org/rss/cs.LG`
+  - `https://rss.arxiv.org/rss/cs.CL`
+  - `https://rss.arxiv.org/rss/cs.CV`
+  - `https://rss.arxiv.org/rss/stat.ML`
+  - `https://www.technologyreview.com/topic/artificial-intelligence/feed/`
+  - `https://venturebeat.com/category/ai/feed/`
+  - `https://techcrunch.com/category/artificial-intelligence/feed/`
+  - `https://the-decoder.com/feed/`
 
 **输出**
 
@@ -289,12 +312,13 @@
 **运行流程**
 
 1. 系统读取 `pipeline_state = fetched` 且存在可用内容的新闻。
-2. 系统按标准 JSON 格式将原文标题、摘要、正文、来源和评分发送给 LLM。
+2. 系统按标准 JSON 格式将原文标题、摘要、正文、来源和评分发送给 LLM；本地 live 运行时从环境变量或 `.env` 读取 LLM 配置。
 3. LLM 按标准 JSON 格式返回中文标题、中文摘要、中文正文和中文分类校验字段。
 4. 系统校验返回字段不能为空。
 5. 系统只保存中文标题、中文摘要和中文正文字段；中文分类校验字段不得保存到数据库、API 或 UI。
 6. API 由中文字段事实投影为 `translated`。
 7. 如果翻译失败，系统不写入部分中文字段，设置 `has_translate_failed = 1` 并在 `processing_log` 记录失败原因。
+8. 如果 live LLM 未启用或配置缺失，系统可以使用原文兜底展示，但不得把该兜底记录为中文翻译成功；API/UI 必须投影为 `untranslated`。
 
 **验收标准**
 
@@ -325,9 +349,9 @@
 
 1. 用户打开主页面。
 2. 前端请求新闻列表接口。
-3. 后端按信息源发布时间倒序返回 API/UI status 为 `translated` 的新闻。
+3. 后端按信息源发布时间倒序返回可展示新闻；fixture/mock 验收数据必须为 API/UI status `translated`，live RSS 兜底数据可为 `untranslated`。
 4. 前端渲染新闻卡片。
-5. 卡片显示中文标题、中文摘要、来源、信息源发布时间和评分。
+5. `translated` 卡片显示中文标题、中文摘要、来源、信息源发布时间和评分；`untranslated` 卡片显示原文标题、`未翻译`、来源、信息源发布时间和评分，不展示英文摘要或英文正文。
 6. `ready` 和 `translation_failed` 新闻不得作为首页普通新闻条目进入用户主要点击路径；它们只允许通过详情页异常状态、测试 fixture 或后续专门状态区证明。
 7. 系统自动为每个来源配置不同的卡片颜色。
 
@@ -335,9 +359,40 @@
 
 - 主页面能展示新闻卡片列表。
 - 已完成翻译的卡片必须显示中文标题、中文摘要、来源、信息源发布时间和评分。
-- 首页普通新闻条目必须都是 `translated`，点击后可进入中文全文阅读页。
+- live RSS 兜底未翻译卡片必须显示 `未翻译`，不得把英文摘要或英文正文伪装成中文字段。
+- fixture/mock 验收中的首页普通新闻条目必须都是 `translated`，点击后可进入中文全文阅读页。
 - 卡片摘要必须显示文本内容，不得显示原始 HTML 标签。
 - 卡片摘要必须对应同一条新闻正文，不得出现通用占位摘要或与正文无关的摘要。
+
+### 闭环流程 5.1.1：向下滚动加载更多新闻
+
+**输入**
+
+- 首页首屏新闻列表
+- 后端返回的 `next_cursor`
+
+**输出**
+
+- 追加后的新闻卡片列表
+
+**运行流程**
+
+1. 用户在主页面向下滚动并接近新闻列表底部。
+2. 如果当前 HomeData 包含 `next_cursor`，前端使用该 cursor 请求下一页 `latest_news`。
+3. 后端按信息源发布时间倒序返回下一页 API/UI status 为 `translated` 的新闻。
+4. 前端把下一页新闻追加到现有 News Feed，保留已显示卡片和当前页面滚动位置。
+5. 追加后的 News Feed 继续保持 `published_at DESC` 顺序，不重复显示同一新闻。
+6. 如果下一页请求失败，前端保留已加载新闻并显示可恢复的加载失败状态。
+7. 如果响应不再包含 `next_cursor`，前端停止继续自动请求下一页。
+8. `top_ranked_news` 不参与滚动分页，不因 News Feed 加载更多而变成独立分页列表。
+
+**验收标准**
+
+- 主页面向下滚动接近 News Feed 底部时，可以自动加载并追加更多新闻卡片。
+- 加载更多只请求 `latest_news` 的下一页，不改变 HighScoreList 的固定 30 天榜单语义。
+- 追加后的新闻卡片不得重复，且整体排序仍为 `published_at DESC`。
+- 加载更多失败时不得清空已加载新闻，用户必须能恢复加载。
+- 没有 `next_cursor` 后继续滚动不得触发无意义的分页请求。
 
 ### 闭环流程 5.2：点击新闻卡片进入浏览页
 
@@ -508,7 +563,7 @@
 2. 评分完成后，`pipeline_state` 从 `raw` 更新为 `scored`。
 3. 评分大于或等于 `60` 时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
 4. 全文抓取或 RSS 摘要兜底内容可用后，`pipeline_state` 从 `scored` 更新为 `fetched`。
-5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`translation_failed`。
+5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`untranslated`、`translation_failed`。
 6. 翻译成功由 `title_zh`、`summary_zh`、`content_zh` 全部存在表达。
 7. 翻译失败由 `has_translate_failed = 1` 作为展示缓存表达，最终事实以 `processing_log` 为准。
 8. 系统只允许通过明确状态流转更新 `pipeline_state`，不允许依赖隐式字段组合判断数据采集阶段。

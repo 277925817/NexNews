@@ -186,11 +186,11 @@ dag:
         - "Default RSS source list from docs/01_prd.md."
       outputs:
         - "DB init hook can initialize an empty SQLite database."
-        - "Exactly 7 default sources are seeded once."
+        - "Exactly 23 default sources are seeded once."
       acceptance_criteria:
         - "Init hook creates the schema from TASK-002A in an empty SQLite database."
-        - "Default source seed count is 7 on first init and unchanged on second init."
-        - "Default source seed URL set exactly matches the 7 URLs listed in docs/01_prd.md."
+        - "Default source seed count is 23 on first init and unchanged on second init."
+        - "Default source seed URL set exactly matches the 23 URLs listed in docs/01_prd.md."
         - "Seed rows satisfy source table constraints."
         - "static stage result = pass for DB init hook and seed."
       failure_criteria:
@@ -1517,3 +1517,44 @@ dag:
         - "FAIL if Home or Top 30 Days still exposes ready or translation_failed as ordinary news entries."
         - "FAIL if the fix removes direct ready/translation_failed detail-state coverage or masks translation failures by fabricating summary_zh/content_zh."
         - "FAIL if the fix uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+
+    - id: TASK-035
+      name: "Home infinite news loading"
+      layer: "API/UI/Harness"
+      type: ["docs", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-004", "ACC-STOP-006"]
+      priority: "prd_core_flow_gaps"
+      test_scope: ["static", "api", "integration", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-035/api.json"
+      test_report: "reports/tasks/TASK-035/e2e.json"
+      plan_report: "reports/tasks/TASK-035/plan.json"
+      summary_report: "reports/tasks/TASK-035/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-034", "TASK-024"]
+      description: "Implement Home News Feed infinite loading so scrolling near the bottom loads the next latest_news page through GET /api/home cursor pagination."
+      inputs:
+        - "Updated PRD/UI/API/test/acceptance documents requiring Home News Feed infinite loading."
+        - "Existing HomeData contract with latest_news, top_ranked_news and optional next_cursor."
+        - "Existing translated-only Home primary reading list contract from TASK-034."
+      outputs:
+        - "GET /api/home supports deterministic latest_news cursor pagination with non-overlapping pages and next_cursor end detection."
+        - "Home News Feed scrolls at page level, automatically loads the next latest_news page, appends NewsCards and preserves already-loaded items."
+        - "Harness API, integration and browser E2E evidence proves pagination, append, no duplicates, retryable failure and end-of-list stop behavior."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before backend or frontend implementation."
+        - "GET /api/home respects limit and cursor for latest_news, returns next_cursor only when another latest_news page exists, and never applies cursor pagination to top_ranked_news."
+        - "Using a returned next_cursor fetches the next latest_news page without repeating previously returned item ids and preserves published_at DESC order across appended pages."
+        - "Home page scrolling near the News Feed bottom triggers the next GET /api/home cursor request and appends new NewsCard rows without replacing already-rendered NewsCards."
+        - "Home page loading-more failure keeps already-loaded NewsCards visible and allows the failed page to be retried successfully."
+        - "When next_cursor is absent, further scrolling does not issue additional pagination requests."
+        - "HighScoreList keeps the existing top_ranked_news behavior and does not gain an independent API, pagination, refresh action or scroll container."
+      failure_criteria:
+        - "FAIL if infinite loading uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+        - "FAIL if News Feed pagination exposes ready or translation_failed items, duplicates news cards, clears loaded cards on failure, or keeps requesting after the final page."
+        - "FAIL if the implementation adds a new public endpoint instead of using GET /api/home cursor pagination."

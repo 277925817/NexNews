@@ -134,3 +134,52 @@ def test_non_translated_news_links_expose_unreadable_state():
     assert "aria-label={linkLabel}" in high_score_source
     assert "翻译中，摘要和正文暂不可用" in combined_source
     assert "翻译失败，摘要和正文暂不可用" in combined_source
+
+
+def test_untranslated_status_is_labeled_in_list_and_detail_views():
+    status_badge_source = Path("frontend/src/components/StatusBadge.tsx").read_text()
+    news_card_source = Path("frontend/src/components/NewsCard.tsx").read_text()
+    high_score_source = Path("frontend/src/components/HighScoreList.tsx").read_text()
+    article_source = Path("frontend/src/pages/ArticleView.tsx").read_text()
+    app_css = Path("frontend/src/styles/app.css").read_text()
+
+    assert "untranslated: '未翻译'" in status_badge_source
+    assert "status-badge--untranslated" in app_css
+    assert "未翻译，中文摘要和正文暂不可用" in news_card_source
+    assert "未翻译，中文摘要和正文暂不可用" in high_score_source
+    assert "当前仅有原文信息，中文翻译尚未生成。" in article_source
+    assert "detail.status === 'untranslated'" in article_source
+
+
+def test_home_page_implements_documented_infinite_loading_contract():
+    ui_spec = Path("docs/03_ui_spec.md").read_text()
+    test_spec = Path("docs/07_test_spec.md").read_text()
+    acceptance = Path("docs/08_acceptance.md").read_text()
+    api_source = Path("frontend/src/api/news.ts").read_text()
+    home_source = Path("frontend/src/pages/HomePage.tsx").read_text()
+    high_score_source = Path("frontend/src/components/HighScoreList.tsx").read_text()
+
+    assert "page-level scroll" in ui_spec
+    assert "GET /api/home?cursor=..." in test_spec
+    assert "Home page 向下滚动接近底部" in acceptance
+
+    assert "fetchHome(options" in api_source
+    assert "URLSearchParams" in api_source
+    assert "cursor" in api_source
+    assert "limit" in api_source
+
+    assert "window.addEventListener('scroll'" in home_source
+    assert "document.documentElement" in home_source
+    assert "next_cursor" in home_source
+    assert "loadMoreHome" in home_source
+    assert "mergeUniqueLatestNews" in home_source
+    assert "new Set" in home_source
+    assert "top_ranked_news: current.top_ranked_news" in home_source
+    assert "loadingMoreState" in home_source
+    assert "load-more" in home_source
+    assert "news-feed__list" in home_source
+    assert "overflow-y: auto" not in home_source
+
+    assert "fetchHome" not in high_score_source
+    assert "next_cursor" not in high_score_source
+    assert "overflow-y" not in high_score_source

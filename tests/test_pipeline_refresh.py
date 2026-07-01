@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import threading
 
 from fastapi.testclient import TestClient
 
@@ -14,8 +16,12 @@ from backend.app.services.pipeline import (
     ingest_live_rss,
     parse_rss_feed_text,
     read_json,
+    request_live_scoring,
+    request_live_translation,
     run_fixture_pipeline_summary,
+    run_live_pipeline_summary,
     score_raw_news,
+    score_raw_news_live,
     score_request_with_fixture,
     selected_fetch_candidates,
     score_is_selected,
@@ -59,10 +65,70 @@ def test_parse_rss_feed_text_separates_article_link_from_discussion_url():
             "title": "HN fixture story",
             "link": "https://example-news.com/article",
             "discussion_url": "https://news.ycombinator.com/item?id=123",
-            "published_at": "Sun, 28 Jun 2026 06:00:00 +0000",
+            "published_at": "2026-06-28T06:00:00Z",
             "summary": "Article summary",
         }
     ]
+
+
+def test_parse_rss_feed_text_supports_atom_entries():
+    payload = """
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <title>Live AI research update</title>
+        <id>https://research.example.com/posts/live-ai-research-update</id>
+        <link href="https://research.example.com/posts/live-ai-research-update?utm_source=feed" />
+        <updated>2026-06-30T10:00:00Z</updated>
+        <summary>Researchers describe a new AI evaluation method.</summary>
+      </entry>
+    </feed>
+    """
+
+    items = parse_rss_feed_text(payload)
+
+    assert items == [
+        {
+            "guid": "https://research.example.com/posts/live-ai-research-update",
+            "title": "Live AI research update",
+            "link": "https://research.example.com/posts/live-ai-research-update?utm_source=feed",
+            "discussion_url": None,
+            "published_at": "2026-06-30T10:00:00Z",
+            "summary": "Researchers describe a new AI evaluation method.",
+        }
+    ]
+
+
+def test_fetch_url_text_retries_without_env_proxy_when_proxy_scheme_is_unsupported(monkeypatch):
+    from backend.app.services import pipeline
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "<rss><channel></channel></rss>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs.get("trust_env"))
+            if kwargs.get("trust_env") is not False:
+                raise ValueError("Unknown scheme for proxy URL URL('socks://127.0.0.1:7897/')")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+
+    text, error = pipeline.fetch_url_text("https://example.com/rss.xml", retry_count=0)
+
+    assert text == "<rss><channel></channel></rss>"
+    assert error is None
+    assert calls == [True, False]
 
 
 def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
@@ -87,14 +153,14 @@ def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
     ).fetchall()
 
     assert result["inserted_count"] == 14
-    assert result["source_success_count"] == 6
+    assert result["source_success_count"] == 22
     assert result["source_failure_count"] == 1
     assert len(rows) == 14
     assert {row["pipeline_state"] for row in rows} == {"raw"}
     assert all(row["score"] is None for row in rows)
     assert all(row["content_full"] is None for row in rows)
     assert all(row["title_zh"] is None for row in rows)
-    assert len(crawl_logs) == 7
+    assert len(crawl_logs) == 23
     assert any(log["success"] == 0 and log["error"] == "parsing" for log in crawl_logs)
     assert all(log["stage"] == "crawl" and log["news_item_id"] is None for log in crawl_logs)
 
@@ -166,12 +232,123 @@ def test_live_rss_ingest_filters_archival_items_by_published_at(monkeypatch):
 
     assert result["inserted_count"] == 1
     assert rows == [
-        {
-            "original_title": "Introducing GeneBench-Pro",
-            "original_url": "https://openai.com/index/introducing-genebench-pro/",
-            "published_at": "Tue, 30 Jun 2026 00:00:00 GMT",
-        }
-    ]
+            {
+                "original_title": "Introducing GeneBench-Pro",
+                "original_url": "https://openai.com/index/introducing-genebench-pro/",
+                "published_at": "2026-06-30T00:00:00Z",
+            }
+        ]
+
+
+def test_live_rss_ingest_fetches_sources_concurrently(monkeypatch):
+    conn = connect(":memory:")
+    initialize_database(conn)
+    for name, rss_url in (
+        ("Source A", "https://source-a.example/rss.xml"),
+        ("Source B", "https://source-b.example/rss.xml"),
+    ):
+        conn.execute(
+            """
+            INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+            VALUES (?, ?, 1, 'twice_daily', '2026-07-01T00:00:00Z')
+            """,
+            (name, rss_url),
+        )
+
+    started_urls = set()
+    lock = threading.Lock()
+    both_started = threading.Event()
+
+    def fake_fetch_url_text(url, **_kwargs):
+        with lock:
+            started_urls.add(url)
+            if len(started_urls) == 2:
+                both_started.set()
+        if not both_started.wait(timeout=0.5):
+            return None, "not_concurrent"
+        source_name = "a" if "source-a" in url else "b"
+        return f"""
+        <rss><channel>
+          <item>
+            <title>Live AI update from source {source_name}</title>
+            <link>https://articles.example/{source_name}</link>
+            <guid>live-{source_name}</guid>
+            <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+            <description>Current AI news summary from source {source_name}.</description>
+          </item>
+        </channel></rss>
+        """, None
+
+    monkeypatch.setattr("backend.app.services.pipeline.fetch_url_text", fake_fetch_url_text)
+
+    result = ingest_live_rss(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        timeout=1,
+        retry_count=0,
+        max_workers=2,
+    )
+
+    assert result["inserted_count"] == 2
+    assert result["source_success_count"] == 2
+    assert result["source_failure_count"] == 0
+
+
+def test_live_refresh_can_use_rss_summary_without_fetching_article_pages(monkeypatch):
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    requested_urls = []
+
+    def fake_fetch_url_text(url, **_kwargs):
+        requested_urls.append(url)
+        if url == "https://live.example/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI agents reach useful production workflows</title>
+                <link>https://live.example/articles/agents-production</link>
+                <guid>live-agents-production</guid>
+                <pubDate>Mon, 29 Jun 2026 00:00:00 GMT</pubDate>
+                <description>Teams report that AI agents are now handling repeatable production workflows with better evaluation and observability.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "article_fetch_should_not_run"
+
+    monkeypatch.setattr("backend.app.services.pipeline.fetch_url_text", fake_fetch_url_text)
+
+    result = run_manual_refresh(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        use_live_data=True,
+        allow_live_network=True,
+        allow_live_llm=False,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+    )
+
+    row = conn.execute(
+        """
+        SELECT original_title, title_zh, summary_zh, content_zh, pipeline_state, is_selected
+        FROM news_item
+        WHERE rss_guid = 'live-agents-production'
+        """
+    ).fetchone()
+
+    assert result["started"] is True
+    assert requested_urls == ["https://live.example/rss.xml"]
+    assert row["is_selected"] == 1
+    assert row["pipeline_state"] == "fetched"
+    assert row["title_zh"] == row["original_title"]
+    assert "production workflows" in row["summary_zh"]
+    assert "production workflows" in row["content_zh"]
 
 
 def test_scoring_request_validation_retry_and_missing_summary_penalty():
@@ -412,6 +589,725 @@ def test_translation_request_validation_and_category_contract():
     assert has_valid_translation_record(translations["fixture-translate-partial"]) is False
 
 
+def test_request_live_translation_posts_chat_completion_and_parses_json(monkeypatch):
+    from backend.app.services import pipeline
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title_zh": "现场 LLM 翻译标题",
+                                    "summary_zh": "现场 LLM 返回的中文摘要，能够概括同一条新闻的核心信息。",
+                                    "content_zh": "现场 LLM 返回的中文正文第一段，说明新闻背景和主要事实。\n\n第二段继续解释影响和后续观察点。",
+                                    "category_zh": "产品",
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append({"init": kwargs})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, headers=None, json=None):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+
+    record, error = request_live_translation(
+        {
+            "original_title": "Live AI translation check",
+            "original_summary": "English summary",
+            "original_content": "English content",
+            "source": "Live Source",
+            "score": 92,
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+
+    post_call = calls[1]
+    assert error is None
+    assert record["title_zh"] == "现场 LLM 翻译标题"
+    assert post_call["url"] == "https://llm.example.test/api/v4/chat/completions"
+    assert post_call["headers"]["Authorization"] == "Bearer secret-token"
+    assert post_call["json"]["model"] == "glm-test"
+    assert post_call["json"]["messages"][0]["role"] == "system"
+    assert "original_title" in post_call["json"]["messages"][1]["content"]
+
+
+def test_request_live_scoring_posts_chat_completion_and_parses_score(monkeypatch):
+    from backend.app.services import pipeline
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"score": 87, "reason": "High-signal AI infrastructure update."},
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append({"init": kwargs})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, headers=None, json=None):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+
+    record, error = request_live_scoring(
+        {
+            "title": "Live AI scoring check",
+            "summary": "English summary",
+            "source": "Live Source",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_link": "https://live.example/scoring",
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+
+    post_call = calls[1]
+    assert error is None
+    assert record == {"score": 87, "reason": "High-signal AI infrastructure update."}
+    assert post_call["url"] == "https://llm.example.test/api/v4/chat/completions"
+    assert post_call["headers"]["Authorization"] == "Bearer secret-token"
+    assert post_call["json"]["model"] == "glm-test"
+    assert post_call["json"]["messages"][0]["role"] == "system"
+    assert "original_link" in post_call["json"]["messages"][1]["content"]
+
+
+def test_request_live_translation_uses_direct_network_before_env_proxy(monkeypatch):
+    from backend.app.services import pipeline
+
+    trust_env_values = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title_zh": "无代理后的中文标题",
+                                    "summary_zh": "无代理重试后返回中文摘要，说明请求成功。",
+                                    "content_zh": "无代理重试后返回中文正文第一段。\n\n无代理重试后返回中文正文第二段。",
+                                    "category_zh": "产品",
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.trust_env = kwargs.get("trust_env")
+            trust_env_values.append(self.trust_env)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+
+    record, error = request_live_translation(
+        {
+            "original_title": "Proxy timeout check",
+            "original_summary": "Summary",
+            "original_content": "Content",
+            "source": "Live Source",
+            "score": 80,
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+
+    assert error is None
+    assert record["title_zh"] == "无代理后的中文标题"
+    assert trust_env_values == [False]
+
+
+def test_request_live_translation_retries_transient_llm_failures(monkeypatch):
+    from backend.app.services import pipeline
+
+    status_codes = [500, 502, 200]
+    post_count = 0
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title_zh": "重试后的中文标题",
+                                    "summary_zh": "重试后的中文摘要，说明瞬时失败可以恢复。",
+                                    "content_zh": "重试后的中文正文第一段。\n\n重试后的中文正文第二段。",
+                                    "category_zh": "产品",
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            nonlocal post_count
+            status_code = status_codes[post_count]
+            post_count += 1
+            return FakeResponse(status_code)
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda *_args, **_kwargs: None)
+
+    record, error = request_live_translation(
+        {
+            "original_title": "Transient retry check",
+            "original_summary": "Summary",
+            "original_content": "Content",
+            "source": "Live Source",
+            "score": 80,
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+
+    assert error is None
+    assert record["title_zh"] == "重试后的中文标题"
+    assert post_count == 3
+
+
+def test_request_live_llm_rate_limit_fails_fast_without_retry(monkeypatch):
+    from backend.app.services import pipeline
+
+    post_count = 0
+    sleep_calls = []
+
+    class FakeResponse:
+        status_code = 429
+
+        def json(self):
+            return {"error": {"code": "1302", "message": "rate limited"}}
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            nonlocal post_count
+            post_count += 1
+            return FakeResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda *args, **_kwargs: sleep_calls.append(args))
+
+    translation_record, translation_error = request_live_translation(
+        {
+            "original_title": "Rate limit check",
+            "original_summary": "Summary",
+            "original_content": "Content",
+            "source": "Live Source",
+            "score": 80,
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+    scoring_record, scoring_error = request_live_scoring(
+        {
+            "title": "Rate limit scoring check",
+            "summary": "Summary",
+            "source": "Live Source",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_link": "https://live.example/rate-limit",
+        },
+        base_url="https://llm.example.test/api/v4",
+        api_key="secret-token",
+        model="glm-test",
+        timeout_seconds=3,
+    )
+
+    assert translation_record is None
+    assert translation_error == "llm_rate_limited"
+    assert scoring_record is None
+    assert scoring_error == "llm_rate_limited"
+    assert post_count == 2
+    assert sleep_calls == []
+
+
+def test_live_scoring_limits_batch_and_prioritizes_newest_raw_items(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (id, name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES (1, 'Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    rows = [
+        ("old-raw", "https://live.example/old", "Old raw item", "2026-06-01T00:00:00Z"),
+        ("new-raw", "https://live.example/new", "New raw item", "2026-07-01T08:00:00Z"),
+    ]
+    for guid, url, title, published_at in rows:
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url, original_title,
+              published_at, pipeline_state, content_raw, created_at, updated_at
+            )
+            VALUES (1, ?, ?, ?, ?, ?, 'raw', 'summary', '2026-07-01T08:00:00Z', '2026-07-01T08:00:00Z')
+            """,
+            (guid, url, url, title, published_at),
+        )
+    scoring_requests = []
+
+    def fake_request_live_scoring(request, **_kwargs):
+        scoring_requests.append(request)
+        return {"score": 90, "reason": "Selected by live LLM scoring."}, None
+
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+
+    result = score_raw_news_live(
+        conn,
+        now="2026-07-01T08:00:00Z",
+        use_live_llm=True,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_max_score_items=1,
+        live_llm_score_concurrency=1,
+    )
+    stored_rows = conn.execute(
+        """
+        SELECT rss_guid, pipeline_state, score
+        FROM news_item
+        ORDER BY published_at DESC
+        """
+    ).fetchall()
+
+    assert result["scored_count"] == 1
+    assert [request["title"] for request in scoring_requests] == ["New raw item"]
+    assert stored_rows == [
+        {"rss_guid": "new-raw", "pipeline_state": "scored", "score": 90},
+        {"rss_guid": "old-raw", "pipeline_state": "raw", "score": None},
+    ]
+
+
+def test_live_pipeline_uses_live_llm_translation_when_enabled(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    translation_requests = []
+    scoring_requests = []
+
+    def fake_fetch_url_text(url, **_kwargs):
+        if url == "https://live.example/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI agents improve production workflows</title>
+                <link>https://live.example/articles/agents-production-translation</link>
+                <guid>live-agents-production-translation</guid>
+                <pubDate>Mon, 29 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents are improving production workflows with better evaluation and observability.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "unexpected_url"
+
+    def fake_request_live_translation(request, **kwargs):
+        translation_requests.append({"request": request, "kwargs": kwargs})
+        return {
+            "title_zh": "现场 AI 智能体改进生产工作流",
+            "summary_zh": "现场 LLM 将 AI 智能体生产工作流新闻翻译成中文摘要，保留评估和可观测性重点。",
+            "content_zh": "现场 LLM 将这条 AI 智能体新闻翻译成中文正文，说明团队正在用更好的评估和可观测性改进生产工作流。\n\n第二段说明这一变化会影响上线质量、监控方式和后续产品迭代。",
+            "category_zh": "产品",
+        }, None
+
+    def fake_request_live_scoring(request, **kwargs):
+        scoring_requests.append({"request": request, "kwargs": kwargs})
+        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+
+    monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+
+    summary = run_live_pipeline_summary(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        allow_live_network=True,
+        allow_live_llm=True,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+        live_rss_concurrency=1,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+    )
+    row = conn.execute(
+        """
+        SELECT original_title, title_zh, summary_zh, content_zh, has_translate_failed
+        FROM news_item
+        WHERE rss_guid = 'live-agents-production-translation'
+        """
+    ).fetchone()
+    translate_log = conn.execute(
+        """
+        SELECT success, error
+        FROM processing_log
+        WHERE stage = 'translate'
+          AND news_item_id = (
+            SELECT id FROM news_item WHERE rss_guid = 'live-agents-production-translation'
+          )
+        """
+    ).fetchone()
+
+    assert summary["translated_item_count"] == 1
+    assert len(scoring_requests) == 1
+    assert scoring_requests[0]["kwargs"]["base_url"] == "https://llm.example.test/api/v4"
+    assert len(translation_requests) == 1
+    assert translation_requests[0]["kwargs"]["base_url"] == "https://llm.example.test/api/v4"
+    assert translation_requests[0]["kwargs"]["model"] == "glm-test"
+    assert row["title_zh"] == "现场 AI 智能体改进生产工作流"
+    assert row["title_zh"] != row["original_title"]
+    assert "生产工作流" in row["summary_zh"]
+    assert "第二段" in row["content_zh"]
+    assert row["has_translate_failed"] == 0
+    assert translate_log == {"success": 1, "error": None}
+
+
+def test_live_pipeline_limits_live_llm_translation_batch(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    translation_requests = []
+    scoring_requests = []
+
+    def fake_fetch_url_text(url, **_kwargs):
+        if url == "https://live.example/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI agents improve production workflows one</title>
+                <link>https://live.example/articles/agents-production-one</link>
+                <guid>live-agents-production-one</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents improve production workflows with better evaluation and observability.</description>
+              </item>
+              <item>
+                <title>Live AI agents improve production workflows two</title>
+                <link>https://live.example/articles/agents-production-two</link>
+                <guid>live-agents-production-two</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents improve production workflows with better evaluation and observability.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "unexpected_url"
+
+    def fake_request_live_translation(request, **_kwargs):
+        translation_requests.append(request)
+        return {
+            "title_zh": f"批量上限翻译 {len(translation_requests)}",
+            "summary_zh": "批量上限测试返回中文摘要，证明只翻译允许数量的新闻。",
+            "content_zh": "批量上限测试返回中文正文第一段。\n\n批量上限测试返回中文正文第二段。",
+            "category_zh": "产品",
+        }, None
+
+    def fake_request_live_scoring(request, **_kwargs):
+        scoring_requests.append(request)
+        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+
+    monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+
+    summary = run_live_pipeline_summary(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        allow_live_network=True,
+        allow_live_llm=True,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+        live_rss_concurrency=1,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_max_items=1,
+    )
+    translated_rows = conn.execute(
+        """
+        SELECT rss_guid
+        FROM news_item
+        WHERE title_zh IS NOT NULL AND title_zh != original_title
+        ORDER BY rss_guid ASC
+        """
+    ).fetchall()
+
+    assert summary["translated_item_count"] == 1
+    assert len(scoring_requests) == 2
+    assert len(translation_requests) == 1
+    assert [row["rss_guid"] for row in translated_rows] == ["live-agents-production-two"]
+
+
+def test_live_pipeline_skips_translation_when_live_llm_is_rate_limited_during_scoring(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    translation_requests = []
+
+    def fake_fetch_url_text(url, **_kwargs):
+        if url == "https://live.example/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI rate limit should not trigger translation</title>
+                <link>https://live.example/articles/rate-limit</link>
+                <guid>live-rate-limit-skip-translation</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI news item used to verify rate limit handling.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "unexpected_url"
+
+    def fake_request_live_scoring(request, **_kwargs):
+        return None, "llm_rate_limited"
+
+    def fake_request_live_translation(request, **_kwargs):
+        translation_requests.append(request)
+        return None, "llm_rate_limited"
+
+    monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+
+    summary = run_live_pipeline_summary(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        allow_live_network=True,
+        allow_live_llm=True,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+        live_rss_concurrency=1,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+    )
+    score_log = conn.execute(
+        """
+        SELECT success, error
+        FROM processing_log
+        WHERE stage = 'score'
+          AND news_item_id = (
+            SELECT id FROM news_item WHERE rss_guid = 'live-rate-limit-skip-translation'
+          )
+        """
+    ).fetchone()
+
+    assert summary["translated_item_count"] == 0
+    assert summary["llm_unavailable_count"] == 1
+    assert score_log == {"success": 0, "error": "llm_rate_limited"}
+    assert translation_requests == []
+
+
+def test_live_pipeline_uses_configured_live_llm_concurrency(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    executor_workers = []
+    scoring_requests = []
+
+    class FakeExecutor:
+        def __init__(self, *, max_workers):
+            executor_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc_info):
+            return False
+
+        def map(self, func, rows):
+            return [func(row) for row in rows]
+
+    def fake_fetch_url_text(url, **_kwargs):
+        if url == "https://live.example/rss.xml":
+            return """
+            <rss><channel>
+              <item>
+                <title>Live AI agents improve production workflows one</title>
+                <link>https://live.example/articles/agents-production-one</link>
+                <guid>live-agents-production-one</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents improve production workflows with better evaluation and observability.</description>
+              </item>
+              <item>
+                <title>Live AI agents improve production workflows two</title>
+                <link>https://live.example/articles/agents-production-two</link>
+                <guid>live-agents-production-two</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents improve production workflows with better evaluation and observability.</description>
+              </item>
+              <item>
+                <title>Live AI agents improve production workflows three</title>
+                <link>https://live.example/articles/agents-production-three</link>
+                <guid>live-agents-production-three</guid>
+                <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+                <description>AI agents improve production workflows with better evaluation and observability.</description>
+              </item>
+            </channel></rss>
+            """, None
+        return None, "unexpected_url"
+
+    def fake_request_live_translation(request, **_kwargs):
+        return {
+            "title_zh": f"并发翻译：{request['original_title']}",
+            "summary_zh": "并发配置测试返回中文摘要，证明 live LLM 批次可按配置执行。",
+            "content_zh": "并发配置测试返回中文正文第一段。\n\n并发配置测试返回中文正文第二段。",
+            "category_zh": "产品",
+        }, None
+
+    def fake_request_live_scoring(request, **_kwargs):
+        scoring_requests.append(request)
+        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+
+    monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+    monkeypatch.setattr(pipeline, "ThreadPoolExecutor", FakeExecutor)
+
+    summary = run_live_pipeline_summary(
+        conn,
+        now="2026-07-01T00:00:00Z",
+        allow_live_network=True,
+        allow_live_llm=True,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+        live_rss_concurrency=1,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_max_items=3,
+        live_llm_concurrency=2,
+    )
+
+    assert summary["translated_item_count"] == 3
+    assert len(scoring_requests) == 3
+    assert executor_workers[-1] == 2
+
+
 def test_translate_fetched_content_writes_success_failure_and_fallback_translation():
     conn = connect(":memory:")
     initialize_database(conn)
@@ -474,7 +1370,7 @@ def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
 
     assert summary["started_at"] == "2026-06-28T09:00:00Z"
     assert summary["finished_at"] == "2026-06-28T09:00:00Z"
-    assert summary["source_success_count"] == 6
+    assert summary["source_success_count"] == 22
     assert summary["source_failure_count"] == 1
     assert summary["rss_item_count"] == 15
     assert summary["new_item_count"] == 14

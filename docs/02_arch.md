@@ -112,7 +112,7 @@ Existing legacy root files may remain only until their owning bootstrap task rem
 - `backend/app/api/` validates request inputs, calls services, and returns DTOs from `docs/05_api_contract.md`; it must not return DB rows directly.
 - `backend/app/services/` owns refresh orchestration, live RSS freshness filtering, and pipeline steps. Only pipeline services may write `news_item.pipeline_state` or compute `is_selected`.
 - `backend/app/repositories/` owns SQL, SQLite schema creation, indexes, constraints, and seed helpers. Other backend modules access SQLite through repositories or database helpers.
-- `backend/app/clients/` owns external-boundary interfaces and local fixture/mock clients. Tests and harness runs must bind fixture/mock clients, never live RSS, live webpages, or live LLM.
+- `backend/app/clients/` owns external-boundary interfaces and local fixture/mock clients. Tests and harness runs must bind fixture/mock clients, never live RSS, live webpages, or live LLM; the long-running local acceptance service must bind live RSS, live webpage fetch and live LLM clients through environment or `.env` configuration.
 - `backend/app/core/clock` owns business time. Scheduler, ranking windows, timestamps, and tests must use injected clock values.
 - `frontend/src/api/` is the only frontend layer allowed to know endpoint paths. UI pages and components consume API DTOs only.
 - `frontend/src/pages/` may load data and compose final UI units, but must not derive pipeline state or map database fields.

@@ -15,6 +15,9 @@ function buildArticleLinkLabel(item: NewsListItem) {
   if (item.status === 'translation_failed') {
     return `${title}，翻译失败，摘要和正文暂不可用`
   }
+  if (item.status === 'untranslated') {
+    return `${title}，未翻译，中文摘要和正文暂不可用`
+  }
   return `${title}，打开中文摘要和正文`
 }
 

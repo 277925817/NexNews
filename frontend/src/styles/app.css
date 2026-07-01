@@ -190,6 +190,11 @@ button { font: inherit; }
   color: #b45309;
 }
 
+.status-badge--untranslated {
+  background: rgba(100, 113, 127, 0.14);
+  color: #475569;
+}
+
 .status-badge--translation_failed {
   background: rgba(220, 38, 38, 0.1);
   color: #dc2626;
@@ -295,6 +300,18 @@ button { font: inherit; }
 }
 
 .state-message--error {
+  color: #dc2626;
+}
+
+.load-more {
+  color: #64717f;
+  font-size: 13px;
+  min-height: 40px;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.load-more--error {
   color: #dc2626;
 }
 

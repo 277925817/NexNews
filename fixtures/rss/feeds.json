@@ -156,6 +156,86 @@
           "summary": "Older high-score fixture that must be excluded from the 30-day ranking."
         }
       ]
+    },
+    {
+      "rss_url": "https://deepmind.google/blog/rss.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://blog.google/innovation-and-ai/technology/ai/rss/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://research.google/blog/rss/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://huggingface.co/blog/feed.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://feed.infoq.com/ai-ml-data-eng",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://rss.arxiv.org/rss/cs.AI",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://rss.arxiv.org/rss/cs.LG",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://rss.arxiv.org/rss/cs.CL",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://rss.arxiv.org/rss/cs.CV",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://rss.arxiv.org/rss/stat.ML",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://venturebeat.com/category/ai/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://the-decoder.com/feed/",
+      "status": "success",
+      "items": []
     }
   ]
 }

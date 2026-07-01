@@ -15,6 +15,22 @@ EXPECTED_DEFAULT_SOURCE_URLS = {
     "https://hnrss.org/frontpage",
     "https://hnrss.org/newest",
     "https://hnrss.org/bestcomments",
+    "https://deepmind.google/blog/rss.xml",
+    "https://blog.google/innovation-and-ai/technology/ai/rss/",
+    "https://research.google/blog/rss/",
+    "https://huggingface.co/blog/feed.xml",
+    "https://aws.amazon.com/blogs/machine-learning/feed/",
+    "https://blogs.nvidia.com/blog/category/deep-learning/feed/",
+    "https://feed.infoq.com/ai-ml-data-eng",
+    "https://rss.arxiv.org/rss/cs.AI",
+    "https://rss.arxiv.org/rss/cs.LG",
+    "https://rss.arxiv.org/rss/cs.CL",
+    "https://rss.arxiv.org/rss/cs.CV",
+    "https://rss.arxiv.org/rss/stat.ML",
+    "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+    "https://venturebeat.com/category/ai/feed/",
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://the-decoder.com/feed/",
 }
 
 
@@ -123,6 +139,40 @@ def test_initialize_database_enforces_key_constraints():
             VALUES (1, 1, 'crawl', 1, 'trace', '2026-06-28T09:00:00Z')
             """
         )
+
+
+def test_initialize_database_normalizes_existing_rss_published_at_values():
+    conn = sqlite3.connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (id, name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES (1, 'Example', 'https://example.com/rss.xml', 1, 'twice_daily', '2026-06-28T06:00:00Z')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO news_item (
+          id, source_id, original_url, canonical_url, original_title,
+          published_at, pipeline_state, created_at, updated_at
+        )
+        VALUES
+          (1, 1, 'https://example.com/july', 'https://example.com/july', 'July item',
+           'Wed, 01 Jul 2026 07:55:28 +0000', 'raw', '2026-07-01T08:00:00Z', '2026-07-01T08:00:00Z'),
+          (2, 1, 'https://example.com/june', 'https://example.com/june', 'June item',
+           'Wed, 24 Jun 2026 18:00:00 GMT', 'raw', '2026-07-01T08:00:00Z', '2026-07-01T08:00:00Z')
+        """
+    )
+
+    initialize_database(conn)
+
+    rows = conn.execute(
+        "SELECT original_title, published_at FROM news_item ORDER BY published_at DESC"
+    ).fetchall()
+    assert rows == [
+        ("July item", "2026-07-01T07:55:28Z"),
+        ("June item", "2026-06-24T18:00:00Z"),
+    ]
 
 
 def test_initialize_database_enforces_canonical_url_and_stage_owner_constraints():
@@ -341,7 +391,7 @@ def test_seed_default_sources_is_idempotent():
     seed_default_sources(conn)
 
     rows = conn.execute("SELECT rss_url, is_enabled, deleted_at FROM source").fetchall()
-    assert len(rows) == 7
+    assert len(rows) == 23
     assert {row[0] for row in rows} == EXPECTED_DEFAULT_SOURCE_URLS
     assert all(row[1] == 1 for row in rows)
     assert all(row[2] is None for row in rows)

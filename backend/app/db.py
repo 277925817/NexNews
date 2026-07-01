@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
 import sqlite3
 from pathlib import Path
@@ -119,12 +121,42 @@ def initialize_database(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     migrate_news_item_discussion_url(conn)
     migrate_legacy_openai_gpt_4_1_url(conn)
+    migrate_news_item_published_at_iso(conn)
     conn.commit()
 
 
 def sqlite_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     return {row["name"] if isinstance(row, dict) else row[1] for row in rows}
+
+
+def normalize_published_at(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def migrate_news_item_published_at_iso(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT id, published_at FROM news_item").fetchall()
+    for row in rows:
+        item_id = row["id"] if isinstance(row, (dict, sqlite3.Row)) else row[0]
+        published_at = row["published_at"] if isinstance(row, (dict, sqlite3.Row)) else row[1]
+        normalized = normalize_published_at(published_at)
+        if normalized and normalized != published_at:
+            conn.execute(
+                "UPDATE news_item SET published_at = ? WHERE id = ?",
+                (normalized, item_id),
+            )
 
 
 def migrate_news_item_discussion_url(conn: sqlite3.Connection) -> None:
@@ -196,12 +228,27 @@ def source_name_from_url(url: str) -> str:
     return hostname.replace("www.", "").replace(".com", "").replace(".", " ").title()
 
 
+def default_source_record(record: object) -> tuple[str, str]:
+    if isinstance(record, str):
+        rss_url = record.strip()
+        name = source_name_from_url(rss_url)
+    elif isinstance(record, dict):
+        rss_url = str(record.get("rss_url") or "").strip()
+        name = str(record.get("name") or "").strip() or source_name_from_url(rss_url)
+    else:
+        raise ValueError("default source record must be a URL string or object")
+    if not rss_url:
+        raise ValueError("default source rss_url is required")
+    return name, rss_url
+
+
 def seed_default_sources(
     conn: sqlite3.Connection,
     fixture_path: Path = DEFAULT_SOURCES_PATH,
 ) -> None:
     payload = json.loads(fixture_path.read_text())
-    for index, rss_url in enumerate(payload["sources"], start=1):
+    for index, record in enumerate(payload["sources"], start=1):
+        name, rss_url = default_source_record(record)
         conn.execute(
             """
             INSERT OR IGNORE INTO source (
@@ -210,7 +257,7 @@ def seed_default_sources(
             VALUES (?, ?, 1, NULL, 'twice_daily', ?)
             """,
             (
-                source_name_from_url(rss_url),
+                name,
                 rss_url,
                 f"2026-06-28T06:{index:02d}:00Z",
             ),

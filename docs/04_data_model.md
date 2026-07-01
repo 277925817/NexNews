@@ -24,10 +24,11 @@ MVP 遵守单真相原则：
 
 `pipeline_state` only represents data acquisition stage, NOT business readiness or translation state.
 
-翻译不进入 `pipeline_state`，翻译结果由字段事实判断：
+翻译不进入 `pipeline_state`，翻译结果由字段事实和 API 投影规则共同判断：
 
 - 已翻译：`title_zh`、`summary_zh`、`content_zh` 有值。
 - 未翻译：中文字段为空。
+- live 原文兜底：当 live LLM 不可用时，系统可暂存原文标题、RSS 摘要和原文内容作为展示候选事实；这不是翻译成功，API 必须将其投影为 `untranslated` 并禁止返回 `summary_zh` / `content_zh`。
 - 翻译失败：列表查询使用 `has_translate_failed = 1`；最终处理事实以 `processing_log` 为准。
 
 可展示数据事实：
@@ -36,6 +37,7 @@ MVP 遵守单真相原则：
 - 可展示：`is_selected = 1 AND (content_full IS NOT NULL OR content_raw IS NOT NULL)`。
 - 已翻译：`title_zh`、`summary_zh`、`content_zh` 有值。
 - 翻译失败缓存：`has_translate_failed = 1`。
+- live 原文兜底可展示，但不得被 API/UI 视为 `translated`。
 
 ## 2. Core Tables（核心数据表）
 
@@ -104,6 +106,7 @@ Translation rules:
 - `processing_log` is the source of truth for translation status.
 - `has_translate_failed` is a derived cache field from `processing_log`。
 - 翻译成功时写入 `title_zh`、`summary_zh`、`content_zh`，并设置 `has_translate_failed = 0`。
+- live LLM 禁用或不可用时，原文兜底写入不得代表翻译成功；`processing_log(stage = translate)` 必须记录为兜底原因而非成功翻译，API projection 必须依据原文兜底匹配规则返回 `untranslated`。
 - 翻译失败时不写入中文字段，并设置 `has_translate_failed = 1`。
 - 翻译失败原因只写入 `processing_log`。
 - 不保存 `translation_status`。
@@ -116,6 +119,7 @@ UI projection:
 - UI `content_zh` 来自 `content_zh`。
 - UI/API `original_url` 来自 `news_item.original_url`。
 - `discussion_url` 是内部字段，当前不进入 UI/API DTO。
+- API 必须先按 `docs/05_api_contract.md#3.1` 推导 `NewsStatus`；只有 `status = translated` 时才允许把 `summary_zh` / `content_zh` 暴露给 UI。
 
 ### 2.2 Source
 

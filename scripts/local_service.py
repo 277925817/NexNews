@@ -24,6 +24,28 @@ LOG_PATH = RUN_DIR / "service.log"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8010
 HEALTH_TIMEOUT_SECONDS = 30
+LOCAL_ACCEPTANCE_ENV_DEFAULTS = {
+    "RSS_RUNTIME_MODE": "live",
+    "RSS_ALLOW_LIVE_NETWORK": "1",
+    "RSS_FETCH_LIVE_ARTICLES": "1",
+    "RSS_HTTP_TIMEOUT_SECONDS": "12",
+    "RSS_HTTP_RETRY_COUNT": "2",
+    "RSS_HTTP_RETRY_BACKOFF_SECONDS": "0.5",
+    "RSS_LIVE_RSS_CONCURRENCY": "23",
+    "RSS_LIVE_LLM_MAX_ITEMS": "3",
+    "RSS_LIVE_LLM_CONCURRENCY": "3",
+    "RSS_LIVE_LLM_TIMEOUT_SECONDS": "20",
+    "RSS_LIVE_LLM_RETRY_COUNT": "0",
+    "RSS_LIVE_LLM_MAX_SCORE_ITEMS": "3",
+    "RSS_LIVE_LLM_SCORE_CONCURRENCY": "3",
+}
+
+
+def local_acceptance_environment(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(base_env or os.environ)
+    for key, value in LOCAL_ACCEPTANCE_ENV_DEFAULTS.items():
+        env.setdefault(key, value)
+    return env
 
 
 def read_pid(path: Path) -> int | None:
@@ -162,6 +184,7 @@ def start_service(args: argparse.Namespace) -> int:
             stdout=log_file,
             stderr=log_file,
             start_new_session=True,
+            env=local_acceptance_environment(),
         )
     write_pid(SUPERVISOR_PID_PATH, process.pid)
 
@@ -246,6 +269,7 @@ def run_supervisor(args: argparse.Namespace) -> int:
                     cwd=ROOT_DIR,
                     stdout=log_file,
                     stderr=log_file,
+                    env=local_acceptance_environment(),
                 )
             write_pid(APP_PID_PATH, child.pid)
 

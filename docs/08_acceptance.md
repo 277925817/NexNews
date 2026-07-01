@@ -200,7 +200,7 @@ isolation: strict_mock
 | PRD coverage evidence | Every acceptance statement from `docs/01_prd.md` mapped to stable PRD id、source line、task id、acceptance gate、assertion id、stage、report path and pass/fail status。 |
 | Task acceptance coverage evidence | Every acceptance criterion from `tasks.md` mapped to task id、source line、assertion id、stage、report path and pass/fail status。 |
 | Deployed browser smoke evidence | `http://127.0.0.1:8010/` live runtime result、HTTP status、API status、root mount count、NewsCard count、HighScoreList count、computed body/app background colors、ArticleView result、Sources page result、refresh result、console/page errors、runtime mode、live RSS/article/LLM configuration facts and screenshot artifact。 |
-| Local user acceptance evidence | Local URL、port、database、deployed browser smoke result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
+| Local user acceptance evidence | Local URL、port、database、deployed browser smoke result、Top 100 high-score translation backfill result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
 
 Codex 不得把“看起来正常”“页面能打开”“日志没有明显错误”作为验收证据。
 
@@ -477,7 +477,7 @@ Evaluation rule:
 - `prd_coverage_status = PASS` requires `reports/acceptance/prd_coverage.json` to exist, match `schemas/prd_coverage.schema.json`, use `schema_ref = 07_test_spec.md#6.3.1`, report `status = passed`, map every PRD acceptance item to stable PRD id、source line、passed task id、acceptance gate、assertion id and report path, and contain no uncovered PRD acceptance item.
 - `task_acceptance_coverage_status = PASS` requires `reports/acceptance/task_acceptance_coverage.json` to exist, match `schemas/task_acceptance_coverage.schema.json`, report `status = passed`, and contain no uncovered task acceptance item.
 - `browser_e2e_status = PASS` requires structured browser or DOM-capable E2E evidence for homepage news feed, 30-day high-score list, news detail, and sources management. API-only evidence cannot satisfy this input.
-- `local_user_acceptance_status = PASS` requires `reports/acceptance/deployed_browser_smoke.json` to exist, target `http://127.0.0.1:8010/`, prove the deployed app mounts in a real browser with zero console/page errors and visible Home/HighScore/Article/Sources/Refresh surfaces, prove runtime mode is live with real RSS/article fetch/LLM scoring/LLM translation enabled, and requires `reports/acceptance/local_user_acceptance.json` to exist, match `schemas/local_user_acceptance.schema.json`, report `status = passed`, and contain no failed findings.
+- `local_user_acceptance_status = PASS` requires `reports/acceptance/deployed_browser_smoke.json` to exist, target `http://127.0.0.1:8010/`, prove the deployed app mounts in a real browser with zero console/page errors and visible Home/HighScore/Article/Sources/Refresh surfaces, prove runtime mode is live with real RSS/article fetch/LLM scoring/LLM translation enabled, and requires `reports/acceptance/local_user_acceptance.json` to exist, match `schemas/local_user_acceptance.schema.json`, report `status = passed`, include evidence that the local SQLite Top 100 high-score displayable news backfill has `top_translated_count >= 100`, and contain no failed findings.
 
 ### 5.1 StopDecisionReport
 

@@ -21,6 +21,7 @@
 - 本地长期服务供人工验收时必须默认注入 live runtime：`RSS_RUNTIME_MODE=live`、`RSS_ALLOW_LIVE_NETWORK=1`、`RSS_FETCH_LIVE_ARTICLES=1`；不得在未显式说明的情况下使用 fixture RSS、article fixture、LLM mock 或 fixed clock。
 - 本地长期服务的 refresh 全流程必须使用真实数据源：真实 RSS 抓取、真实网页正文抓取、`.env` / 环境变量中的真实 LLM scoring、真实 LLM translation 和本地 SQLite 运行库。
 - 本地长期服务为保持人工验收响应性，默认只做小批量真实 LLM 工作：`RSS_LIVE_LLM_MAX_ITEMS=3`、`RSS_LIVE_LLM_MAX_SCORE_ITEMS=3`、`RSS_LIVE_LLM_TIMEOUT_SECONDS=20`、`RSS_LIVE_LLM_RETRY_COUNT=0`；需要批量追赶积压时可显式覆盖这些环境变量。
+- 本地人工验收前必须运行 `python3 scripts/backfill_top_translations.py --target 100` 或等价命令，使用 `.env` / 环境变量中的真实 LLM，把当前本地 SQLite 中按 `score DESC, published_at DESC, id DESC` 排序的前 100 条已抓取可展示新闻补成真实中文翻译；该命令只属于 live local acceptance 预处理，不得作为 strict-mock gate 证据。
 - Vite dev server 只允许用于开发调试，不得作为本地长期验收服务；否则 shell/terminal 结束会导致 8010 失效。
 - 本地长期服务的 PID 和日志必须写入 `.local/rss-service/`，该目录不得进入版本控制。
 - live 运行时允许从进程环境或仓库根目录 `.env` 读取 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；密钥不得写入日志、报告、API 响应或前端产物。

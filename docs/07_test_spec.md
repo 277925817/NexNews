@@ -47,6 +47,7 @@ isolation: strict_mock
 - 测试框架可以使用真实时间实现进程调度、超时和耗时统计，但不得把真实时间作为业务断言输入。
 - 任一测试无法证明其输入来自 fixture、mock 或 fixed clock 时，测试结果必须判定为 failed 或 blocked。
 - `http://127.0.0.1:8010/` 本地人工验收服务不属于 fixture/mock 测试运行；它必须以 live runtime 运行真实 RSS、真实网页正文抓取和真实 LLM scoring/translation。该 live 结果只能作为 local user acceptance 输入，不能替代 strict-mock stage/gate 证据。
+- 记录 local user acceptance 前必须先运行 Top 100 高分新闻补翻预处理，证明本地 SQLite 中按 `score DESC, published_at DESC, id DESC` 排序的前 100 条已抓取可展示新闻均为真实中文翻译；该证明只能进入 local user acceptance evidence，不能替代任何自动 gate。
 
 ## 2. 测试分层
 

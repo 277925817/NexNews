@@ -10,6 +10,7 @@ from backend.app.services.trigger import run_manual_refresh, run_scheduled_refre
 from backend.app.services.pipeline import (
     build_scoring_request,
     build_translation_request,
+    backfill_top_scored_translations,
     fetch_selected_content,
     has_valid_translation_record,
     ingest_fixture_rss,
@@ -26,6 +27,7 @@ from backend.app.services.pipeline import (
     selected_fetch_candidates,
     score_is_selected,
     translate_fetched_content,
+    top_scored_fetched_news_for_translation,
     translation_records,
 )
 
@@ -1245,6 +1247,147 @@ def test_live_pipeline_limits_live_llm_translation_batch(monkeypatch):
     assert len(scoring_requests) == 2
     assert len(translation_requests) == 1
     assert [row["rss_guid"] for row in translated_rows] == ["live-agents-production-two"]
+
+
+def test_backfill_top_scored_translations_prioritizes_top_target(monkeypatch, tmp_path):
+    from backend.app.services import pipeline
+
+    db_path = tmp_path / "rss.sqlite3"
+    conn = connect(str(db_path))
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Live AI Source', 'https://live.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    source_id = conn.execute("SELECT id FROM source").fetchone()["id"]
+
+    def insert_fetched_item(
+        guid: str,
+        title: str,
+        score: int,
+        published_at: str,
+        *,
+        translated: bool = False,
+        fallback: bool = False,
+    ) -> None:
+        content_raw = f"{title} raw RSS summary"
+        content_full = f"{title} full article text"
+        if translated:
+            title_zh = f"{title} 中文标题"
+            summary_zh = f"{title} 中文摘要"
+            content_zh = f"{title} 中文正文第一段。\n\n{title} 中文正文第二段。"
+        elif fallback:
+            title_zh = title
+            summary_zh = content_raw
+            content_zh = content_full
+        else:
+            title_zh = None
+            summary_zh = None
+            content_zh = None
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url,
+              original_title, published_at, score, pipeline_state,
+              is_selected, content_raw, content_full, title_zh,
+              summary_zh, content_zh, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'fetched', 1, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                guid,
+                f"https://live.example/{guid}",
+                f"https://live.example/{guid}",
+                title,
+                published_at,
+                score,
+                content_raw,
+                content_full,
+                title_zh,
+                summary_zh,
+                content_zh,
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:00Z",
+            ),
+        )
+
+    insert_fetched_item("score-100-fallback", "Top fallback", 100, "2026-07-01T00:03:00Z", fallback=True)
+    insert_fetched_item("score-95-translated", "Already translated", 95, "2026-07-01T00:02:00Z", translated=True)
+    insert_fetched_item("score-90-missing", "Missing translation", 90, "2026-07-01T00:01:00Z")
+    insert_fetched_item("score-80-outside", "Outside top target", 80, "2026-07-01T00:00:00Z", fallback=True)
+    conn.commit()
+
+    translation_requests = []
+
+    def fake_request_live_translation(request, **_kwargs):
+        translation_requests.append(request)
+        return {
+            "title_zh": f"{request['original_title']} 中文补翻",
+            "summary_zh": "评分优先补翻返回中文摘要，证明 Top 目标内的未翻译项会被处理。",
+            "content_zh": "评分优先补翻返回中文正文第一段。\n\n评分优先补翻返回中文正文第二段。",
+            "category_zh": "产品",
+        }, None
+
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+
+    before_rows = top_scored_fetched_news_for_translation(conn, target_count=3)
+    result = backfill_top_scored_translations(
+        conn,
+        target_count=3,
+        now="2026-07-01T00:10:00Z",
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_timeout_seconds=1,
+        live_llm_retry_count=0,
+        live_llm_concurrency=2,
+    )
+    rows = conn.execute(
+        """
+        SELECT rss_guid, title_zh, summary_zh, content_zh
+        FROM news_item
+        ORDER BY score DESC
+        """
+    ).fetchall()
+
+    assert [row["rss_guid"] for row in before_rows] == [
+        "score-100-fallback",
+        "score-95-translated",
+        "score-90-missing",
+    ]
+    assert [request["original_title"] for request in translation_requests] == [
+        "Top fallback",
+        "Missing translation",
+    ]
+    assert result["requested_count"] == 2
+    assert result["translated_count"] == 2
+    assert result["top_translated_count"] == 3
+    assert result["top_untranslated_count"] == 0
+    assert rows[1]["title_zh"] == "Already translated 中文标题"
+    assert rows[3]["title_zh"] == "Outside top target"
+    assert rows[3]["summary_zh"] == "Outside top target raw RSS summary"
+    assert rows[3]["content_zh"] == "Outside top target full article text"
+    conn.close()
+
+    persisted_conn = connect(str(db_path))
+    persisted_top_rows = top_scored_fetched_news_for_translation(persisted_conn, target_count=3)
+    try:
+        assert all(
+            row["title_zh"]
+            and row["summary_zh"]
+            and row["content_zh"]
+            and not (
+                row["title_zh"] == row["original_title"]
+                and row["summary_zh"] == row["content_raw"]
+                and row["content_zh"] == (row["content_full"] or row["content_raw"])
+            )
+            for row in persisted_top_rows
+        )
+    finally:
+        persisted_conn.close()
 
 
 def test_live_pipeline_skips_translation_when_live_llm_is_rate_limited_during_scoring(monkeypatch):

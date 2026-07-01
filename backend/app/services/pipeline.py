@@ -1229,6 +1229,35 @@ def fetched_news_for_translation(conn: sqlite3.Connection) -> list[dict[str, obj
     ).fetchall()
 
 
+def top_scored_fetched_news_for_translation(
+    conn: sqlite3.Connection,
+    *,
+    target_count: int,
+) -> list[dict[str, object]]:
+    limit_clause = "LIMIT ?" if target_count > 0 else ""
+    params: tuple[object, ...] = (target_count,) if target_count > 0 else ()
+    return conn.execute(
+        f"""
+        SELECT
+          news_item.id, news_item.rss_guid, news_item.original_title,
+          news_item.content_raw, news_item.content_full, news_item.score,
+          news_item.title_zh, news_item.summary_zh, news_item.content_zh,
+          news_item.has_translate_failed,
+          source.name AS source_name,
+          news_item.published_at
+        FROM news_item
+        JOIN source ON source.id = news_item.source_id
+        WHERE news_item.pipeline_state = 'fetched'
+          AND news_item.is_selected = 1
+          AND news_item.score IS NOT NULL
+          AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
+        ORDER BY news_item.score DESC, news_item.published_at DESC, news_item.id DESC
+        {limit_clause}
+        """,
+        params,
+    ).fetchall()
+
+
 def is_original_fallback_translation(row: dict[str, object]) -> bool:
     fallback_content = row["content_full"] or row["content_raw"]
     return bool(
@@ -1489,6 +1518,56 @@ def translate_live_fetched_content(
     result = write_live_translation_results(conn, translated_rows, now=now)
     result["pending_count"] = pending_count
     conn.commit()
+    return result
+
+
+def backfill_top_scored_translations(
+    conn: sqlite3.Connection,
+    *,
+    target_count: int,
+    now: str,
+    live_llm_base_url: str | None,
+    live_llm_api_key: str | None,
+    live_llm_model: str | None,
+    live_llm_timeout_seconds: float,
+    live_llm_retry_count: int,
+    live_llm_concurrency: int,
+) -> dict[str, int]:
+    target_rows = top_scored_fetched_news_for_translation(
+        conn,
+        target_count=target_count,
+    )
+    pending_rows = [
+        row for row in target_rows if not has_complete_non_fallback_translation(row)
+    ]
+    translated_rows = request_live_translation_rows(
+        pending_rows,
+        base_url=live_llm_base_url,
+        api_key=live_llm_api_key,
+        model=live_llm_model,
+        timeout_seconds=live_llm_timeout_seconds,
+        retry_count=live_llm_retry_count,
+        concurrency=live_llm_concurrency,
+    )
+    result = write_live_translation_results(conn, translated_rows, now=now)
+    conn.commit()
+    updated_target_rows = top_scored_fetched_news_for_translation(
+        conn,
+        target_count=target_count,
+    )
+    result.update(
+        {
+            "target_count": target_count,
+            "top_item_count": len(updated_target_rows),
+            "requested_count": len(pending_rows),
+            "top_translated_count": sum(
+                1 for row in updated_target_rows if has_complete_non_fallback_translation(row)
+            ),
+            "top_untranslated_count": sum(
+                1 for row in updated_target_rows if not has_complete_non_fallback_translation(row)
+            ),
+        }
+    )
     return result
 
 

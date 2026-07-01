@@ -97,11 +97,14 @@ schemas/
   task_acceptance_coverage.schema.json
   local_user_acceptance.schema.json
 scripts/
-  run_harness.py
+  run_harness.py             # Thin workflow command adapter
+  harness/                   # Harness executor, report, catalog, acceptance and observability internals
+  harness_inspect.py         # Local diagnostic query CLI over structured harness evidence
 reports/
   stages/
   tasks/
   acceptance/
+  observability/
 ```
 
 Existing legacy root files may remain only until their owning bootstrap task removes them from the active MVP runtime. New MVP runtime code must land in the target directories above.
@@ -118,4 +121,6 @@ Existing legacy root files may remain only until their owning bootstrap task rem
 - `frontend/src/pages/` may load data and compose final UI units, but must not derive pipeline state or map database fields.
 - `frontend/src/components/` contains only the final units listed in `docs/03_ui_spec.md`; component sub-units such as `NewsCardHeader` are out of scope.
 - `schemas/` defines machine-checkable report and task contracts consumed by the harness; schema changes must be reflected in `docs/07_test_spec.md` or `workflows.md`.
+- `scripts/run_harness.py` owns only the workflow command adapter. Harness implementation modules under `scripts/harness/` may create internal observability artifacts for diagnosis, but those artifacts do not define new completion rules.
 - `reports/stages/` contains product-stage evidence for `static` through `e2e` only. Acceptance gate evidence lives under `reports/acceptance/` and must not be treated as a product-stage substitute.
+- `reports/observability/` contains local harness diagnostic events, metrics, traces and indexes derived from structured reports. It is not a product public API and must not expose `processing_log` through `/api/*`.

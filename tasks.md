@@ -1566,7 +1566,7 @@ dag:
       type: ["docs", "backend", "data", "test"]
       status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/04_data_model.md", "docs/05_api_contract.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
-      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-005", "ACC-STOP-009"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-009", "ACC-STOP-010"]
       priority: "prd_core_flow_gaps"
       test_scope: ["unit", "integration", "api"]
       active_state: "none"

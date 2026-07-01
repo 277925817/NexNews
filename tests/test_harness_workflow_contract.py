@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def load_harness_module():
     spec = importlib.util.spec_from_file_location(
-        "run_harness",
-        ROOT / "scripts" / "run_harness.py",
+        "harness_executor",
+        ROOT / "scripts" / "harness" / "executor.py",
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -23,7 +23,7 @@ def load_harness_module():
 
 
 def test_task_026a_harness_helpers_follow_function_line_limit():
-    source = (ROOT / "scripts" / "run_harness.py").read_text()
+    source = (ROOT / "scripts" / "harness" / "executor.py").read_text()
     module = ast.parse(source)
     target_names = {"sample_round_summary_report", "run_task_026a_static"}
     function_lengths = {
@@ -37,7 +37,7 @@ def test_task_026a_harness_helpers_follow_function_line_limit():
 
 
 def test_task_026b_harness_owner_follows_function_line_limit():
-    source = (ROOT / "scripts" / "run_harness.py").read_text()
+    source = (ROOT / "scripts" / "harness" / "executor.py").read_text()
     module = ast.parse(source)
     target_names = {"run_task_026b_unit"}
     function_lengths = {
@@ -48,6 +48,146 @@ def test_task_026b_harness_owner_follows_function_line_limit():
 
     assert function_lengths.keys() == target_names
     assert all(length <= 60 for length in function_lengths.values()), function_lengths
+
+
+def test_run_harness_entrypoint_is_thin_cli_adapter():
+    source = (ROOT / "scripts" / "run_harness.py").read_text()
+    assert len(source.splitlines()) <= 300
+    assert "scripts.harness.executor" in source
+    assert "argparse" in source
+
+
+def test_observability_artifacts_are_written_with_test_reports(tmp_path):
+    report_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_harness.py",
+            "--stage",
+            "unit",
+            "--report-dir",
+            str(report_dir),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    report = json.loads((report_dir / "stages" / "unit.json").read_text())
+    events_path = report_dir / "observability" / "events.jsonl"
+    metrics_path = report_dir / "observability" / "metrics.json"
+    traces_path = report_dir / "observability" / "traces.jsonl"
+    index_path = report_dir / "observability" / "index.json"
+
+    assert result.returncode == 0, report
+    assert events_path.exists()
+    assert metrics_path.exists()
+    assert traces_path.exists()
+    assert index_path.exists()
+    assert "observability/events.jsonl" in report["artifact_paths"]
+    assert "observability/metrics.json" in report["artifact_paths"]
+    event = json.loads(events_path.read_text().splitlines()[0])
+    assert set(event) == {
+        "run_id",
+        "timestamp",
+        "event",
+        "trace_id",
+        "stage",
+        "task_id",
+        "gate",
+        "assertion_id",
+        "node",
+        "status",
+        "failure_type",
+        "error_category",
+        "referenced_files",
+        "artifact_paths",
+        "safe_context",
+    }
+    metrics = json.loads(metrics_path.read_text())
+    assert metrics["reports_by_stage_status"]["unit"]["passed"] == 1
+
+
+def test_harness_inspect_failures_reports_failed_assertions(tmp_path):
+    report_dir = tmp_path / "reports"
+    stage_dir = report_dir / "stages"
+    stage_dir.mkdir(parents=True)
+    failed_report = {
+        "schema_ref": "07_test_spec.md#6",
+        "schema_version": "v2",
+        "test_id": "diagnostic-api-regression",
+        "stage": "api",
+        "status": "failed",
+        "failure_type": "api",
+        "error_category": "validation",
+        "trace_id": "inspect-trace-1",
+        "fixture_set": "mvp_acceptance_fixture@v1",
+        "mock_set": "mvp_mock@v2_ai_value_filter",
+        "clock_source": "fixed_clock_fixture@v1",
+        "fixture_version": "mvp_acceptance_fixture@v1",
+        "mock_version": "mvp_mock@v2_ai_value_filter",
+        "commands": ["python3 scripts/run_harness.py --stage api --report-dir reports"],
+        "case_count": 1,
+        "passed_count": 0,
+        "failed_count": 1,
+        "skipped_count": 0,
+        "pass_rate": 0,
+        "failure_reasons": ["A-api-ACC-STOP-004-refresh-contract"],
+        "repair_status": "unresolved",
+        "regression_detected": True,
+        "referenced_files": ["backend/app/main.py"],
+        "data_hash": "sha256:" + "0" * 64,
+        "artifact_paths": ["stages/api.json"],
+        "assertions": [
+            {
+                "id": "A-api-ACC-STOP-004-refresh-contract",
+                "type": "api_response",
+                "visibility": "public_surface",
+                "status": "failed",
+                "expected": {"status": 200},
+                "actual": {"status": 500},
+                "diff": {"status": "500 != 200"},
+                "leak_detection": {
+                    "method": "structured_field_scan",
+                    "target": "api_json",
+                    "forbidden_field_count": 0,
+                    "sensitive_content_count": 0,
+                    "matched_paths": [],
+                },
+            }
+        ],
+        "expected": {"status": 200},
+        "actual": {"status": 500},
+        "diff": {"status": "500 != 200"},
+        "node": "API",
+        "timestamp": "2026-06-28T09:00:00Z",
+    }
+    (stage_dir / "api.json").write_text(json.dumps(failed_report))
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/harness_inspect.py",
+            "--report-dir",
+            str(report_dir),
+            "failures",
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failures"][0]["assertion_id"] == "A-api-ACC-STOP-004-refresh-contract"
+    assert payload["failures"][0]["trace_id"] == "inspect-trace-1"
+    assert payload["failures"][0]["rerun_command"] == (
+        f"{sys.executable} scripts/run_harness.py --stage api --report-dir {report_dir}"
+    )
 
 
 def test_full_unit_stage_materializes_without_synthetic_report(tmp_path):
@@ -624,7 +764,7 @@ def test_coverage_schemas_reject_passed_reports_with_uncovered_items():
         "schema_ref": "07_test_spec.md#6.4",
         "schema_version": "v1",
         "status": "passed",
-        "source": {"path": "tasks.md", "version": "tasks_mvp@v8"},
+        "source": {"path": "tasks.md", "version": "tasks_mvp@v10"},
         "coverage_items": [
             {
                 "id": "TASK-026B:AC-001",
@@ -643,6 +783,162 @@ def test_coverage_schemas_reject_passed_reports_with_uncovered_items():
         "timestamp": "2026-06-28T09:00:00Z",
     }
     assert list(task_validator.iter_errors(task_report))
+
+
+def test_task_acceptance_coverage_rejects_task_scoped_assertion_ids(tmp_path, monkeypatch):
+    harness = load_harness_module()
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    monkeypatch.setattr(
+        harness,
+        "task_acceptance_inventory",
+        lambda: [
+            {
+                "id": "TASK-999:AC-001",
+                "task_id": "TASK-999",
+                "source_path": "tasks.md",
+                "source_line": 1,
+                "acceptance_text": "Task-scoped evidence must not satisfy final stop coverage.",
+                "acceptance_gate": ["ACC-STOP-003"],
+                "test_scope": ["unit"],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        harness,
+        "traceability_assertions_by_owner",
+        lambda: {"TASK-999": ["task-999-unit-local-only"]},
+    )
+    monkeypatch.setattr(
+        harness,
+        "TASK_FALLBACK_ASSERTION_MAP",
+        {"TASK-999": ["task-999-unit-local-only"]},
+    )
+
+    harness.ensure_task_acceptance_coverage_report(report_dir)
+    coverage = json.loads(
+        (report_dir / "acceptance" / "task_acceptance_coverage.json").read_text()
+    )
+
+    assert coverage["status"] == "failed"
+    assert coverage["coverage_items"][0]["assertion_ids"] == ["unmapped"]
+    assert coverage["uncovered_task_acceptance_items"][0]["id"] == "TASK-999:AC-001"
+
+
+def test_ai_value_tasks_have_full_stage_traceability():
+    harness = load_harness_module()
+    by_owner = harness.traceability_assertions_by_owner()
+
+    expected_by_task = {
+        "TASK-036": {
+            "A-static-ACC-STOP-010-ai-value-doc-sync",
+            "A-unit-ACC-STOP-007-ai-value-scoring-schema",
+            "A-unit-ACC-STOP-003-ai-value-selection-thresholds",
+            "A-integration-ACC-STOP-003-ai-value-filtering",
+            "A-api-ACC-STOP-004-ai-value-home-surface",
+            "A-api-ACC-STOP-009-ai-value-field-leak-scan",
+        },
+        "TASK-037": {
+            "A-unit-ACC-STOP-007-ai-value-rubric",
+            "A-integration-ACC-STOP-003-ai-value-fallback",
+        },
+    }
+
+    for task_id, expected_ids in expected_by_task.items():
+        actual_ids = set(by_owner.get(task_id, [])) | set(
+            harness.TASK_FALLBACK_ASSERTION_MAP.get(task_id, [])
+        )
+        assert expected_ids <= actual_ids
+        assert all(assertion_id.startswith("A-") for assertion_id in actual_ids)
+
+
+def test_round_count_policy_reports_missing_lifecycle_evidence_by_task(monkeypatch):
+    harness = load_harness_module()
+    payload = {
+        "dag": {
+            "nodes": [
+                {
+                    "id": "TASK-999",
+                    "status": "passed",
+                    "summary_report": "reports/tasks/TASK-999/summary.json",
+                }
+            ]
+        }
+    }
+    monkeypatch.setattr(harness, "read_yaml_object", lambda path: (payload, []))
+    monkeypatch.setattr(
+        harness,
+        "round_evidence_for_summary",
+        lambda task_id, summary_report: {
+            "task_id": task_id,
+            "summary_report": summary_report,
+            "valid": False,
+            "failure_reasons": [
+                "fix_optimize:reports/tasks/TASK-999/fix_optimize.json:missing",
+                "review:reports/tasks/TASK-999/review.json:missing",
+                "summary:reports/tasks/TASK-999/summary.json:missing",
+            ],
+        },
+    )
+
+    policy = harness.round_count_policy_evidence(
+        all_gates_passed=True,
+        all_stop_inputs_passed=True,
+        unfinished_tasks=[],
+    )
+
+    assert policy["status"] == "FAIL"
+    assert "round_count:TASK-999:fix_optimize:reports/tasks/TASK-999/fix_optimize.json:missing" in policy["failure_reasons"]
+    assert "round_count:TASK-999:review:reports/tasks/TASK-999/review.json:missing" in policy["failure_reasons"]
+    assert "round_count:TASK-999:summary:reports/tasks/TASK-999/summary.json:missing" in policy["failure_reasons"]
+
+
+def test_task_acceptance_coverage_evidence_groups_failures_by_task(tmp_path):
+    harness = load_harness_module()
+    report_dir = tmp_path / "reports"
+    path = report_dir / "acceptance" / "task_acceptance_coverage.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_ref": "07_test_spec.md#6.4",
+                "schema_version": "v1",
+                "status": "failed",
+                "source": {"path": "tasks.md", "version": "tasks_mvp@v10"},
+                "coverage_items": [
+                    {
+                        "id": "TASK-999:AC-001",
+                        "task_id": "TASK-999",
+                        "source_path": "tasks.md",
+                        "source_line": 1,
+                        "acceptance_text": "example",
+                        "acceptance_gate": ["ACC-STOP-003"],
+                        "test_scope": ["unit"],
+                        "assertion_ids": ["unmapped"],
+                        "report_paths": ["reports/acceptance/ACC-STOP-001.json"],
+                        "status": "uncovered",
+                    }
+                ],
+                "uncovered_task_acceptance_items": [
+                    {
+                        "id": "TASK-999:AC-001",
+                        "task_id": "TASK-999",
+                        "source_path": "tasks.md",
+                        "source_line": 1,
+                        "acceptance_text": "example",
+                        "acceptance_gate": ["ACC-STOP-003"],
+                        "test_scope": ["unit"],
+                    }
+                ],
+                "timestamp": "2026-06-28T09:00:00Z",
+            }
+        )
+    )
+
+    evidence = harness.task_acceptance_coverage_evidence(report_dir)
+
+    assert "task_acceptance_coverage:TASK-999:failed=TASK-999:AC-001" in evidence["issues"]
+    assert "task_acceptance_coverage:TASK-999:uncovered=TASK-999:AC-001" in evidence["issues"]
 
 
 def test_task_scoped_hardening_commands_pass(tmp_path):

@@ -216,6 +216,9 @@ isolation: strict_mock
 - Stage failure must stop downstream execution。
 - No shared global state across stages。
 - Any stage with behavior-only evidence and no mandatory assertion must still emit at least one `report_metadata` assertion in its `TestReport`; prose-only non-assertion evidence is not a valid report.
+- `pytest.ini` markers mirror the stage names plus `harness` and `advisory`; marker selection is a developer convenience and cannot replace `scripts/run_harness.py --stage ...` reports.
+- GitHub Actions may run `pytest` and fast harness stages as a PR warning gate, but external CI cannot satisfy `STOP_ALLOWED` or any local acceptance stop input.
+- Advisory evals such as AI news quality or source health checks are non-blocking unless a later task explicitly promotes them into documented `strict_mock` assertions.
 
 ### 2.14 Assertion Hierarchy
 - Failure priority: Static rule violation → Contract violation → Data model violation → Data leakage violation → Replay inconsistency → API behavior mismatch → Integration mismatch → Snapshot diff → UI visual regression。
@@ -249,6 +252,7 @@ Rules:
 - Every mandatory catalog row below MUST appear in at least one full-stage or ACC-STOP report before `STOP_ALLOWED = true`.
 - A mandatory assertion is covered only when an assertion with the exact `id` appears with `status = passed`, non-empty `expected`, non-empty `actual`, parseable `diff`, and correct `visibility`.
 - Task-scoped reports may prove task progress but cannot replace full-stage mandatory assertion coverage.
+- Final task acceptance coverage may only be satisfied by full-stage or ACC-STOP assertion ids that match `A-<stage>-ACC-STOP-*`; task-local ids such as `task-036-*` are progress evidence only and must be treated as unmapped for final stop eligibility.
 - Task-scoped reports MUST execute only the mandatory assertion IDs that belong to the current task/stage scope; missing out-of-scope mandatory IDs fail only full-stage materialization or workflow acceptance.
 - Each required `ACC-STOP-*` gate MUST have at least one mandatory assertion row in this catalog.
 - Acceptance MUST fail `ACC-STOP-001` when any mandatory assertion ID is missing, skipped, flaky, failed, duplicated with conflicting results, or attached to the wrong stage.
@@ -296,6 +300,14 @@ Mandatory catalog:
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | integration | ACC-STOP-003 | internal_evidence | A fetched item using RSS summary fallback produces non-empty Chinese summary and content through translation. |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | integration | ACC-STOP-003 | internal_evidence | Translation failure does not write partial Chinese fields and does not block other items. |
 | `A-integration-ACC-STOP-003-translation-quality-fixtures` | integration | ACC-STOP-003 | public_surface | Deterministic translation fixtures produce article-specific summaries and readable Chinese bodies without placeholder text while preserving one failed and one ready detail sample. |
+| `A-static-ACC-STOP-010-ai-value-doc-sync` | static | ACC-STOP-010 | report_metadata | AI value filtering and rubric docs remain synchronized across PRD, architecture, data, API, dev, test and acceptance truth sources. |
+| `A-unit-ACC-STOP-007-ai-value-scoring-schema` | unit | ACC-STOP-007 | internal_evidence | AI scoring validation rejects missing `is_ai_news`, `ai_relevance_score`, `score` or `reason` fields. |
+| `A-unit-ACC-STOP-003-ai-value-selection-thresholds` | unit | ACC-STOP-003 | internal_evidence | AI value selection thresholds require `is_ai_news = true`, `ai_relevance_score >= 70` and `score >= 75`. |
+| `A-integration-ACC-STOP-003-ai-value-filtering` | integration | ACC-STOP-003 | internal_evidence | Fixture pipeline selects only high-value AI items and excludes low-value AI-adjacent and non-AI bait from candidates. |
+| `A-api-ACC-STOP-004-ai-value-home-surface` | api | ACC-STOP-004 | public_surface | Home API exposes only translated high-value AI items after refresh. |
+| `A-api-ACC-STOP-009-ai-value-field-leak-scan` | api | ACC-STOP-009 | public_surface | Home API does not expose internal AI relevance fields or LLM scoring reasons. |
+| `A-unit-ACC-STOP-007-ai-value-rubric` | unit | ACC-STOP-007 | internal_evidence | Live scoring prompt and local fallback encode the AI value rubric and score caps. |
+| `A-integration-ACC-STOP-003-ai-value-fallback` | integration | ACC-STOP-003 | internal_evidence | Local fallback scoring selects only the high-value AI item when live LLM scoring is disabled. |
 | `A-api-ACC-STOP-004-home-detail-behavior` | api | ACC-STOP-004 | public_surface | Home and detail endpoints enforce sorting, 30-day ranking, translated detail fields and structured 404 behavior. |
 | `A-api-ACC-STOP-004-home-translated-only` | api | ACC-STOP-004 | public_surface | Fixture/mock `GET /api/home` returns only translated news in `latest_news` and `top_ranked_news`; live fallback items are labeled `untranslated`; direct detail routes still expose ready, untranslated and translation_failed states correctly. |
 | `A-api-ACC-STOP-004-home-pagination` | api | ACC-STOP-004 | public_surface | `GET /api/home` paginates `latest_news` with `limit`, `cursor` and `next_cursor`, returns non-overlapping pages in `published_at DESC` order, and leaves `top_ranked_news` unpaginated. |
@@ -385,6 +397,14 @@ Rules:
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-translation-quality-fixtures` | ACC-STOP-003 | TASK-033 | integration | reports/stages/integration.json |
+| `A-static-ACC-STOP-010-ai-value-doc-sync` | ACC-STOP-010 | TASK-036 | static | reports/stages/static.json |
+| `A-unit-ACC-STOP-007-ai-value-scoring-schema` | ACC-STOP-007 | TASK-036 | unit | reports/stages/unit.json |
+| `A-unit-ACC-STOP-003-ai-value-selection-thresholds` | ACC-STOP-003 | TASK-036 | unit | reports/stages/unit.json |
+| `A-integration-ACC-STOP-003-ai-value-filtering` | ACC-STOP-003 | TASK-036 | integration | reports/stages/integration.json |
+| `A-api-ACC-STOP-004-ai-value-home-surface` | ACC-STOP-004 | TASK-036 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-009-ai-value-field-leak-scan` | ACC-STOP-009 | TASK-036 | api | reports/stages/api.json |
+| `A-unit-ACC-STOP-007-ai-value-rubric` | ACC-STOP-007 | TASK-037 | unit | reports/stages/unit.json |
+| `A-integration-ACC-STOP-003-ai-value-fallback` | ACC-STOP-003 | TASK-037 | integration | reports/stages/integration.json |
 | `A-api-ACC-STOP-004-home-detail-behavior` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-home-translated-only` | ACC-STOP-004 | TASK-034 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-home-pagination` | ACC-STOP-004 | TASK-035 | api | reports/stages/api.json |
@@ -842,6 +862,7 @@ Output rules:
 
 - CI MUST persist the full report collection as JSON.
 - Human-readable logs MAY be generated from the structured report, but MUST NOT be the source of truth.
+- Harness MAY persist derived local diagnostic artifacts under `reports/observability/` (`events.jsonl`, `metrics.json`, `traces.jsonl`, `index.json`) and MAY expose them through `scripts/harness_inspect.py`; these artifacts are query aids only and MUST NOT replace required `reports/stages/*`, `reports/acceptance/*`, PRD coverage, task acceptance coverage, browser E2E or local user acceptance evidence.
 - Report fields MUST NOT contain完整 prompt、密钥、token、secret 或超过 `1024` 字符的正文片段。
 - Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url` or `deleted_at`.
 - Report fields with assertion `visibility = internal_evidence` MAY contain internal field names required to prove DB/schema/state facts, but MUST NOT contain raw field values that are full article bodies, full prompts, secrets, or token-like credentials.
@@ -964,7 +985,7 @@ The machine-checkable JSON Schema for this report lives at `schemas/task_accepta
   "status": "failed",
   "source": {
     "path": "tasks.md",
-    "version": "tasks_mvp@v8"
+    "version": "tasks_mvp@v10"
   },
   "coverage_items": [
     {

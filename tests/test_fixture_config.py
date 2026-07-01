@@ -107,6 +107,35 @@ def test_live_runtime_config_loads_llm_settings_from_env_file(monkeypatch, tmp_p
     assert config.live_rss_concurrency == 33
 
 
+def test_live_runtime_config_accepts_current_llm_env_aliases(monkeypatch, tmp_path):
+    from backend.app.core.config import get_live_runtime_config
+
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "LLM_API_KEY=env-file-secret",
+                "LLM_URL=https://apihub.agnes-ai.com/v1/chat/completions",
+                "LLM_MODEL_NAME=agnes-2.0-flash",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_RUNTIME_MODE", "live")
+    monkeypatch.delenv("RSS_ALLOW_LIVE_LLM", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL_NAME", raising=False)
+
+    config = get_live_runtime_config(tmp_path)
+
+    assert config.allow_live_llm is True
+    assert config.llm_api_key == "env-file-secret"
+    assert config.llm_base_url == "https://apihub.agnes-ai.com/v1/chat/completions"
+    assert config.llm_model == "agnes-2.0-flash"
+
+
 def test_local_service_defaults_to_live_real_dependency_runtime():
     from scripts.local_service import local_acceptance_environment
 

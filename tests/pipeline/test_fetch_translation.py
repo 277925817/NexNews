@@ -319,6 +319,15 @@ def test_request_live_llm_supports_anthropic_messages_format(monkeypatch):
     assert translation_call["json"]["messages"][0]["role"] == "user"
     assert translation_call["json"]["max_tokens"] == 4096
 
+
+def test_live_llm_endpoint_keeps_full_chat_completions_url():
+    from backend.app.services.pipeline import live_llm_endpoint
+
+    endpoint = "https://apihub.agnes-ai.com/v1/chat/completions"
+
+    assert live_llm_endpoint(endpoint, anthropic_format=False) == endpoint
+
+
 def test_request_live_translation_uses_direct_network_before_env_proxy(monkeypatch):
     from backend.app.services import pipeline
 

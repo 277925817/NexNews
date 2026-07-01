@@ -1235,8 +1235,11 @@ def uses_anthropic_llm_format(base_url: str | None) -> bool:
 
 
 def live_llm_endpoint(base_url: str, *, anthropic_format: bool) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.lower().endswith(("/chat/completions", "/messages")):
+        return normalized
     suffix = "messages" if anthropic_format else "chat/completions"
-    return f"{base_url.rstrip('/')}/{suffix}"
+    return f"{normalized}/{suffix}"
 
 
 def live_llm_headers(api_key: str, *, anthropic_format: bool) -> dict[str, str]:

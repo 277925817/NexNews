@@ -66,6 +66,18 @@ def _config_value(name: str, env_file_values: dict[str, str]) -> str | None:
     return env_file_values.get(name)
 
 
+def _config_value_any(names: tuple[str, ...], env_file_values: dict[str, str]) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    for name in names:
+        value = env_file_values.get(name)
+        if value is not None:
+            return value
+    return None
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     return _value_bool(value, default)
@@ -127,8 +139,8 @@ def get_live_runtime_config(root: Path | None = None) -> LiveRuntimeConfig:
     env_file_values = _read_env_file(repo_root)
     mode = (_config_value("RSS_RUNTIME_MODE", env_file_values) or "fixture").strip().lower()
     llm_api_key = _config_value("LLM_API_KEY", env_file_values)
-    llm_base_url = _config_value("LLM_BASE_URL", env_file_values)
-    llm_model = _config_value("LLM_MODEL", env_file_values)
+    llm_base_url = _config_value_any(("LLM_BASE_URL", "LLM_URL"), env_file_values)
+    llm_model = _config_value_any(("LLM_MODEL", "LLM_MODEL_NAME"), env_file_values)
     llm_configured = bool(llm_api_key and llm_base_url and llm_model)
     allow_live_llm_value = _config_value("RSS_ALLOW_LIVE_LLM", env_file_values)
     allow_live_network = mode == "live" and _value_bool(

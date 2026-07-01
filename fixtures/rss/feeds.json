@@ -8,21 +8,21 @@
         {
           "guid": "fixture-threshold-60",
           "title": "Threshold AI agent reaches production",
-          "link": "https://example.com/news/threshold?utm_source=rss",
+          "link": "https://developers.openai.com/resources/agentic-app-production/?utm_source=rss",
           "published_at": "2026-06-28T08:00:00Z",
           "summary": "RSS summary for a threshold-selected article."
         },
         {
           "guid": "fixture-threshold-60-duplicate",
           "title": "Threshold AI agent reaches production duplicate",
-          "link": "https://example.com/news/threshold?utm_campaign=duplicate",
+          "link": "https://developers.openai.com/resources/agentic-app-production/?utm_campaign=duplicate",
           "published_at": "2026-06-28T08:05:00Z",
           "summary": "Duplicate RSS summary that must not create another news row."
         },
         {
           "guid": "fixture-low-59",
           "title": "Low signal AI funding rumor",
-          "link": "https://example.com/news/low-signal",
+          "link": "https://developers.openai.com/resources/low-signal-ai-funding-rumor/",
           "published_at": "2026-06-28T07:30:00Z",
           "summary": "Low signal RSS summary."
         }
@@ -35,14 +35,14 @@
         {
           "guid": "fixture-translated-96",
           "title": "New AI model released",
-          "link": "https://example.com/news/translated?utm_medium=rss",
+          "link": "https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss",
           "published_at": "2026-06-28T07:00:00Z",
           "summary": "RSS summary for a translated article."
         },
         {
           "guid": "fixture-translate-partial",
           "title": "AI translation mock emits partial output",
-          "link": "https://example.com/news/translation-partial",
+          "link": "https://openai.com/index/introducing-openai-o3-pro/",
           "published_at": "2026-06-28T06:30:00Z",
           "summary": "RSS fallback summary for translation failure."
         }
@@ -60,14 +60,14 @@
         {
           "guid": "fixture-rank-95",
           "title": "AI safety benchmark reaches enterprise pilots",
-          "link": "https://example.com/news/rank-95",
+          "link": "https://news.ycombinator.com/item?id=44254968",
           "published_at": "2026-06-28T06:00:00Z",
           "summary": "Dense ranking fixture summary 95."
         },
         {
           "guid": "fixture-rank-94",
           "title": "Open model eval suite adds agent tasks",
-          "link": "https://example.com/news/rank-94",
+          "link": "https://news.ycombinator.com/item?id=44255118",
           "published_at": "2026-06-28T05:50:00Z",
           "summary": "Dense ranking fixture summary 94."
         }
@@ -80,14 +80,14 @@
         {
           "guid": "fixture-rank-93",
           "title": "AI chip scheduler cuts inference latency",
-          "link": "https://example.com/news/rank-93",
+          "link": "https://news.ycombinator.com/item?id=44255225",
           "published_at": "2026-06-28T05:40:00Z",
           "summary": "Dense ranking fixture summary 93."
         },
         {
           "guid": "fixture-rank-92",
           "title": "Research lab publishes multimodal tool use benchmark",
-          "link": "https://example.com/news/rank-92",
+          "link": "https://news.ycombinator.com/item?id=44255312",
           "published_at": "2026-06-28T05:30:00Z",
           "summary": "Dense ranking fixture summary 92."
         }
@@ -100,14 +100,14 @@
         {
           "guid": "fixture-rank-91",
           "title": "AI data pipeline validates synthetic QA traces",
-          "link": "https://example.com/news/rank-91",
+          "link": "https://news.ycombinator.com/item?id=44255419",
           "published_at": "2026-06-28T05:20:00Z",
           "summary": "Dense ranking fixture summary 91."
         },
         {
           "guid": "fixture-rank-90",
           "title": "Small language model improves retrieval planning",
-          "link": "https://example.com/news/rank-90",
+          "link": "https://news.ycombinator.com/item?id=44255501",
           "published_at": "2026-06-28T05:10:00Z",
           "summary": "Dense ranking fixture summary 90."
         }
@@ -120,14 +120,28 @@
         {
           "guid": "fixture-rank-89",
           "title": "AI observability tool traces prompt regressions",
-          "link": "https://example.com/news/rank-89",
+          "link": "https://news.ycombinator.com/item?id=44255632",
           "published_at": "2026-06-28T05:00:00Z",
           "summary": "Dense ranking fixture summary 89."
         },
         {
+          "guid": "fixture-rank-88",
+          "title": "AI coding assistant checks repository contracts",
+          "link": "https://news.ycombinator.com/item?id=44255744",
+          "published_at": "2026-06-28T04:50:00Z",
+          "summary": "Dense ranking fixture summary 88."
+        },
+        {
+          "guid": "fixture-rank-87",
+          "title": "AI product analytics detects agent drift",
+          "link": "https://news.ycombinator.com/item?id=44255857",
+          "published_at": "2026-06-28T04:40:00Z",
+          "summary": "Dense ranking fixture summary 87."
+        },
+        {
           "guid": "fixture-old-high-99",
           "title": "Older AI milestone outside ranking window",
-          "link": "https://example.com/news/old-high-99",
+          "link": "https://news.ycombinator.com/item?id=43900099",
           "published_at": "2026-05-20T09:00:00Z",
           "summary": "Older high-score fixture that must be excluded from the 30-day ranking."
         }

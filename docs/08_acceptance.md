@@ -192,12 +192,12 @@ isolation: strict_mock
 | Assertion record | Assertion id、assertion type、visibility、status、expected、actual、diff。 |
 | API JSON evidence | Response envelope、DTO fields、status code、forbidden field scan result。 |
 | DB state evidence | Table schema、state transition、dedupe、translation field facts。 |
-| UI render evidence | Rendered DTO fields、loading/empty/error/not found state、forbidden DOM field scan result。 |
+| UI render evidence | Rendered DTO fields、loading/empty/error/not found state、Top 30 Days overall card style、forbidden DOM field scan result。 |
 | Dependency evidence | Live RSS、live HTML、live LLM access count。 |
 | Leak evidence | Forbidden field count、forbidden pattern count、allowlisted token field count。 |
 | PRD coverage evidence | Every acceptance statement from `docs/01_prd.md` mapped to stable PRD id、source line、task id、acceptance gate、assertion id、stage、report path and pass/fail status。 |
 | Task acceptance coverage evidence | Every acceptance criterion from `tasks.md` mapped to task id、source line、assertion id、stage、report path and pass/fail status。 |
-| Deployed browser smoke evidence | `http://127.0.0.1:8010/` real browser runtime result、HTTP status、API status、root mount count、NewsCard count、HighScoreList count、ArticleView result、Sources page result、refresh result、console/page errors and screenshot artifact。 |
+| Deployed browser smoke evidence | `http://127.0.0.1:8010/` real browser runtime result、HTTP status、API status、root mount count、NewsCard count、HighScoreList count、computed body/app background colors、ArticleView result、Sources page result、refresh result、console/page errors and screenshot artifact。 |
 | Local user acceptance evidence | Local URL、port、database、deployed browser smoke result、user acceptance findings, optional regression assertion id for each failed finding and current status。 |
 
 Codex 不得把“看起来正常”“页面能打开”“日志没有明显错误”作为验收证据。
@@ -273,6 +273,10 @@ Correctness:
 - fetch 成功写入可翻译内容；fetch 失败时使用 RSS 内容兜底。
 - translation 成功只写入 `title_zh`、`summary_zh`、`content_zh`。
 - translation 失败不写入部分中文字段。
+- Deterministic translation fixtures produce article-specific Chinese summaries and readable Chinese bodies for translated items; non-empty placeholder strings are not sufficient.
+- `latest_news` and `top_ranked_news` expose only `translated` items in the primary reading path.
+- The fixture set retains one isolated translation failure and one pending translation item for direct detail-state coverage, but those items do not appear as ordinary Home or Top 30 Days news entries.
+- User-visible fixture `original_url` values come from RSS item links and do not use reserved placeholder domains.
 
 Policy validation:
 
@@ -284,6 +288,10 @@ Policy validation:
 ✘ Fail:
 
 - 主链路无法从 fixture 产出可展示新闻。
+- 主链路 fixture 以多数 `translation_failed` 新闻通过验收。
+- 主页面或榜单把 `ready` / `translation_failed` 暴露为普通新闻条目。
+- `translated` 摘要或正文只是 fixture/mock/模拟/占位类文本，或与同一新闻正文不匹配。
+- 用户可见 `original_url` 使用 `example.com`、`example.org`、`example.net`、`.test`、`.invalid` 或类似占位域名。
 - 低分新闻进入 API/UI。
 - 重复新闻重复展示。
 - 翻译失败产生部分中文字段。
@@ -297,8 +305,11 @@ Policy validation:
 - 错误响应使用 `{ "error": { "code": "...", "message": "..." } }`。
 - `204` response 无 body。
 - `GET /api/home` 返回 `HomeData`，包含 `latest_news` 和 `top_ranked_news`。
+- `GET /api/home` 的 `latest_news` 和 `top_ranked_news` 只包含 `translated` 新闻，且每条都包含非空、非占位 `summary_zh`。
 - `GET /api/news/{id}` 只返回可展示 `NewsDetailItem`；不可展示或不存在返回 `404`。
 - `GET /api/news/{id}` 对 `translated` item 返回非空 `summary_zh` 和 `content_zh`。
+- `GET /api/news/{id}` 对 `translated` item 返回的 `content_zh` 是可阅读中文正文，不是占位短句。
+- API 返回的 `original_url` 等于 RSS item link，且本地验收 fixture 不使用 reserved/placeholder host。
 - `POST /api/refresh` 不返回 task、queue、worker、retry、progress 字段。
 - 未记录 endpoint 返回 `404` 或 `405`。
 
@@ -340,12 +351,21 @@ Policy validation:
 - `translated` detail page 渲染中文摘要 `summary_zh` 和中文正文 `content_zh`。
 - Loading、empty、error、not found state 可渲染。
 - 点击 NewsCard、标题、高分榜 item 进入 ArticleView。
+- Home News Feed 和 HighScoreList 中每个可点击新闻条目都是 `translated`，点击后必须显示非占位中文摘要和可阅读中文正文。
+- 直接打开首个 ready 和首个 translation_failed 详情路由后不得出现无解释空阅读页，必须显示 `摘要和正文暂不可用` 及原因说明。
+- ArticleView 原文链接按钮的 `href` 必须等于 API `original_url`，且不得是 reserved/placeholder URL。
+- 主界面视觉契约使用浅灰底色：页面背景为 `#F3F4F6`，主要 surface 为 `#FFFFFF` 或 `#F8FAFC`，且旧深色背景 token 不得作为页面、卡片、表单或主要内容区域的大面积背景。
+- Top 30 Days / HighScoreList 渲染为一个整体卡片，排名项作为内部列表行呈现，不得是嵌套独立卡片。
 
 ✘ Fail:
 
 - UI 读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`。
 - UI 用缺失字段生成默认文案或自动猜测字段含义。
 - UI 展示 raw English summary/body。
+- Home 或 HighScoreList 点击后 ArticleView 缺少可阅读中文摘要/正文，出现占位短句，或落入 `摘要和正文暂不可用`。
+- ArticleView 原文链接为虚拟、保留或占位 URL。
+- UI 页面、卡片、表单或主要内容区域仍使用深色旧背景 token，或设置 `color-scheme: dark`。
+- Top 30 Days 缺少整体卡片外层，或排名项仍表现为多个独立嵌套卡片。
 
 ### ACC-STOP-007 LLM Determinism Gate
 

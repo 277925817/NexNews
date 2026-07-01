@@ -17,7 +17,7 @@
 }
 
 .source-form label {
-  color: #8b98a8;
+  color: #64717f;
   display: grid;
   font-size: 12px;
   font-weight: 650;
@@ -25,20 +25,20 @@
 }
 
 .source-form input {
-  background: #111820;
-  border: 1px solid #253241;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
   border-radius: 6px;
-  color: #e6edf3;
+  color: #18202a;
   min-height: 38px;
   padding: 8px 10px;
 }
 
 .source-form button,
 .source-row button {
-  background: #111820;
-  border: 1px solid #253241;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
   border-radius: 6px;
-  color: #e6edf3;
+  color: #18202a;
   cursor: pointer;
   font-size: 13px;
   font-weight: 650;
@@ -48,13 +48,13 @@
 
 .source-form button:disabled,
 .source-row button:disabled {
-  color: #8b98a8;
+  color: #64717f;
   cursor: not-allowed;
 }
 
 .source-form__error,
 .source-row em {
-  color: #f87171;
+  color: #dc2626;
   font-style: normal;
 }
 
@@ -68,8 +68,8 @@
 
 .source-row {
   align-items: center;
-  background: #111820;
-  border: 1px solid #253241;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
   border-radius: 8px;
   display: grid;
   gap: 12px;
@@ -92,20 +92,20 @@
 }
 
 .source-row__main span {
-  color: #8b98a8;
+  color: #64717f;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
 
 .source-row__status {
-  color: #34d399;
+  color: #047857;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   font-weight: 700;
 }
 
 .source-row__status--off {
-  color: #8b98a8;
+  color: #64717f;
 }
 
 .source-row__actions {

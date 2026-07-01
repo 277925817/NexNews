@@ -131,6 +131,13 @@ type NewsItem = {
 
 `NewsItem` is the base type. List and detail responses must use the more specific types below.
 
+`original_url` rules:
+
+- `original_url` MUST be the public HTTP(S) article URL read from the RSS item link.
+- `original_url` MUST NOT be synthesized by the API, replaced by `canonical_url`, or rewritten to a local fixture path.
+- Product-facing local acceptance fixtures MUST NOT use reserved placeholder hosts such as `example.com`, `example.org`, `example.net`, `.test`, or `.invalid` for displayable news `original_url`.
+- Canonicalization is only an internal dedupe operation; API responses keep the RSS item link as `original_url`.
+
 ### 3.3 NewsListItem
 
 ```ts
@@ -164,6 +171,7 @@ Detail field rules:
   - When `status = "translated"`, `summary_zh` and `content_zh` MUST be non-empty strings.
   - When `status != "translated"`, `summary_zh` and `content_zh` MUST be omitted.
   - They MUST NOT appear in the JSON response as `null`, empty string, or placeholder value.
+  - For translated local acceptance fixtures, `summary_zh` and `content_zh` MUST be article-specific Chinese content, not generic fixture/mock/placeholder text.
 
 Field mapping:
 
@@ -263,15 +271,17 @@ Query:
 
 Data rule:
 
-- `latest_news` returns displayable news sorted by `published_at DESC`.
+- `latest_news` returns `translated` displayable news sorted by `published_at DESC`.
 - Only `latest_news` is cursor paginated in MVP.
-- `top_ranked_news` returns displayable news from the last 30 days.
+- `top_ranked_news` returns `translated` displayable news from the last 30 days.
 - `top_ranked_news` sorts by `score DESC, published_at DESC`.
 - `top_ranked_news` returns at most 10 items.
 - `top_ranked_news` is a fixed-size window query and does not use cursor pagination.
 - Both lists share `NewsListItem` shape and are independent semantic groups.
 - Response type is `HomeData`.
 - Do not return raw English summary or raw English content.
+- Every item in `latest_news` and `top_ranked_news` MUST have `status = "translated"` and include non-empty `summary_zh`.
+- `ready` and `translation_failed` remain valid detail statuses for direct/stale routes and regression tests, but they MUST NOT appear in the primary Home lists.
 
 Response:
 
@@ -284,10 +294,11 @@ Response:
         "title": "AI startup raises new funding",
         "original_title": "AI startup raises new funding",
         "source_name": "TechCrunch",
-        "original_url": "https://example.com/news/1",
+        "original_url": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
         "published_at": "2026-06-28T08:00:00Z",
         "score": 82,
-        "status": "ready"
+        "summary_zh": "这是一条中文摘要。",
+        "status": "translated"
       }
     ],
     "top_ranked_news": [
@@ -296,7 +307,7 @@ Response:
         "title": "新的 AI 模型发布",
         "original_title": "New AI model released",
         "source_name": "OpenAI Blog",
-        "original_url": "https://example.com/news/2",
+        "original_url": "https://news.ycombinator.com/item?id=44254968",
         "published_at": "2026-06-28T07:00:00Z",
         "score": 96,
         "status": "translated"
@@ -335,7 +346,7 @@ Response:
     "summary_zh": "这是一条中文摘要。",
     "content_zh": "这是一篇中文正文。",
     "source_name": "OpenAI Blog",
-    "original_url": "https://example.com/news/2",
+    "original_url": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
     "published_at": "2026-06-28T07:00:00Z",
     "score": 96,
     "status": "translated"

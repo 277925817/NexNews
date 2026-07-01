@@ -1,9 +1,32 @@
 import json
 from pathlib import Path
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RESERVED_HOSTS = {"example.com", "example.org", "example.net"}
+RESERVED_SUFFIXES = (".test", ".invalid")
+FORBIDDEN_TRANSLATION_TERMS = (
+    "fixture",
+    "mock",
+    "模拟",
+    "占位",
+    "这是一条",
+    "这是一篇",
+)
+TRANSLATED_GUID_KEYWORDS = {
+    "fixture-translated-96": ("模型", "API", "发布"),
+    "fixture-rank-95": ("安全", "基准", "企业"),
+    "fixture-rank-94": ("评测", "智能体", "任务"),
+    "fixture-rank-93": ("芯片", "调度", "延迟"),
+    "fixture-rank-92": ("多模态", "工具", "基准"),
+    "fixture-rank-91": ("数据", "合成", "问答"),
+    "fixture-rank-90": ("检索", "规划", "小型"),
+    "fixture-rank-89": ("可观测", "提示词", "回归"),
+    "fixture-rank-88": ("编码", "仓库", "契约"),
+    "fixture-rank-87": ("产品", "漂移", "智能体"),
+    "fixture-old-high-99": ("里程碑", "窗口", "榜单"),
+}
 
 
 def canonical_url(value: str) -> str:
@@ -13,11 +36,16 @@ def canonical_url(value: str) -> str:
         for key, item in parse_qsl(parts.query, keep_blank_values=True)
         if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}
     ]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "", ""))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", urlencode(query), ""))
 
 
 def read_fixture(path: str) -> dict:
     return json.loads((ROOT / path).read_text())
+
+
+def is_reserved_placeholder_url(value: str) -> bool:
+    host = (urlsplit(value).hostname or "").lower()
+    return host in RESERVED_HOSTS or host.endswith(RESERVED_SUFFIXES)
 
 
 def test_local_runtime_config_points_to_fixture_and_mock_inputs():
@@ -91,3 +119,56 @@ def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     assert {"success", "extraction_failure", "network_failure", "empty_summary"}.issubset(
         {item["case"] for item in articles["cases"]}
     )
+
+
+def test_displayable_rss_fixture_links_are_public_non_placeholder_urls():
+    rss = read_fixture("fixtures/rss/feeds.json")
+    articles = read_fixture("fixtures/articles/article_map.json")
+
+    item_links = [
+        item["link"]
+        for feed in rss["feeds"]
+        for item in feed.get("items", [])
+        if item["guid"] != "fixture-low-59"
+    ]
+    assert item_links
+    assert all(urlsplit(link).scheme in {"http", "https"} for link in item_links)
+    assert not [link for link in item_links if is_reserved_placeholder_url(link)]
+
+    article_urls = set(articles["articles"])
+    case_urls = {item["url"] for item in articles["cases"]}
+    assert not [url for url in article_urls | case_urls if is_reserved_placeholder_url(url)]
+    assert case_urls.issubset(article_urls)
+    assert canonical_url(
+        "https://developers.openai.com/resources/agentic-app-production/?utm_source=rss"
+    ) in article_urls
+    assert canonical_url(
+        "https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss"
+    ) in article_urls
+
+
+def test_successful_translation_fixtures_are_article_specific_and_readable():
+    translation = read_fixture("fixtures/llm/translation.json")
+    translations = translation["translations"]
+
+    successful_records = {
+        guid: record
+        for guid, record in translations.items()
+        if guid in TRANSLATED_GUID_KEYWORDS
+    }
+    assert set(successful_records) == set(TRANSLATED_GUID_KEYWORDS)
+
+    for guid, record in successful_records.items():
+        title = record["title_zh"]
+        summary = record["summary_zh"]
+        content = record["content_zh"]
+        joined = "\n".join([title, summary, content]).lower()
+        paragraphs = [part.strip() for part in content.split("\n\n") if part.strip()]
+        keywords = TRANSLATED_GUID_KEYWORDS[guid]
+
+        assert not [term for term in FORBIDDEN_TRANSLATION_TERMS if term.lower() in joined], guid
+        assert len(summary) >= 28, guid
+        assert len(content) >= 110, guid
+        assert len(paragraphs) >= 2, guid
+        assert any(keyword in summary for keyword in keywords), guid
+        assert any(keyword in content for keyword in keywords), guid

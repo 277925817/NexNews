@@ -139,9 +139,12 @@ isolation: strict_mock
 - Home page fixture 必须包含足够数量的可展示新闻来证明产品体验；当 fixture 中最近 30 天合格新闻不少于 10 条时，HighScoreList 必须渲染 10 条。
 - Home News Feed 不能只用 1-3 条 smoke sample 证明完成；验收 fixture 必须覆盖至少 10 条可展示新闻、`score=59` 排除项、30 天窗口外排除项和同分排序项。
 - Browser/DOM E2E 必须点击 NewsCard 和 HighScoreList item 进入 ArticleView，并断言详情页请求 `GET /api/news/{id}`、展示匹配 ID 的中文详情、ready 等待态、translation_failed 失败态和 404 错误态。
+- Browser/DOM E2E 必须验证 Home News Feed 和 HighScoreList 中每个用户可点击新闻条目都是 `translated`，点击后显示非占位中文摘要和可阅读中文正文。
+- Browser/DOM E2E 必须通过直接详情路由验证首个 ready 和首个 translation_failed 不会出现无解释空阅读页：非 translated 必须显示 `摘要和正文暂不可用` 以及状态原因。
 - Browser/DOM E2E 必须进入 Sources page，并断言 `GET/POST/PATCH/DELETE /api/sources` 绑定、创建成功、非法 URL 错误、禁用最后一个启用 source 错误和删除视觉移除。
 - Browser/DOM E2E 必须点击 Home `[刷新]`，断言调用 `POST /api/refresh`，完成后重新调用 `GET /api/home`，且不会出现 HTML 被当 JSON 解析的错误。
 - NewsCard summary fixture 必须包含带 HTML-like 标签的中文摘要字符串，并断言浏览器 DOM 将其作为文本渲染，不生成对应元素节点。
+- 全局 UI 主题必须使用 `docs/03_ui_spec.md#4.2` 的浅灰背景 token：`:root`、`body` 和 `.app-shell` 为 `#F3F4F6`，主要 surface 为 `#FFFFFF` 或 `#F8FAFC`，且不得设置 `color-scheme: dark`。
 - Loading state 必须在 fetch 期间出现。
 - Error state 必须渲染固定 fallback view。
 - `NewsItem.status` → UI 展示必须 deterministic。
@@ -150,6 +153,7 @@ isolation: strict_mock
 - ScoreBadge 和 SourceMarker 必须不可点击。
 - SourceMarker 或 NewsCard source color 必须按 source id/name 稳定映射，不同 source 在 fixture 中必须产生可区分颜色；颜色不得成为唯一信息载体。
 - HighScoreList 不得拥有独立 API、独立刷新、独立滚动容器、tab、modal、drawer、dropdown 或 floating sidebar。
+- HighScoreList / Top 30 Days 必须渲染为一个整体卡片，包含标题和全部排名项；排名项必须是卡片内部列表行，不得是嵌套独立卡片。
 - NewsCard 不得在任何状态渲染 `content_zh`。
 - `ready` / `translation_failed` UI 不得渲染 `summary_zh` 或 `content_zh`。
 - 字段缺失或为空时必须不渲染该字段，不得用默认文案或其他字段替代。
@@ -173,6 +177,8 @@ isolation: strict_mock
 - NewsCard 和 ArticleView 必须生成 DOM snapshot。
 - Home desktop layout 必须保持左 `News Feed`、右 `HighScoreList` 双列。
 - NewsCard 最小高度、列表密度、骨架行尺寸、ArticleView 正文宽度必须符合 `03_ui_spec.md`。
+- UI visual regression 必须验证浅灰底色契约：页面背景为 `#F3F4F6`，主 surface 为白色或近白，深色旧背景 token 不得作为大面积背景出现。
+- UI visual regression 必须验证 Top 30 Days 整体卡片契约：HighScoreList 外层为单一卡片 surface，排名项为卡片内部列表行。
 - Hover 只能改变 border/background，不得出现 shadow、scale、lift 类效果。
 - UI 不得出现未在 `03_ui_spec.md` 中列出的装饰性模块或组件。
 - Layout diff 必须使用 pixel-level diff 或 structure diff。
@@ -263,6 +269,8 @@ Mandatory catalog:
 | `A-unit-ACC-STOP-001-coverage-schema-tightened` | unit | ACC-STOP-001 | report_metadata | PRD and task coverage reports cannot pass with uncovered items, prose-only evidence or coverage self-reference. |
 | `A-unit-ACC-STOP-001-acceptance-evaluator-enforcement` | unit | ACC-STOP-001 | report_metadata | Acceptance evaluator rejects STOP_ALLOWED when round policy, task completion or required stop inputs are inconsistent. |
 | `A-unit-ACC-STOP-001-local-user-acceptance-regression` | unit | ACC-STOP-001 | report_metadata | Failed local user acceptance findings keep STOP_ALLOWED false until converted into regression assertion evidence. |
+| `A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs` | static | ACC-STOP-010 | report_metadata | Workflow, test, acceptance and task documents record that user-reported local acceptance failures must be preserved until mapped regression assertions pass. |
+| `A-unit-ACC-STOP-001-local-acceptance-failure-preservation` | unit | ACC-STOP-001 | report_metadata | Local user acceptance generation preserves unresolved user failed findings even when browser E2E and deployed smoke reports pass, and clears them only after the mapped regression assertion passes. |
 | `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 7 documented default sources once. |
 | `A-api-ACC-STOP-002-default-source-exact-list` | api | ACC-STOP-002 | public_surface | Empty database initialization creates a source URL set exactly equal to the 7 URLs listed in `docs/01_prd.md`. |
 | `A-api-ACC-STOP-002-source-crud-errors` | api | ACC-STOP-002 | public_surface | Source create, update and delete APIs return documented success and structured error responses for invalid, duplicate, private, deleted and missing source cases. |
@@ -275,7 +283,10 @@ Mandatory catalog:
 | `A-integration-ACC-STOP-003-fetch-fallback` | integration | ACC-STOP-003 | internal_evidence | Fetch success, extraction failure with RSS fallback and no-content failure produce the documented displayability outcomes. |
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | integration | ACC-STOP-003 | internal_evidence | A fetched item using RSS summary fallback produces non-empty Chinese summary and content through translation. |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | integration | ACC-STOP-003 | internal_evidence | Translation failure does not write partial Chinese fields and does not block other items. |
+| `A-integration-ACC-STOP-003-translation-quality-fixtures` | integration | ACC-STOP-003 | public_surface | Deterministic translation fixtures produce article-specific summaries and readable Chinese bodies without placeholder text while preserving one failed and one ready detail sample. |
 | `A-api-ACC-STOP-004-home-detail-behavior` | api | ACC-STOP-004 | public_surface | Home and detail endpoints enforce sorting, 30-day ranking, translated detail fields and structured 404 behavior. |
+| `A-api-ACC-STOP-004-home-translated-only` | api | ACC-STOP-004 | public_surface | `GET /api/home` returns only translated news in `latest_news` and `top_ranked_news`; direct detail routes still expose ready and translation_failed states correctly. |
+| `A-api-ACC-STOP-004-original-url-real-link` | api | ACC-STOP-004 | public_surface | Displayable news `original_url` values come from RSS item links, are public HTTP(S), and do not use reserved placeholder domains in acceptance fixtures. |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | api | ACC-STOP-004 | public_surface | User, login, search, category, comment, favorite, share, task progress, retry, admin and versioning endpoints are absent. |
 | `A-static-ACC-STOP-005-pipeline-write-boundary` | static | ACC-STOP-005 | internal_evidence | Only backend pipeline services can write `pipeline_state` or compute `is_selected`. |
 | `A-contract-ACC-STOP-005-forbidden-data-fields` | contract | ACC-STOP-005 | internal_evidence | DB schema excludes old/non-goal tables and fields including `translation_status`, `content_source`, `is_ready` and `display_mode`. |
@@ -283,14 +294,15 @@ Mandatory catalog:
 | `A-integration-ACC-STOP-006-ui-forbidden-rendering` | integration | ACC-STOP-006 | public_surface | Ready and translation-failed UI states render no `summary_zh`, `content_zh`, raw English summary or raw English body. |
 | `A-integration-ACC-STOP-006-ui-allowed-interactions` | integration | ACC-STOP-006 | public_surface | UI click behavior is limited to the whitelist in `docs/03_ui_spec.md#5.0`. |
 | `A-e2e-ACC-STOP-006-home-news-density` | e2e | ACC-STOP-006 | public_surface | Browser-visible Home News Feed renders the PRD fixture news set, not a sparse smoke sample. |
-| `A-e2e-ACC-STOP-006-high-score-list-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible HighScoreList renders up to 10 eligible 30-day items sorted by score and supports click-through to ArticleView. |
+| `A-e2e-ACC-STOP-006-high-score-list-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible HighScoreList renders one overall Top 30 Days card with up to 10 eligible 30-day row items sorted by score and supports click-through to ArticleView. |
 | `A-e2e-ACC-STOP-006-article-view-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible ArticleView loads `GET /api/news/{id}`, renders matching translated detail, ready waiting state, translation_failed state and structured 404 state without raw English body. |
-| `A-e2e-ACC-STOP-006-article-original-link-button` | e2e | ACC-STOP-006 | public_surface | Browser-visible ArticleView renders a user-visible original URL link or button for translated details. |
+| `A-e2e-ACC-STOP-006-click-to-read-readability` | e2e | ACC-STOP-006 | public_surface | Browser-visible clicks from every Home and HighScoreList item produce a translated ArticleView with non-placeholder Chinese summary and readable body; direct non-translated detail routes show explicit unreadable-copy with the reason. |
+| `A-e2e-ACC-STOP-006-article-original-link-button` | e2e | ACC-STOP-006 | public_surface | Browser-visible ArticleView renders a user-visible original URL link or button for translated details, and its href equals the API `original_url` rather than a fixture placeholder. |
 | `A-e2e-ACC-STOP-006-no-direct-original-navigation` | e2e | ACC-STOP-006 | public_surface | Browser-visible NewsCard and HighScoreList clicks stay on internal ArticleView routes and do not navigate directly to the original site. |
 | `A-e2e-ACC-STOP-006-sources-page-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible Sources page binds to `GET/POST/PATCH/DELETE /api/sources` and proves create, invalid URL, disable-all error and delete visual removal. |
 | `A-e2e-ACC-STOP-006-refresh-action-browser` | e2e | ACC-STOP-006 | public_surface | Browser-visible refresh action calls `POST /api/refresh`, then reloads `GET /api/home`, with no HTML-as-JSON parse error. |
 | `A-e2e-ACC-STOP-006-news-card-summary-text-only` | e2e | ACC-STOP-006 | public_surface | Browser-visible NewsCard summary renders HTML-like fixture text as text content and does not create raw HTML nodes. |
-| `A-snapshot-ACC-STOP-006-layout-visual-contract` | snapshot | ACC-STOP-006 | public_surface | Home layout, NewsCard density, skeleton dimensions and ArticleView reading width match the UI spec. |
+| `A-snapshot-ACC-STOP-006-layout-visual-contract` | snapshot | ACC-STOP-006 | public_surface | Home layout, NewsCard density, Top 30 Days overall card, skeleton dimensions, ArticleView reading width and light gray visual tokens match the UI spec. |
 | `A-unit-ACC-STOP-007-llm-request-shapes` | unit | ACC-STOP-007 | internal_evidence | Scoring and translation requests contain exactly the documented structured JSON input fields. |
 | `A-unit-ACC-STOP-007-llm-retry-failure-policy` | unit | ACC-STOP-007 | internal_evidence | Invalid, timeout and schema-invalid LLM outputs retry at most twice and do not write successful business fields. |
 | `A-integration-ACC-STOP-008-live-dependency-blocked` | integration | ACC-STOP-008 | report_metadata | Harness blocks or fails any RSS, webpage, LLM, production DB or wall-clock dependency access during verification. |
@@ -343,6 +355,8 @@ Rules:
 | `A-unit-ACC-STOP-001-coverage-schema-tightened` | ACC-STOP-001 | TASK-026B | unit | reports/stages/unit.json |
 | `A-unit-ACC-STOP-001-acceptance-evaluator-enforcement` | ACC-STOP-001 | TASK-026C | unit | reports/stages/unit.json |
 | `A-unit-ACC-STOP-001-local-user-acceptance-regression` | ACC-STOP-001 | TASK-026C | unit | reports/stages/unit.json |
+| `A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs` | ACC-STOP-010 | TASK-031 | static | reports/stages/static.json |
+| `A-unit-ACC-STOP-001-local-acceptance-failure-preservation` | ACC-STOP-001 | TASK-031 | unit | reports/stages/unit.json |
 | `A-api-ACC-STOP-002-default-source-seed` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-default-source-exact-list` | ACC-STOP-002 | TASK-002B | api | reports/stages/api.json |
 | `A-api-ACC-STOP-002-source-crud-errors` | ACC-STOP-002 | TASK-013 | api | reports/stages/api.json |
@@ -355,7 +369,10 @@ Rules:
 | `A-integration-ACC-STOP-003-fetch-fallback` | ACC-STOP-003 | TASK-007 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
 | `A-integration-ACC-STOP-003-translation-failure-isolated` | ACC-STOP-003 | TASK-008 | integration | reports/stages/integration.json |
+| `A-integration-ACC-STOP-003-translation-quality-fixtures` | ACC-STOP-003 | TASK-033 | integration | reports/stages/integration.json |
 | `A-api-ACC-STOP-004-home-detail-behavior` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-004-home-translated-only` | ACC-STOP-004 | TASK-034 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-004-original-url-real-link` | ACC-STOP-004 | TASK-032 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
 | `A-static-ACC-STOP-005-pipeline-write-boundary` | ACC-STOP-005 | TASK-002A | static | reports/stages/static.json |
 | `A-contract-ACC-STOP-005-forbidden-data-fields` | ACC-STOP-005 | TASK-002A | contract | reports/stages/contract.json |
@@ -365,7 +382,8 @@ Rules:
 | `A-e2e-ACC-STOP-006-home-news-density` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
 | `A-e2e-ACC-STOP-006-high-score-list-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
 | `A-e2e-ACC-STOP-006-article-view-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
-| `A-e2e-ACC-STOP-006-article-original-link-button` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-click-to-read-readability` | ACC-STOP-006 | TASK-034 | e2e | reports/stages/e2e.json |
+| `A-e2e-ACC-STOP-006-article-original-link-button` | ACC-STOP-006 | TASK-032 | e2e | reports/stages/e2e.json |
 | `A-e2e-ACC-STOP-006-no-direct-original-navigation` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
 | `A-e2e-ACC-STOP-006-sources-page-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
 | `A-e2e-ACC-STOP-006-refresh-action-browser` | ACC-STOP-006 | TASK-024 | e2e | reports/stages/e2e.json |
@@ -440,15 +458,20 @@ Rules:
 - 翻译成功：必须设置 `has_translate_failed = 0`。
 - 部分翻译：只有 `title_zh` 或只有 `summary_zh` 时不得返回 `translated`。
 - API status priority：完整中文字段优先投影为 `translated`；否则 `has_translate_failed = 1` 投影为 `translation_failed`；否则投影为 `ready`。
+- Deterministic acceptance fixtures must produce translated items with article-specific `summary_zh` and readable multi-paragraph `content_zh`; fixture/mock/模拟/占位 and other generic placeholder text must fail.
+- Deterministic acceptance fixtures must keep one partial translation failure and one pending translation item for direct detail-state coverage, but `latest_news` and `top_ranked_news` must expose only `translated` items in the primary reading path.
 
 ### 3.4 API 层
 - `GET /api/home` 返回 `latest_news` 和 `top_ranked_news`。
-- `GET /api/home` 的 `latest_news` 只返回可展示新闻，按 `published_at DESC` 排序。
+- `GET /api/home` 的 `latest_news` 只返回 `translated` 可展示新闻，按 `published_at DESC` 排序。
 - `GET /api/home` 的 `limit` 默认 `50`，最大 `100`；只作用于 `latest_news`。
 - `GET /api/home` 的 `top_ranked_news` 按 `score DESC, published_at DESC`。
-- `GET /api/home` 的 `top_ranked_news` 只包含最近 30 天可展示新闻，最多 10 条，不使用 cursor pagination。
+- `GET /api/home` 的 `top_ranked_news` 只包含最近 30 天 `translated` 可展示新闻，最多 10 条，不使用 cursor pagination。
 - `GET /api/home` 的 `next_cursor` 可选；出现时必须为 string。
 - `GET /api/home` 不得返回 layout column 描述。
+- `GET /api/home` 中每个 item 必须包含非空 `summary_zh`，且 `status = translated`。
+- `GET /api/home` 不得返回 `ready` 或 `translation_failed` item；这些状态只能通过直接详情路由或测试 fixture 覆盖。
+- API 返回的 `original_url` 必须等于 RSS item link，且本地验收 fixture 中不得是 reserved/placeholder host。
 - `GET /api/news/{id}` 对不存在 ID 返回结构化 `404`。
 - `GET /api/news/{id}` 对不可展示 item 返回结构化 `404`。
 - `GET /api/news/{id}` 对 `translated` item 必须返回非空 `summary_zh` 和 `content_zh`。
@@ -474,12 +497,17 @@ Rules:
 
 ### 3.5 UI 层
 - NewsCard 正确渲染标题、来源、时间、评分、状态。
+- Home News Feed 的 NewsCard 只渲染 `translated` item。
+- 全局页面背景必须为浅灰 `#F3F4F6`，主要 surface 必须为 `#FFFFFF` 或 `#F8FAFC`，不得使用旧深色背景 token 作为主界面背景。
 - NewsCard translated summary 必须通过 text node 渲染；当 fixture 的 `summary_zh` 包含 `<b>`、`<script>` 或类似 HTML-like 文本时，DOM 不得生成对应标签节点。
 - HighScoreList 使用与 News Feed 相同的 `NewsListItem` shape。
-- HighScoreList 必须只渲染最近 30 天合格新闻；当 fixture 中合格新闻不少于 10 条时渲染 10 条，并按 `score DESC, published_at DESC` 排序。
+- HighScoreList 必须只渲染最近 30 天 `translated` 合格新闻；当 fixture 中合格新闻不少于 10 条时渲染 10 条，并按 `score DESC, published_at DESC` 排序。
+- HighScoreList / Top 30 Days 必须渲染为一个整体卡片，排名项作为内部列表行呈现，不能以独立卡片嵌套在卡片内。
 - ArticleView 在 `translated` 时渲染 `summary_zh` 和 `content_zh`。
-- ArticleView 在 `ready` / `translation_failed` 时不渲染 `summary_zh`、`content_zh`。
+- ArticleView 在 `translated` 时渲染的 `summary_zh` 和 `content_zh` 必须是非占位、新闻相关的可读中文内容。
+- ArticleView 在 `ready` / `translation_failed` 时不渲染 `summary_zh`、`content_zh`，但必须渲染 `摘要和正文暂不可用` 和对应原因说明，避免无解释空阅读页。
 - ArticleView 在 translated detail 中必须渲染原文链接按钮或链接，且该链接不得替代 NewsCard 或 HighScoreList 的站内导航。
+- ArticleView 原文链接的 `href` 必须等于 API `original_url`，且不得是 reserved/placeholder URL。
 - NewsCard 标题点击和 HighScoreList 标题点击必须停留在站内 ArticleView route，不得直接打开原文站点。
 - 空字段不 crash，不自动补默认文案，不用其他字段替代。
 - NewsCard 点击和 Title 点击必须进入同一个 ArticleView。
@@ -555,7 +583,7 @@ Rules:
     {
       "guid": "mock-1",
       "title": "Mock AI News",
-      "link": "https://example.com/news/1",
+      "link": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
       "published_at": "2026-06-28T08:00:00Z",
       "summary": "Mock RSS summary"
     }
@@ -629,6 +657,8 @@ Rules:
 - 禁止测试依赖当前系统时间；必须注入 fixed clock。
 - 所有 mock 必须支持 fixed seed。
 - Snapshot fixture 必须提交到测试目录。
+- 面向用户展示的 acceptance RSS fixture link 不得使用 `example.com`、`example.org`、`example.net`、`.test`、`.invalid` 或其他占位域名；正文抽取仍必须通过本地 article fixture 映射完成，不得访问真实网页正文。
+- Translation fixture 中的成功 `summary_zh` / `content_zh` 不得包含 fixture/mock/模拟/占位等测试占位词，且必须可由结构化断言证明摘要与正文属于同一新闻。
 
 ### 4.8 Test Data Versioning
 - 所有 fixtures 必须带 version。
@@ -645,6 +675,8 @@ Rules:
 - 幂等性：重复 refresh 不得创建重复新闻。
 - 可维护性：静态合规测试必须阻止未记录 endpoint、未记录 UI 行为、未记录组件和跨层字段泄漏。
 - 安全性：RSS URL validation 必须拒绝本地地址、私有地址、非 `http/https` URL。
+- 内容真实性：translated 详情页的摘要和正文不得仅以非空作为通过条件，必须通过最小长度、段落数量、非占位词和摘要/正文关联断言。
+- 链接真实性：用户可见原文链接不得使用 reserved/placeholder host，且浏览器 E2E 必须证明 ArticleView 链接目标等于 API `original_url`。
 
 ### 5.1 Observability Test
 - 每个 pipeline step 必须产生日志。

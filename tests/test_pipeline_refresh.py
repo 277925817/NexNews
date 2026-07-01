@@ -26,6 +26,15 @@ def make_client(tmp_path):
     return TestClient(create_app(db_path=str(tmp_path / "rss.sqlite3")))
 
 
+def assert_readable_translation(summary: str, content: str, *keywords: str) -> None:
+    paragraphs = [part.strip() for part in content.split("\n\n") if part.strip()]
+    assert len(summary) >= 28
+    assert len(content) >= 110
+    assert len(paragraphs) >= 2
+    assert any(keyword in summary for keyword in keywords)
+    assert any(keyword in content for keyword in keywords)
+
+
 def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
     conn = connect(":memory:")
     initialize_database(conn)
@@ -47,10 +56,10 @@ def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
         """
     ).fetchall()
 
-    assert result["inserted_count"] == 12
+    assert result["inserted_count"] == 14
     assert result["source_success_count"] == 6
     assert result["source_failure_count"] == 1
-    assert len(rows) == 12
+    assert len(rows) == 14
     assert {row["pipeline_state"] for row in rows} == {"raw"}
     assert all(row["score"] is None for row in rows)
     assert all(row["content_full"] is None for row in rows)
@@ -119,9 +128,9 @@ def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     ).fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
 
-    assert result["scored_count"] == 12
+    assert result["scored_count"] == 14
     assert result["failed_count"] == 0
-    assert result["selected_count"] == 11
+    assert result["selected_count"] == 13
     assert {row["pipeline_state"] for row in rows} == {"scored"}
     assert by_guid["fixture-threshold-60"]["score"] == 60
     assert by_guid["fixture-threshold-60"]["is_selected"] == 1
@@ -129,7 +138,7 @@ def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     assert by_guid["fixture-low-59"]["is_selected"] == 0
     assert all(row["content_full"] is None for row in rows)
     assert all(row["title_zh"] is None for row in rows)
-    assert len(logs) == 12
+    assert len(logs) == 14
     assert all(log["success"] == 1 and log["news_item_id"] is not None for log in logs)
     assert all(log["source_id"] is None for log in logs)
 
@@ -189,11 +198,11 @@ def test_selected_fetch_candidates_filter_threshold_and_preserve_distinct_items(
 
     assert score_is_selected(60) is True
     assert score_is_selected(59) is False
-    assert len(candidates) == 11
+    assert len(candidates) == 13
     assert len(canonical_urls) == len(set(canonical_urls))
     assert "fixture-threshold-60" in guids
     assert "fixture-low-59" not in guids
-    assert {"fixture-rank-95", "fixture-rank-94"}.issubset(guids)
+    assert {"fixture-rank-95", "fixture-rank-94", "fixture-rank-88", "fixture-rank-87"}.issubset(guids)
     assert all(row["pipeline_state"] == "scored" for row in candidates)
     assert all(row["is_selected"] == 1 for row in candidates)
     assert all(row["score"] >= 60 for row in candidates)
@@ -225,9 +234,9 @@ def test_fetch_selected_content_uses_article_fixtures_and_rss_fallback():
     ).fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
 
-    assert result["fetched_count"] == 11
+    assert result["fetched_count"] == 13
     assert result["content_full_count"] == 2
-    assert result["fallback_count"] == 9
+    assert result["fallback_count"] == 11
     assert result["failed_count"] == 0
     assert by_guid["fixture-threshold-60"]["pipeline_state"] == "fetched"
     assert by_guid["fixture-threshold-60"]["content_full"]
@@ -236,9 +245,9 @@ def test_fetch_selected_content_uses_article_fixtures_and_rss_fallback():
     assert by_guid["fixture-translate-partial"]["content_raw"]
     assert by_guid["fixture-low-59"]["pipeline_state"] == "scored"
     assert by_guid["fixture-low-59"]["content_full"] is None
-    assert len(fetch_logs) == 11
+    assert len(fetch_logs) == 13
     assert sum(log["success"] == 1 for log in fetch_logs) == 2
-    assert sum(log["success"] == 0 and log["error"] == "network" for log in fetch_logs) == 9
+    assert sum(log["success"] == 0 and log["error"] == "network" for log in fetch_logs) == 11
     assert all(log["source_id"] is None and log["news_item_id"] is not None for log in fetch_logs)
 
 
@@ -325,14 +334,19 @@ def test_translate_fetched_content_writes_success_failure_and_fallback_translati
     ).fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
 
-    assert result["translated_count"] == 2
+    assert result["translated_count"] == 11
     assert result["pending_count"] == 1
-    assert result["failed_count"] == 8
+    assert result["failed_count"] == 1
     assert by_guid["fixture-translated-96"]["title_zh"] == "新的 AI 模型发布"
     assert by_guid["fixture-translated-96"]["pipeline_state"] == "fetched"
     assert by_guid["fixture-rank-95"]["content_full"] is None
-    assert by_guid["fixture-rank-95"]["summary_zh"] == "这是一条基于 RSS fallback 的中文摘要。"
-    assert by_guid["fixture-rank-95"]["content_zh"] == "这是一篇基于 RSS fallback 的中文正文。"
+    assert_readable_translation(
+        by_guid["fixture-rank-95"]["summary_zh"],
+        by_guid["fixture-rank-95"]["content_zh"],
+        "安全",
+        "基准",
+        "企业",
+    )
     assert by_guid["fixture-translate-partial"]["title_zh"] is None
     assert by_guid["fixture-translate-partial"]["summary_zh"] is None
     assert by_guid["fixture-translate-partial"]["content_zh"] is None
@@ -340,9 +354,9 @@ def test_translate_fetched_content_writes_success_failure_and_fallback_translati
     assert by_guid["fixture-threshold-60"]["has_translate_failed"] == 0
     assert by_guid["fixture-threshold-60"]["title_zh"] is None
     assert all(row["pipeline_state"] in {"scored", "fetched"} for row in rows)
-    assert len(logs) == 10
-    assert sum(log["success"] == 1 for log in logs) == 2
-    assert sum(log["success"] == 0 and log["error"] == "validation_llm_error" for log in logs) == 8
+    assert len(logs) == 12
+    assert sum(log["success"] == 1 for log in logs) == 11
+    assert sum(log["success"] == 0 and log["error"] == "validation_llm_error" for log in logs) == 1
     assert all(log["source_id"] is None and log["news_item_id"] is not None for log in logs)
 
 
@@ -357,16 +371,16 @@ def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
     assert summary["finished_at"] == "2026-06-28T09:00:00Z"
     assert summary["source_success_count"] == 6
     assert summary["source_failure_count"] == 1
-    assert summary["rss_item_count"] == 13
-    assert summary["new_item_count"] == 12
-    assert summary["scored_item_count"] == 12
-    assert summary["selected_item_count"] == 11
-    assert summary["fetched_item_count"] == 11
-    assert summary["translated_item_count"] == 2
+    assert summary["rss_item_count"] == 15
+    assert summary["new_item_count"] == 14
+    assert summary["scored_item_count"] == 14
+    assert summary["selected_item_count"] == 13
+    assert summary["fetched_item_count"] == 13
+    assert summary["translated_item_count"] == 11
     assert summary["failure_details"] == {
         "crawl:parsing": 1,
-        "fetch:network": 9,
-        "translate:validation_llm_error": 8,
+        "fetch:network": 11,
+        "translate:validation_llm_error": 1,
     }
 
 
@@ -397,7 +411,7 @@ def test_refresh_trigger_signal_manual_schedule_and_concurrency():
     rejected_result = run_manual_refresh(rejected_conn, is_running=True)
 
     assert manual_result["started"] is True
-    assert manual_result["summary"]["translated_item_count"] == 2
+    assert manual_result["summary"]["translated_item_count"] == 11
     assert morning_result["started"] is True
     assert evening_result["started"] is True
     assert idle_result == {"started": False, "reason": "not_scheduled_time", "summary": None}
@@ -424,7 +438,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         ORDER BY canonical_url ASC
         """
     ).fetchall()
-    assert len(rows) == 12
+    assert len(rows) == 14
 
     by_guid = {row["rss_guid"]: row for row in rows}
     assert set(by_guid) >= {
@@ -439,6 +453,8 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         "fixture-rank-91",
         "fixture-rank-90",
         "fixture-rank-89",
+        "fixture-rank-88",
+        "fixture-rank-87",
         "fixture-old-high-99",
     }
 
@@ -462,8 +478,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     assert translated["pipeline_state"] == "fetched"
     assert translated["is_selected"] == 1
     assert translated["title_zh"] == "新的 AI 模型发布"
-    assert translated["summary_zh"] == "这是一条来自 fixture 的中文摘要。"
-    assert translated["content_zh"] == "这是一篇来自 fixture 的中文正文。"
+    assert_readable_translation(translated["summary_zh"], translated["content_zh"], "模型", "API", "发布")
     assert translated["has_translate_failed"] == 0
 
     failed_translation = by_guid["fixture-translate-partial"]
@@ -484,8 +499,8 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         """
     ).fetchall()
     assert any(row["stage"] == "crawl" and row["success"] == 0 for row in log_rows)
-    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 12
-    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 11
+    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 14
+    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 13
     assert any(
         row["stage"] == "translate"
         and row["success"] == 0
@@ -497,7 +512,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     repeated_count = conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()[
         "count"
     ]
-    assert repeated_count == 12
+    assert repeated_count == 14
 
 
 def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_path):
@@ -511,9 +526,7 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     ranked_scores = [item["score"] for item in home["top_ranked_news"]]
 
     assert latest_titles[:10] == [
-        "Threshold AI agent reaches production",
         "New AI model released",
-        "AI translation mock emits partial output",
         "AI safety benchmark reaches enterprise pilots",
         "Open model eval suite adds agent tasks",
         "AI chip scheduler cuts inference latency",
@@ -521,9 +534,11 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
         "AI data pipeline validates synthetic QA traces",
         "Small language model improves retrieval planning",
         "AI observability tool traces prompt regressions",
+        "AI coding assistant checks repository contracts",
+        "AI product analytics detects agent drift",
     ]
     assert "Low signal AI funding rumor" not in latest_titles
-    assert ranked_scores == [96, 95, 94, 93, 92, 91, 90, 89, 75, 60]
+    assert ranked_scores == [96, 95, 94, 93, 92, 91, 90, 89, 88, 87]
     assert "Older AI milestone outside ranking window" not in [
         item["original_title"] for item in home["top_ranked_news"]
     ]
@@ -535,14 +550,21 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
         assert "content_full" not in item
         assert "has_translate_failed" not in item
         assert "content_zh" not in item
+        assert item["status"] == "translated"
+        assert item["summary_zh"]
 
     translated_id = conn.execute(
         "SELECT id FROM news_item WHERE rss_guid = 'fixture-translated-96'"
     ).fetchone()["id"]
     translated_detail = client.get(f"/api/news/{translated_id}").json()["data"]
     assert translated_detail["status"] == "translated"
-    assert translated_detail["summary_zh"] == "这是一条来自 fixture 的中文摘要。"
-    assert translated_detail["content_zh"] == "这是一篇来自 fixture 的中文正文。"
+    assert_readable_translation(
+        translated_detail["summary_zh"],
+        translated_detail["content_zh"],
+        "模型",
+        "API",
+        "发布",
+    )
 
     failed_id = conn.execute(
         "SELECT id FROM news_item WHERE rss_guid = 'fixture-translate-partial'"

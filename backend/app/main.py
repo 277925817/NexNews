@@ -82,7 +82,8 @@ def display_status(row: dict[str, object]) -> str:
 
 
 def list_item(row: dict[str, object]) -> dict[str, object]:
-    return {
+    status = display_status(row)
+    item = {
         "id": str(row["id"]),
         "title": row["title_zh"] or row["original_title"],
         "original_title": row["original_title"],
@@ -90,8 +91,11 @@ def list_item(row: dict[str, object]) -> dict[str, object]:
         "original_url": row["original_url"],
         "published_at": row["published_at"],
         "score": row["score"],
-        "status": display_status(row),
+        "status": status,
     }
+    if status == "translated" and row["summary_zh"]:
+        item["summary_zh"] = row["summary_zh"]
+    return item
 
 
 def detail_item(row: dict[str, object]) -> dict[str, object]:
@@ -105,7 +109,13 @@ def detail_item(row: dict[str, object]) -> dict[str, object]:
 def displayable_news_query(
     extra_where: str = "",
     order_by: str = "news_item.published_at DESC",
+    translated_only: bool = False,
 ) -> str:
+    translated_clause = """
+          AND news_item.title_zh IS NOT NULL
+          AND news_item.summary_zh IS NOT NULL
+          AND news_item.content_zh IS NOT NULL
+    """ if translated_only else ""
     return f"""
         SELECT
           news_item.id,
@@ -122,6 +132,7 @@ def displayable_news_query(
         JOIN source ON source.id = news_item.source_id
         WHERE news_item.is_selected = 1
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
+          {translated_clause}
           {extra_where}
         ORDER BY {order_by}
     """
@@ -212,13 +223,18 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def get_home(limit: int = 50, cursor: str | None = None) -> JSONResponse:
         bounded_limit = min(max(limit, 1), 100)
         latest_rows = db().execute(
-            displayable_news_query(order_by="news_item.published_at DESC") + " LIMIT ?",
+            displayable_news_query(
+                order_by="news_item.published_at DESC",
+                translated_only=True,
+            )
+            + " LIMIT ?",
             (bounded_limit,),
         ).fetchall()
         top_rows = db().execute(
             displayable_news_query(
                 extra_where="AND news_item.published_at >= ?",
-                order_by="news_item.score DESC, news_item.published_at DESC"
+                order_by="news_item.score DESC, news_item.published_at DESC",
+                translated_only=True,
             )
             + " LIMIT 10",
             (TOP_RANKED_WINDOW_START,),

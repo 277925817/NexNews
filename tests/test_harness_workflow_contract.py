@@ -168,6 +168,159 @@ def test_local_user_acceptance_requires_deployed_browser_smoke(tmp_path):
     assert "deployed_browser_smoke:missing_report" in summaries
 
 
+def write_passing_e2e_and_deployed_smoke(harness, report_dir: Path) -> None:
+    e2e_assertions = [
+        harness.assertion(
+            assertion_id,
+            "passed",
+            {"surface": surface},
+            {"surface": surface},
+            {},
+            visibility="public_surface",
+        )
+        for surface, assertion_ids in harness.E2E_SURFACE_ASSERTION_MAP.items()
+        for assertion_id in assertion_ids
+    ]
+    e2e_report = harness.test_report(
+        stage="e2e",
+        status="passed",
+        test_id="local-acceptance-preservation-e2e-fixture",
+        assertions=e2e_assertions,
+        expected={"surfaces": "covered"},
+        actual={"surfaces": "covered"},
+        referenced_files=["scripts/run_harness.py"],
+    )
+    e2e_path = report_dir / "stages" / "e2e.json"
+    e2e_path.parent.mkdir(parents=True)
+    e2e_path.write_text(json.dumps(e2e_report))
+
+    smoke_path = report_dir / "acceptance" / "deployed_browser_smoke.json"
+    smoke_path.parent.mkdir(parents=True)
+    smoke_path.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "local_url": harness.DEPLOYED_BROWSER_SMOKE_URL,
+                "port": harness.DEPLOYED_BROWSER_SMOKE_PORT,
+                "checked_surfaces": harness.E2E_REQUIRED_SURFACES,
+                "failed_findings": [],
+                "browser": {
+                    "http_status": 200,
+                    "api_home_status": 200,
+                    "root_child_count": 1,
+                    "body_text_length": 100,
+                    "app_shell_exists": True,
+                    "news_card_count": 1,
+                    "rank_item_count": 1,
+                    "console_error_count": 0,
+                    "page_error_count": 0,
+                    "screenshot_path": "acceptance/deployed_browser_smoke.png",
+                },
+            }
+        )
+    )
+
+
+def test_local_user_acceptance_preserves_unresolved_user_findings(tmp_path):
+    harness = load_harness_module()
+    report_dir = tmp_path / "reports"
+    write_passing_e2e_and_deployed_smoke(harness, report_dir)
+
+    local_path = report_dir / "acceptance" / "local_user_acceptance.json"
+    local_path.write_text(
+        json.dumps(
+            {
+                "schema_ref": "workflows.md#LocalUserAcceptanceReport",
+                "schema_version": "v1",
+                "status": "failed",
+                "local_url": harness.DEPLOYED_BROWSER_SMOKE_URL,
+                "port": harness.DEPLOYED_BROWSER_SMOKE_PORT,
+                "database": {"kind": "sqlite"},
+                "checked_surfaces": harness.E2E_REQUIRED_SURFACES,
+                "failed_findings": [
+                    {
+                        "id": "LUAF-unresolved-original-link",
+                        "surface": "article_view",
+                        "severity": "critical",
+                        "summary": "Original link is still a placeholder.",
+                        "evidence": "manual acceptance",
+                        "regression_assertion_id": "A-api-ACC-STOP-004-original-url-real-link",
+                    }
+                ],
+                "timestamp": "2026-06-30T14:34:25Z",
+            }
+        )
+    )
+
+    harness.ensure_local_user_acceptance_report(report_dir)
+
+    local_report = json.loads(local_path.read_text())
+    assert local_report["status"] == "failed"
+    assert [finding["id"] for finding in local_report["failed_findings"]] == [
+        "LUAF-unresolved-original-link"
+    ]
+
+
+def test_local_user_acceptance_clears_finding_after_regression_assertion_passes(tmp_path):
+    harness = load_harness_module()
+    report_dir = tmp_path / "reports"
+    write_passing_e2e_and_deployed_smoke(harness, report_dir)
+
+    api_report = harness.test_report(
+        stage="api",
+        status="passed",
+        test_id="original-url-regression-fixture",
+        assertions=[
+            harness.assertion(
+                "A-api-ACC-STOP-004-original-url-real-link",
+                "passed",
+                {"original_url": "non_placeholder"},
+                {"original_url": "non_placeholder"},
+                {},
+                visibility="public_surface",
+            )
+        ],
+        expected={"original_url": "non_placeholder"},
+        actual={"original_url": "non_placeholder"},
+        referenced_files=["scripts/run_harness.py"],
+    )
+    api_path = report_dir / "stages" / "api.json"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(json.dumps(api_report))
+
+    local_path = report_dir / "acceptance" / "local_user_acceptance.json"
+    local_path.write_text(
+        json.dumps(
+            {
+                "schema_ref": "workflows.md#LocalUserAcceptanceReport",
+                "schema_version": "v1",
+                "status": "failed",
+                "local_url": harness.DEPLOYED_BROWSER_SMOKE_URL,
+                "port": harness.DEPLOYED_BROWSER_SMOKE_PORT,
+                "database": {"kind": "sqlite"},
+                "checked_surfaces": harness.E2E_REQUIRED_SURFACES,
+                "failed_findings": [
+                    {
+                        "id": "LUAF-resolved-original-link",
+                        "surface": "article_view",
+                        "severity": "critical",
+                        "summary": "Original link is still a placeholder.",
+                        "evidence": "manual acceptance",
+                        "regression_assertion_id": "A-api-ACC-STOP-004-original-url-real-link",
+                    }
+                ],
+                "timestamp": "2026-06-30T14:34:25Z",
+            }
+        )
+    )
+
+    harness.ensure_local_user_acceptance_report(report_dir)
+
+    local_report = json.loads(local_path.read_text())
+    assert local_report["status"] == "passed"
+    assert local_report["failed_findings"] == []
+
+
 def test_deployed_browser_smoke_script_records_runtime_assertions():
     script_path = ROOT / "scripts" / "run_deployed_browser_smoke.py"
 
@@ -180,6 +333,10 @@ def test_deployed_browser_smoke_script_records_runtime_assertions():
     assert "root_child_count" in text
     assert "news_card_count" in text
     assert "rank_item_count" in text
+    assert "body_background" in text
+    assert "app_shell_background" in text
+    assert "high_score_card_background" in text
+    assert "high_score_card_border_color" in text
 
 
 def test_round_summary_schema_requires_round_end_decision():

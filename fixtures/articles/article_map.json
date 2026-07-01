@@ -1,24 +1,24 @@
 {
   "version": "mvp_acceptance_fixture@v1",
   "articles": {
-    "https://example.com/news/threshold": {
+    "https://developers.openai.com/resources/agentic-app-production/": {
       "status": "success",
       "path": "threshold.html"
     },
-    "https://example.com/news/translated": {
+    "https://openai.com/index/introducing-gpt-4-1-in-the-api/": {
       "status": "success",
       "path": "translated.html"
     },
-    "https://example.com/news/translation-partial": {
+    "https://openai.com/index/introducing-openai-o3-pro/": {
       "status": "failure",
       "error": "network"
     },
-    "https://example.com/news/extraction-failure": {
+    "https://openai.com/index/extraction-failure-fixture/": {
       "status": "failure",
       "error": "parsing",
       "path": "extraction_failure.html"
     },
-    "https://example.com/news/empty-summary": {
+    "https://openai.com/index/empty-summary-fixture/": {
       "status": "failure",
       "error": "empty_summary",
       "path": "empty_summary.html"
@@ -27,19 +27,19 @@
   "cases": [
     {
       "case": "success",
-      "url": "https://example.com/news/threshold"
+      "url": "https://developers.openai.com/resources/agentic-app-production/"
     },
     {
       "case": "extraction_failure",
-      "url": "https://example.com/news/extraction-failure"
+      "url": "https://openai.com/index/extraction-failure-fixture/"
     },
     {
       "case": "network_failure",
-      "url": "https://example.com/news/translation-partial"
+      "url": "https://openai.com/index/introducing-openai-o3-pro/"
     },
     {
       "case": "empty_summary",
-      "url": "https://example.com/news/empty-summary"
+      "url": "https://openai.com/index/empty-summary-fixture/"
     }
   ]
 }

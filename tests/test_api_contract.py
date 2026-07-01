@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from urllib.parse import urlsplit
 
 from backend.app.main import create_app
 
@@ -11,6 +12,23 @@ def assert_json_response(response, status_code: int):
     assert response.status_code == status_code
     assert response.headers["content-type"].startswith("application/json")
     return response.json()
+
+
+def is_reserved_placeholder_url(value: str) -> bool:
+    host = (urlsplit(value).hostname or "").lower()
+    return host in {"example.com", "example.org", "example.net"} or host.endswith(
+        (".test", ".invalid")
+    )
+
+
+FORBIDDEN_TRANSLATION_TERMS = (
+    "fixture",
+    "mock",
+    "模拟",
+    "占位",
+    "这是一条",
+    "这是一篇",
+)
 
 
 def test_contract_endpoints_return_data_envelopes(tmp_path):
@@ -81,14 +99,12 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert_json_response(client.post("/api/refresh"), 200)
     assert_json_response(client.post("/api/refresh"), 200)
 
-    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 12
+    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 14
     assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] >= 16
 
     home = assert_json_response(client.get("/api/home"), 200)["data"]
     assert [item["id"] for item in home["latest_news"][:10]] == [
-        "1",
         "3",
-        "4",
         "5",
         "6",
         "7",
@@ -96,6 +112,8 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
         "9",
         "10",
         "11",
+        "12",
+        "13",
     ]
     assert [item["id"] for item in home["top_ranked_news"]] == [
         "3",
@@ -106,10 +124,14 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
         "9",
         "10",
         "11",
-        "4",
-        "1",
+        "12",
+        "13",
     ]
-    assert "12" not in [item["id"] for item in home["top_ranked_news"]]
+    assert "14" not in [item["id"] for item in home["top_ranked_news"]]
+    assert all(item["status"] == "translated" for item in home["latest_news"])
+    assert all(item["status"] == "translated" for item in home["top_ranked_news"])
+    assert all(item.get("summary_zh") for item in home["latest_news"] + home["top_ranked_news"])
+    assert all("content_zh" not in item for item in home["latest_news"] + home["top_ranked_news"])
 
     ready_detail = assert_json_response(client.get("/api/news/1"), 200)["data"]
     assert ready_detail["status"] == "ready"
@@ -120,6 +142,59 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert translated_detail["status"] == "translated"
     assert translated_detail["summary_zh"]
     assert translated_detail["content_zh"]
+
+
+def test_refresh_preserves_real_rss_original_urls_in_api(tmp_path):
+    client = make_client(tmp_path)
+    conn = client.app.state.db
+
+    assert_json_response(client.post("/api/refresh"), 200)
+
+    translated = conn.execute(
+        """
+        SELECT id, original_url
+        FROM news_item
+        WHERE rss_guid = 'fixture-translated-96'
+        """
+    ).fetchone()
+    detail = assert_json_response(client.get(f"/api/news/{translated['id']}"), 200)["data"]
+
+    assert detail["status"] == "translated"
+    assert detail["original_url"] == translated["original_url"]
+    assert urlsplit(detail["original_url"]).scheme in {"http", "https"}
+    assert not is_reserved_placeholder_url(detail["original_url"])
+
+
+def test_translated_news_details_return_readable_article_specific_content(tmp_path):
+    client = make_client(tmp_path)
+    conn = client.app.state.db
+
+    assert_json_response(client.post("/api/refresh"), 200)
+
+    translated_rows = conn.execute(
+        """
+        SELECT id, rss_guid
+        FROM news_item
+        WHERE title_zh IS NOT NULL
+          AND summary_zh IS NOT NULL
+          AND content_zh IS NOT NULL
+        ORDER BY id ASC
+        """
+    ).fetchall()
+
+    assert translated_rows
+    for row in translated_rows:
+        detail = assert_json_response(client.get(f"/api/news/{row['id']}"), 200)["data"]
+        summary = detail["summary_zh"]
+        content = detail["content_zh"]
+        joined = "\n".join([detail["title"], summary, content]).lower()
+        paragraphs = [part.strip() for part in content.split("\n\n") if part.strip()]
+
+        assert detail["status"] == "translated"
+        assert not [term for term in FORBIDDEN_TRANSLATION_TERMS if term.lower() in joined], row["rss_guid"]
+        assert len(summary) >= 28, row["rss_guid"]
+        assert len(content) >= 110, row["rss_guid"]
+        assert len(paragraphs) >= 2, row["rss_guid"]
 
 
 def test_refresh_concurrent_rejection_before_success_returns_null(tmp_path):

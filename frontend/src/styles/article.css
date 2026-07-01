@@ -5,10 +5,10 @@
 
 .article-view__back,
 .article-view__original-link {
-  background: #111820;
-  border: 1px solid #253241;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
   border-radius: 6px;
-  color: #e6edf3;
+  color: #18202a;
   display: inline-flex;
   font-size: 13px;
   font-weight: 650;
@@ -20,9 +20,9 @@
 .article-view__back:focus-visible,
 .article-view__original-link:hover,
 .article-view__original-link:focus-visible {
-  background: #151e28;
-  border-color: #7dd3fc;
-  outline: 2px solid #7dd3fc;
+  background: #f8fafc;
+  border-color: #2563eb;
+  outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
 
@@ -33,7 +33,7 @@
 
 .article-view__meta {
   align-items: center;
-  color: #8b98a8;
+  color: #64717f;
   display: flex;
   flex-wrap: wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -43,7 +43,7 @@
 }
 
 .article-view h1 {
-  color: #e6edf3;
+  color: #18202a;
   font-size: 28px;
   font-weight: 700;
   line-height: 1.22;
@@ -51,15 +51,15 @@
 }
 
 .article-view__original-title {
-  color: #8b98a8;
+  color: #64717f;
   font-size: 14px;
   line-height: 1.5;
   margin: 0;
 }
 
 .article-view__summary {
-  border-left: 2px solid #7dd3fc;
-  color: #c8d2dc;
+  border-left: 2px solid #2563eb;
+  color: #334155;
   font-size: 16px;
   line-height: 1.7;
   margin: 0;
@@ -67,7 +67,7 @@
 }
 
 .article-view__body {
-  color: #e6edf3;
+  color: #18202a;
   font-size: 16px;
   line-height: 1.75;
 }
@@ -79,17 +79,38 @@
 .article-view__waiting,
 .article-view__failed,
 .article-view__not-found {
-  background: #111820;
-  border: 1px solid #253241;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
   border-radius: 8px;
-  color: #8b98a8;
+  color: #64717f;
+  display: grid;
+  gap: 8px;
   min-height: 96px;
   padding: 16px;
 }
 
+.article-view__state-title {
+  color: #18202a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.article-view__state-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.article-view__state-copy {
+  color: #64717f;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+
 .article-view__failed,
 .article-view__not-found {
-  color: #f87171;
+  color: #dc2626;
 }
 
 .article-view__original-link {

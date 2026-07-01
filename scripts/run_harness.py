@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import ipaddress
 import json
 import re
 import sqlite3
@@ -162,6 +163,34 @@ FRONTEND_GENERATED_PATH_PARTS = {"node_modules", "dist", ".vite"}
 DEPLOYED_BROWSER_SMOKE_REPORT = "deployed_browser_smoke.json"
 DEPLOYED_BROWSER_SMOKE_URL = "http://127.0.0.1:8010"
 DEPLOYED_BROWSER_SMOKE_PORT = 8010
+RESERVED_PLACEHOLDER_HOSTS = {"example.com", "example.org", "example.net"}
+RESERVED_PLACEHOLDER_SUFFIXES = (".test", ".invalid")
+FIXTURE_THRESHOLD_CANONICAL_URL = "https://developers.openai.com/resources/agentic-app-production/"
+FIXTURE_TRANSLATED_CANONICAL_URL = "https://openai.com/index/introducing-gpt-4-1-in-the-api/"
+FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL = "https://openai.com/index/introducing-openai-o3-pro/"
+FIXTURE_EXTRACTION_FAILURE_URL = "https://openai.com/index/extraction-failure-fixture/"
+FIXTURE_EMPTY_SUMMARY_URL = "https://openai.com/index/empty-summary-fixture/"
+FORBIDDEN_TRANSLATION_PLACEHOLDER_TERMS = (
+    "fixture",
+    "mock",
+    "模拟",
+    "占位",
+    "这是一条",
+    "这是一篇",
+)
+TRANSLATION_QUALITY_KEYWORDS = {
+    "fixture-translated-96": ("模型", "API", "发布"),
+    "fixture-rank-95": ("安全", "基准", "企业"),
+    "fixture-rank-94": ("评测", "智能体", "任务"),
+    "fixture-rank-93": ("芯片", "调度", "延迟"),
+    "fixture-rank-92": ("多模态", "工具", "基准"),
+    "fixture-rank-91": ("数据", "合成", "问答"),
+    "fixture-rank-90": ("检索", "规划", "小型"),
+    "fixture-rank-89": ("可观测", "提示词", "回归"),
+    "fixture-rank-88": ("编码", "仓库", "契约"),
+    "fixture-rank-87": ("产品", "漂移", "智能体"),
+    "fixture-old-high-99": ("里程碑", "窗口", "榜单"),
+}
 E2E_REQUIRED_SURFACES = [
     "home_news_feed",
     "high_score_list",
@@ -174,6 +203,7 @@ E2E_SURFACE_ASSERTION_MAP = {
     "high_score_list": ["A-e2e-ACC-STOP-006-high-score-list-browser"],
     "article_view": [
         "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
         "A-e2e-ACC-STOP-006-article-original-link-button",
         "A-e2e-ACC-STOP-006-no-direct-original-navigation",
     ],
@@ -276,6 +306,40 @@ TASK_017_NON_GOAL_TERMS = {
 TASK_020_SOURCE_FILES = list(
     dict.fromkeys([*TASK_015_SOURCE_FILES, *TASK_016_SOURCE_FILES, *TASK_017_SOURCE_FILES])
 )
+TASK_027_SOURCE_FILES = [
+    "docs/03_ui_spec.md",
+    "docs/07_test_spec.md",
+    "docs/08_acceptance.md",
+    "scripts/run_deployed_browser_smoke.py",
+    "frontend/src/styles/app.css",
+    "frontend/src/styles/article.css",
+    "frontend/src/styles/sources.css",
+    "frontend/src/components/SourceMarker.tsx",
+]
+TASK_028_SOURCE_FILES = [
+    "docs/03_ui_spec.md",
+    "docs/07_test_spec.md",
+    "docs/08_acceptance.md",
+    "tasks.md",
+    "scripts/run_harness.py",
+    "scripts/run_deployed_browser_smoke.py",
+    "tests/test_frontend_contract.py",
+    "frontend/src/components/HighScoreList.tsx",
+    "frontend/src/styles/app.css",
+]
+LIGHT_GRAY_BACKGROUND = "#f3f4f6"
+LIGHT_SURFACE_TOKENS = {"#ffffff", "#f8fafc"}
+LIGHT_BORDER = "#d8dee6"
+OLD_DARK_BACKGROUND_TOKENS = {"#0b0f14", "#111820", "#151e28"}
+EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS = {
+    "translated": 11,
+}
+EXPECTED_TRANSLATION_TOP_STATUS_COUNTS = {
+    "translated": 10,
+}
+UNREADABLE_DETAIL_TITLE = "摘要和正文暂不可用"
+READY_UNREADABLE_COPY = "翻译完成后将自动显示中文摘要和正文。"
+FAILED_UNREADABLE_COPY = "翻译失败，当前无法显示中文摘要和正文。"
 
 PRD_FLOW_ASSERTION_MAP = {
     "1.1": [
@@ -327,10 +391,12 @@ PRD_FLOW_ASSERTION_MAP = {
         "A-unit-ACC-STOP-007-llm-schema-validation",
         "A-integration-ACC-STOP-003-fallback-summary-translation",
         "A-integration-ACC-STOP-003-translation-failure-isolated",
+        "A-integration-ACC-STOP-003-translation-quality-fixtures",
         "A-unit-ACC-STOP-005-translation-facts",
     ],
     "5.1": [
         "A-e2e-ACC-STOP-006-home-news-density",
+        "A-api-ACC-STOP-004-home-translated-only",
         "A-integration-ACC-STOP-006-ui-render-contract",
         "A-integration-ACC-STOP-006-ui-forbidden-rendering",
         "A-e2e-ACC-STOP-006-news-card-summary-text-only",
@@ -338,21 +404,26 @@ PRD_FLOW_ASSERTION_MAP = {
     ],
     "5.2": [
         "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
         "A-e2e-ACC-STOP-006-no-direct-original-navigation",
         "A-api-ACC-STOP-004-home-detail-behavior",
     ],
     "6.1": [
         "A-api-ACC-STOP-004-home-detail-behavior",
+        "A-api-ACC-STOP-004-home-translated-only",
         "A-e2e-ACC-STOP-006-high-score-list-browser",
         "A-e2e-ACC-STOP-006-home-news-density",
     ],
     "6.2": [
         "A-e2e-ACC-STOP-006-high-score-list-browser",
         "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
     ],
     "7.1": [
         "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
         "A-e2e-ACC-STOP-006-article-original-link-button",
+        "A-api-ACC-STOP-004-original-url-real-link",
         "A-api-ACC-STOP-004-home-detail-behavior",
     ],
     "7.2": [
@@ -434,6 +505,52 @@ TASK_FALLBACK_ASSERTION_MAP = {
         "A-e2e-ACC-STOP-006-sources-page-browser",
         "A-e2e-ACC-STOP-006-refresh-action-browser",
         "A-e2e-ACC-STOP-006-news-card-summary-text-only",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-027": [
+        "A-integration-ACC-STOP-006-ui-render-contract",
+        "A-snapshot-ACC-STOP-006-layout-visual-contract",
+        "A-e2e-ACC-STOP-006-home-news-density",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-028": [
+        "A-integration-ACC-STOP-006-ui-render-contract",
+        "A-snapshot-ACC-STOP-006-layout-visual-contract",
+        "A-e2e-ACC-STOP-006-high-score-list-browser",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-029": [
+        "A-integration-ACC-STOP-003-translation-quality-fixtures",
+        "A-integration-ACC-STOP-003-translation-failure-isolated",
+        "A-e2e-ACC-STOP-006-home-news-density",
+    ],
+    "TASK-030": [
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
+        "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-integration-ACC-STOP-006-ui-render-contract",
+        "A-snapshot-ACC-STOP-006-layout-visual-contract",
+    ],
+    "TASK-031": [
+        "A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs",
+        "A-unit-ACC-STOP-001-local-acceptance-failure-preservation",
+    ],
+    "TASK-032": [
+        "A-api-ACC-STOP-004-original-url-real-link",
+        "A-e2e-ACC-STOP-006-article-original-link-button",
+        "A-e2e-ACC-STOP-006-no-direct-original-navigation",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-033": [
+        "A-integration-ACC-STOP-003-translation-quality-fixtures",
+        "A-api-ACC-STOP-004-home-detail-behavior",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
+        "A-static-ACC-STOP-010-contract-doc-sync",
+    ],
+    "TASK-034": [
+        "A-api-ACC-STOP-004-home-translated-only",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
+        "A-e2e-ACC-STOP-006-home-news-density",
+        "A-e2e-ACC-STOP-006-high-score-list-browser",
         "A-static-ACC-STOP-010-contract-doc-sync",
     ],
 }
@@ -1485,6 +1602,8 @@ def _extract_index_script() -> tuple[str, list[str]]:
         return "", issues
     match = re.search(r"<script>(.*?)</script>", html, re.S | re.I)
     if not match:
+        if re.search(r"<script[^>]+type=[\"']module[\"'][^>]+src=", html, re.I):
+            return "", []
         return "", ["index_html:script_not_found"]
     return match.group(1), []
 
@@ -1823,13 +1942,13 @@ def e2e_surface_evidence() -> dict[str, Any]:
 
     article_statuses: set[str] = set()
     if latest_news:
-        checks["news_cards_have_summary_fields"] = any(
+        checks["news_cards_have_content_fields"] = any(
             isinstance(item, dict)
-            and ("summary_zh" in item or "content_zh" in item)
+            and "content_zh" in item
             for item in latest_news
         )
-        if checks["news_cards_have_summary_fields"]:
-            issues.append("e2e_surface:news_card_summary_leak_in_list")
+        if checks["news_cards_have_content_fields"]:
+            issues.append("e2e_surface:news_card_content_leak_in_list")
         for item in latest_news:
             if isinstance(item, dict) and isinstance(item.get("status"), str):
                 article_statuses.add(str(item["status"]))
@@ -1841,9 +1960,63 @@ def e2e_surface_evidence() -> dict[str, Any]:
         checks["article_statuses"] = []
         checks["has_translation_failed_state"] = False
 
+    primary_click_issues: list[str] = []
+    primary_click_items = [
+        ("latest_news", item)
+        for item in latest_news
+        if isinstance(item, dict)
+    ] + [
+        ("top_ranked_news", item)
+        for item in top_news
+        if isinstance(item, dict)
+    ]
+    for list_name, item in primary_click_items:
+        item_id = str(item.get("id") or "")
+        if item.get("status") != "translated":
+            primary_click_issues.append(f"{list_name}:{item_id}:status={item.get('status')}")
+            continue
+        detail_response = client.get(f"/api/news/{item_id}")
+        detail_payload, detail_parse_issues = _safe_json(detail_response)
+        primary_click_issues.extend(
+            f"{list_name}:{item_id}:{issue}" for issue in detail_parse_issues
+        )
+        if detail_response.status_code != 200:
+            primary_click_issues.append(f"{list_name}:{item_id}:detail_status={detail_response.status_code}")
+            continue
+        detail_data = detail_payload.get("data") if isinstance(detail_payload, dict) else None
+        if not isinstance(detail_data, dict):
+            primary_click_issues.append(f"{list_name}:{item_id}:detail_payload_invalid")
+            continue
+        if detail_data.get("status") != "translated":
+            primary_click_issues.append(f"{list_name}:{item_id}:detail_status_value={detail_data.get('status')}")
+        if not detail_data.get("summary_zh"):
+            primary_click_issues.append(f"{list_name}:{item_id}:missing_summary_zh")
+        if not detail_data.get("content_zh"):
+            primary_click_issues.append(f"{list_name}:{item_id}:missing_content_zh")
+        original_url = str(detail_data.get("original_url") or "")
+        if not is_public_http_url_value(original_url):
+            primary_click_issues.append(f"{list_name}:{item_id}:original_url_not_public_http")
+        if is_reserved_placeholder_url(original_url):
+            primary_click_issues.append(f"{list_name}:{item_id}:original_url_placeholder")
+    checks["primary_click_readability"] = {
+        "checked_item_count": len(primary_click_items),
+        "all_visible_items_translated_and_readable": not primary_click_issues,
+        "issues": primary_click_issues,
+    }
+    if primary_click_issues:
+        issues.extend(f"e2e_surface:primary_click:{issue}" for issue in primary_click_issues)
+
     if latest_news:
         first_item = latest_news[0]
-        item_id = str(first_item.get("id", "")) if isinstance(first_item, dict) else ""
+        article_candidate = next(
+            (
+                item
+                for item in latest_news
+                if isinstance(item, dict) and item.get("status") == "translated"
+            ),
+            first_item,
+        )
+        item_id = str(article_candidate.get("id", "")) if isinstance(article_candidate, dict) else ""
         checks["sample_item_id"] = item_id
         article_view_verified = False
         if item_id:
@@ -1861,6 +2034,13 @@ def e2e_surface_evidence() -> dict[str, Any]:
                 )
                 if not checks["article_view_has_original_url"]:
                     add_issue("article_missing_original_url")
+                article_original_url = str(article_data.get("original_url") or "") if isinstance(article_data, dict) else ""
+                checks["article_view_original_url_public_http"] = is_public_http_url_value(article_original_url)
+                checks["article_view_original_url_non_placeholder"] = not is_reserved_placeholder_url(article_original_url)
+                if not checks["article_view_original_url_public_http"]:
+                    add_issue("article_original_url_not_public_http")
+                if not checks["article_view_original_url_non_placeholder"]:
+                    add_issue("article_original_url_placeholder")
                 checks["article_view_has_translation_fields"] = (
                     "summary_zh" in article_data and "content_zh" in article_data
                     if isinstance(article_data, dict)
@@ -1869,6 +2049,8 @@ def e2e_surface_evidence() -> dict[str, Any]:
                 article_view_verified = isinstance(article_data, dict) and bool(
                     article_data.get("id") == item_id
                     and checks["article_view_has_original_url"]
+                    and checks["article_view_original_url_public_http"]
+                    and checks["article_view_original_url_non_placeholder"]
                 )
         surface_checks["article_view"] = article_view_verified
 
@@ -1966,6 +2148,23 @@ def e2e_surface_evidence() -> dict[str, Any]:
         if not checks["script_patterns"]["no_direct_navigation_assignment"]:
             issues.append("e2e_surface:direct_navigation_detected")
 
+    react_sources, react_read_issues = task_016_read_sources()
+    issues.extend([f"e2e_surface:react_source:{issue}" for issue in react_read_issues])
+    article_source = react_sources.get("frontend/src/pages/ArticleView.tsx", "")
+    news_card_source = react_sources.get("frontend/src/components/NewsCard.tsx", "")
+    high_score_source = react_sources.get("frontend/src/components/HighScoreList.tsx", "")
+    checks["react_original_link_patterns"] = {
+        "article_href_uses_detail_original_url": "href={detail.original_url}" in article_source,
+        "article_link_target_blank": 'target="_blank"' in article_source,
+        "article_link_rel_noreferrer": 'rel="noreferrer"' in article_source,
+        "article_link_not_shown_for_ready": "detail.status !== 'ready'" in article_source,
+        "news_card_internal_route_only": "href={`/news/${item.id}`}" in news_card_source and "original_url" not in news_card_source,
+        "high_score_internal_route_only": "href={`/news/${item.id}`}" in high_score_source and "original_url" not in high_score_source,
+    }
+    for name, passed in checks["react_original_link_patterns"].items():
+        if not passed:
+            issues.append(f"e2e_surface:react_original_link:{name}=false")
+
     checks["surface_coverage"] = surface_checks
     checks["required_surfaces"] = E2E_REQUIRED_SURFACES
     for surface in checks["required_surfaces"]:
@@ -1994,7 +2193,11 @@ def backend_api_response_evidence() -> dict[str, Any]:
     client = TestClient(app)
     refresh_response = client.post("/api/refresh")
     translated_row = app.state.db.execute(
-        "SELECT id FROM news_item WHERE rss_guid = 'fixture-translated-96'"
+        """
+        SELECT id, original_url, canonical_url
+        FROM news_item
+        WHERE rss_guid = 'fixture-translated-96'
+        """
     ).fetchone()
     translated_detail_path = (
         f"/api/news/{translated_row['id']}"
@@ -2054,6 +2257,7 @@ def backend_api_response_evidence() -> dict[str, Any]:
     ]
 
     observations: list[dict[str, Any]] = []
+    original_url_checks: dict[str, Any] = {}
     issues: list[str] = []
     for name, response, expected_status, expected_envelope, required_data_keys in checks:
         check_issues = envelope_issue(
@@ -2085,18 +2289,41 @@ def backend_api_response_evidence() -> dict[str, Any]:
                 "latest_news": latest_news,
                 "top_ranked_news": top_ranked_news,
             }.items():
-                for field in ("summary_zh", "content_zh"):
-                    if any(isinstance(item, dict) and field in item for item in items):
-                        issues.append(f"get_home:{list_name}:leaked_{field}")
+                if any(isinstance(item, dict) and "content_zh" in item for item in items):
+                    issues.append(f"get_home:{list_name}:leaked_content_zh")
+                if any(isinstance(item, dict) and item.get("status") != "translated" for item in items):
+                    issues.append(f"get_home:{list_name}:non_translated_item")
+                if any(isinstance(item, dict) and not item.get("summary_zh") for item in items):
+                    issues.append(f"get_home:{list_name}:missing_summary_zh")
         if name == "get_translated_news_detail" and not check_issues:
             payload = response.json()
             detail = payload["data"]
             if detail.get("status") != "translated":
                 issues.append("get_translated_news_detail:status_not_translated")
+            detail_original_url = str(detail.get("original_url") or "")
+            original_url_checks = {
+                "detail_original_equals_db_original": bool(
+                    translated_row
+                    and detail_original_url == str(translated_row["original_url"])
+                ),
+                "detail_original_public_http": is_public_http_url_value(detail_original_url),
+                "detail_original_non_placeholder": not is_reserved_placeholder_url(detail_original_url),
+                "detail_canonical_not_exposed_as_original": bool(
+                    translated_row
+                    and detail_original_url != str(translated_row["canonical_url"])
+                    and str(translated_row["canonical_url"]) == FIXTURE_TRANSLATED_CANONICAL_URL
+                ),
+            }
+            issues.extend(
+                f"get_translated_news_detail:original_url:{key}=false"
+                for key, passed in original_url_checks.items()
+                if not passed
+            )
 
     return {
         "imported": True,
         "checks": observations,
+        "original_url_checks": original_url_checks,
         "issues": issues,
     }
 
@@ -2728,7 +2955,7 @@ def task_014_api_observations() -> dict[str, Any]:
         "early_concurrent_no_run": log_count_initial == log_count_after_early,
         "success_timestamp": task_014_refreshed_at(success_payload) == FIXED_TIMESTAMP,
         "second_timestamp": task_014_refreshed_at(second_payload) == FIXED_TIMESTAMP,
-        "idempotent_news_count": news_count_after_success == 12 and news_count_after_second == 12,
+        "idempotent_news_count": news_count_after_success == 14 and news_count_after_second == 14,
         "late_concurrent_last_timestamp": task_014_refreshed_at(late_payload) == FIXED_TIMESTAMP,
         "late_concurrent_no_run": log_count_before_late == log_count_after_late,
     }
@@ -2937,7 +3164,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
             "title": "新一代模型发布",
             "original_title": "New AI model released",
             "source_name": "OpenAI Blog",
-            "original_url": "https://example.com/news/home-001",
+            "original_url": FIXTURE_TRANSLATED_CANONICAL_URL,
             "published_at": "2026-06-28T08:00:00Z",
             "score": 98,
             "status": "translated",
@@ -2948,7 +3175,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
             "title": "Production agent reaches threshold",
             "original_title": "Production agent reaches threshold",
             "source_name": "HN Frontpage",
-            "original_url": "https://example.com/news/home-002",
+            "original_url": FIXTURE_THRESHOLD_CANONICAL_URL,
             "published_at": "2026-06-28T07:30:00Z",
             "score": 97,
             "status": "ready",
@@ -2958,7 +3185,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
             "title": "Translation mock failure",
             "original_title": "Translation mock failure",
             "source_name": "Dreyx Digest",
-            "original_url": "https://example.com/news/home-003",
+            "original_url": FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL,
             "published_at": "2026-06-28T07:00:00Z",
             "score": 96,
             "status": "translation_failed",
@@ -2971,7 +3198,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
                 "title": f"AI 新闻 {index}",
                 "original_title": f"AI fixture item {index}",
                 "source_name": ["OpenAI Blog", "HN Newest", "Developer Feed"][index % 3],
-                "original_url": f"https://example.com/news/home-{index:03d}",
+                "original_url": f"https://news.ycombinator.com/item?id=44255{index:03d}",
                 "published_at": f"2026-06-{28 - index % 4:02d}T0{index % 9}:00:00Z",
                 "score": 100 - index,
                 "status": "translated",
@@ -2983,7 +3210,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
         "title": "窗口外高分新闻",
         "original_title": "Older AI milestone outside ranking window",
         "source_name": "OpenAI Blog",
-        "original_url": "https://example.com/news/home-old",
+        "original_url": "https://news.ycombinator.com/item?id=43900099",
         "published_at": "2026-05-01T08:00:00Z",
         "score": 100,
         "status": "translated",
@@ -3000,9 +3227,16 @@ def task_015_project_card(item: dict[str, Any]) -> dict[str, Any]:
     status = str(item.get("status"))
     title = item.get("title") if status == "translated" else item.get("original_title")
     summary = item.get("summary_zh") if status == "translated" else None
+    if status == "ready":
+        aria_label = f"{title}，翻译中，{UNREADABLE_DETAIL_TITLE}"
+    elif status == "translation_failed":
+        aria_label = f"{title}，翻译失败，{UNREADABLE_DETAIL_TITLE}"
+    else:
+        aria_label = f"{title}，打开中文摘要和正文"
     return {
         "id": item.get("id"),
         "href": f"/news/{item.get('id')}",
+        "aria_label": aria_label,
         "title_text": title,
         "summary_text": summary,
         "status_text": TASK_015_STATUS_LABELS.get(status),
@@ -3025,7 +3259,13 @@ def task_015_project_home_dom(home_data: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": item.get("id"),
                 "href": f"/news/{item.get('id')}",
+                "status": item.get("status"),
                 "title_text": item.get("title") if item.get("status") == "translated" else item.get("original_title"),
+                "aria_label": (
+                    f"{item.get('title')}，打开中文摘要和正文"
+                    if item.get("status") == "translated"
+                    else f"{item.get('original_title')}，{TASK_015_STATUS_LABELS.get(str(item.get('status')))}，{UNREADABLE_DETAIL_TITLE}"
+                ),
                 "summary_node_count": 0,
                 "score": item.get("score"),
                 "published_at": item.get("published_at"),
@@ -3057,7 +3297,9 @@ def task_015_source_checks(sources: dict[str, str]) -> dict[str, Any]:
         "home_refresh_reloads_home": "client.refreshHome()" in sources["frontend/src/pages/HomePage.tsx"] and "await loadHome()" in sources["frontend/src/pages/HomePage.tsx"],
         "topbar_refresh_loading_state": "disabled={isRefreshing}" in sources["frontend/src/components/TopBar.tsx"] and "刷新中" in sources["frontend/src/components/TopBar.tsx"],
         "news_card_uses_internal_route": "href={`/news/${item.id}`}" in sources["frontend/src/components/NewsCard.tsx"],
+        "news_card_accessible_unreadable_label": "aria-label={linkLabel}" in sources["frontend/src/components/NewsCard.tsx"] and UNREADABLE_DETAIL_TITLE in sources["frontend/src/components/NewsCard.tsx"],
         "rank_item_uses_internal_route": "href={`/news/${item.id}`}" in sources["frontend/src/components/HighScoreList.tsx"],
+        "rank_item_accessible_unreadable_label": "aria-label={linkLabel}" in sources["frontend/src/components/HighScoreList.tsx"] and UNREADABLE_DETAIL_TITLE in sources["frontend/src/components/HighScoreList.tsx"],
         "summary_render_is_text_only": "dangerouslySetInnerHTML" not in joined_sources,
         "high_score_renders_no_summary": "summary_zh" not in sources["frontend/src/components/HighScoreList.tsx"],
         "score_badge_not_clickable": "onClick" not in sources["frontend/src/components/ScoreBadge.tsx"],
@@ -3090,9 +3332,15 @@ def task_015_ui_observations() -> dict[str, Any]:
         "summary_html_like_text_not_nodes": "<script>" in str(translated_card["summary_text"]) and translated_card["created_html_tag_nodes"] is False,
         "ready_card_no_zh_body_nodes": ready_card["summary_node_count"] == 0 and ready_card["content_node_count"] == 0 and ready_card["status_text"] == "翻译中",
         "failed_card_no_zh_body_nodes": failed_card["summary_node_count"] == 0 and failed_card["content_node_count"] == 0 and failed_card["status_text"] == "翻译失败",
+        "non_translated_card_links_explain_unreadable": UNREADABLE_DETAIL_TITLE in str(ready_card["aria_label"]) and UNREADABLE_DETAIL_TITLE in str(failed_card["aria_label"]),
         "home_density_uses_fixture_set": len(cards) >= 10,
         "rank_count_10": len(rank_items) == 10,
         "rank_items_have_internal_links": all(str(item["href"]).startswith("/news/") for item in rank_items),
+        "rank_non_translated_links_explain_unreadable": all(
+            UNREADABLE_DETAIL_TITLE in str(item["aria_label"])
+            for item in rank_items
+            if item["status"] != "translated"
+        ),
         "rank_items_render_no_summaries": all(item["summary_node_count"] == 0 for item in rank_items),
         "rank_preserves_score_time_order": all(a[0] > b[0] or (a[0] == b[0] and a[1] >= b[1]) for a, b in zip(rank_scores, rank_scores[1:])),
         "old_candidate_excluded": "home-old" not in {item["id"] for item in rank_items},
@@ -3206,7 +3454,7 @@ def task_016_detail_fixtures() -> dict[str, dict[str, Any]]:
             "title": "新一代模型发布",
             "original_title": "New AI model released",
             "source_name": "OpenAI Blog",
-            "original_url": "https://example.com/news/article-001",
+            "original_url": FIXTURE_TRANSLATED_CANONICAL_URL,
             "published_at": "2026-06-28T08:00:00Z",
             "score": 98,
             "status": "translated",
@@ -3218,7 +3466,7 @@ def task_016_detail_fixtures() -> dict[str, dict[str, Any]]:
             "title": "Production agent reaches threshold",
             "original_title": "Production agent reaches threshold",
             "source_name": "HN Frontpage",
-            "original_url": "https://example.com/news/article-002",
+            "original_url": FIXTURE_THRESHOLD_CANONICAL_URL,
             "published_at": "2026-06-28T07:30:00Z",
             "score": 87,
             "status": "ready",
@@ -3228,7 +3476,7 @@ def task_016_detail_fixtures() -> dict[str, dict[str, Any]]:
             "title": "Translation mock failure",
             "original_title": "Translation mock failure",
             "source_name": "Dreyx Digest",
-            "original_url": "https://example.com/news/article-003",
+            "original_url": FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL,
             "published_at": "2026-06-28T07:00:00Z",
             "score": 86,
             "status": "translation_failed",
@@ -3263,6 +3511,8 @@ def task_016_project_article(detail: dict[str, Any] | None, state: str) -> dict[
         "content_node_count": len([part for part in content_text.split("\n\n") if part]) if status == "translated" else 0,
         "waiting_text": "翻译中" if status == "ready" else None,
         "failed_text": "翻译失败" if status == "translation_failed" else None,
+        "unreadable_title": UNREADABLE_DETAIL_TITLE if status in {"ready", "translation_failed"} else None,
+        "unreadable_copy": READY_UNREADABLE_COPY if status == "ready" else FAILED_UNREADABLE_COPY if status == "translation_failed" else None,
         "original_link_href": detail.get("original_url") if status != "ready" else None,
         "created_html_tag_nodes": False,
     }
@@ -3281,6 +3531,8 @@ def task_016_source_checks(sources: dict[str, str]) -> dict[str, Any]:
         "article_polls_ready_detail": "setInterval" in article_source and "clearInterval" in article_source and "detail?.status !== 'ready'" in article_source,
         "article_not_found_text": "新闻不存在或不可展示" in article_source,
         "article_back_text": "返回新闻列表" in article_source,
+        "article_unreadable_reason_text": all(token in article_source for token in [UNREADABLE_DETAIL_TITLE, READY_UNREADABLE_COPY, FAILED_UNREADABLE_COPY]),
+        "article_unreadable_state_classes": "article-view__state-title" in article_source and "article-view__state-copy" in article_source,
         "article_original_link_only": "href={detail.original_url}" in article_source and "detail.status !== 'ready'" in article_source,
         "article_final_unit_no_subcomponent": "function ArticleContent" not in article_source,
         "no_dangerous_html": "dangerouslySetInnerHTML" not in joined_sources,
@@ -3308,9 +3560,11 @@ def task_016_ui_observations() -> dict[str, Any]:
     render_checks = {
         "translated_detail_complete": dom["translated"]["title_text"] == "新一代模型发布" and dom["translated"]["summary_node_count"] == 1 and dom["translated"]["content_node_count"] == 2,
         "translated_original_metadata": dom["translated"]["original_title_text"] == "New AI model released" and dom["translated"]["source_name"] == "OpenAI Blog" and dom["translated"]["score"] == 98,
-        "translated_original_link": dom["translated"]["original_link_href"] == "https://example.com/news/article-001",
+        "translated_original_link": dom["translated"]["original_link_href"] == FIXTURE_TRANSLATED_CANONICAL_URL,
         "ready_polls_and_omits_zh": dom["ready"]["waiting_text"] == "翻译中" and dom["ready"]["summary_node_count"] == 0 and dom["ready"]["content_node_count"] == 0 and dom["ready"]["original_link_href"] is None,
-        "failed_state_and_original_link": dom["failed"]["failed_text"] == "翻译失败" and dom["failed"]["summary_node_count"] == 0 and dom["failed"]["content_node_count"] == 0 and dom["failed"]["original_link_href"] == "https://example.com/news/article-003",
+        "ready_explains_unreadable_content": dom["ready"]["unreadable_title"] == UNREADABLE_DETAIL_TITLE and dom["ready"]["unreadable_copy"] == READY_UNREADABLE_COPY,
+        "failed_state_and_original_link": dom["failed"]["failed_text"] == "翻译失败" and dom["failed"]["summary_node_count"] == 0 and dom["failed"]["content_node_count"] == 0 and dom["failed"]["original_link_href"] == FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL,
+        "failed_explains_unreadable_content": dom["failed"]["unreadable_title"] == UNREADABLE_DETAIL_TITLE and dom["failed"]["unreadable_copy"] == FAILED_UNREADABLE_COPY,
         "not_found_state": dom["not_found"]["message"] == "新闻不存在或不可展示" and dom["not_found"]["back_text"] == "返回新闻列表",
         "article_text_render_safe": all(item.get("created_html_tag_nodes", False) is False for item in dom.values() if isinstance(item, dict)),
     }
@@ -3588,6 +3842,118 @@ def run_task_017_integration(report_dir: Path, task_id: str) -> int:
     return 0 if passed else 1
 
 
+def task_027_read_sources() -> tuple[dict[str, str], list[str]]:
+    sources: dict[str, str] = {}
+    issues: list[str] = []
+    for file_path in TASK_027_SOURCE_FILES:
+        text, read_issues = _safe_text_read(Path(file_path), file_path)
+        sources[file_path] = text
+        issues.extend(read_issues)
+        if not Path(file_path).exists():
+            issues.append(f"missing_file:{file_path}")
+    return sources, issues
+
+
+def css_rule_body(css: str, selector: str) -> str:
+    marker = f"{selector} {{"
+    start = css.find(marker)
+    if start < 0:
+        return ""
+    body_start = start + len(marker)
+    body_end = css.find("}", body_start)
+    return css[body_start:body_end] if body_end >= 0 else ""
+
+
+def task_028_card_contract_checks(app_css: str, docs_text: str) -> dict[str, bool]:
+    container = css_rule_body(app_css, ".high-score-list")
+    items = css_rule_body(app_css, ".high-score-list__items")
+    row_link = css_rule_body(app_css, ".high-score-list__item a")
+    return {
+        "docs_high_score_card_contract": "overall card" in docs_text and "整体卡片" in docs_text,
+        "high_score_outer_card_surface": "background: #ffffff" in container,
+        "high_score_outer_card_border": f"border: 1px solid {LIGHT_BORDER}" in container,
+        "high_score_outer_card_radius": "border-radius: 8px" in container,
+        "high_score_outer_card_padding": "padding: 16px" in container,
+        "high_score_items_are_rows": "gap: 0" in items,
+        "high_score_rows_divided": ".high-score-list__item + .high-score-list__item" in app_css
+        and f"border-top: 1px solid {LIGHT_BORDER}" in app_css,
+        "high_score_rows_not_nested_cards": "border: 1px solid" not in row_link
+        and "background: #ffffff" not in row_link
+        and "border-radius: 8px" not in row_link,
+    }
+
+
+def task_028_read_sources() -> tuple[dict[str, str], list[str]]:
+    sources: dict[str, str] = {}
+    issues: list[str] = []
+    for file_path in TASK_028_SOURCE_FILES:
+        text, read_issues = _safe_text_read(Path(file_path), file_path)
+        sources[file_path] = text
+        issues.extend(read_issues)
+        if not Path(file_path).exists():
+            issues.append(f"missing_file:{file_path}")
+    return sources, issues
+
+
+def task_028_card_observations() -> dict[str, Any]:
+    sources, read_issues = task_028_read_sources()
+    docs_text = "\n".join(
+        sources[path] for path in ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+    )
+    checks = task_028_card_contract_checks(sources["frontend/src/styles/app.css"].lower(), docs_text)
+    issues = list(read_issues)
+    issues.extend(f"high_score_card:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": issues}
+
+
+def task_027_surface_contract_checks(app_css: str, article_css: str, sources_css: str) -> dict[str, bool]:
+    high_score_container = css_rule_body(app_css, ".high-score-list")
+    return {
+        "news_card_surface": ".news-card {" in app_css and "background: #ffffff" in app_css,
+        "high_score_surface": "background: #ffffff" in high_score_container
+        and f"border: 1px solid {LIGHT_BORDER}" in high_score_container,
+        "state_surface": ".state-message {" in app_css and "background: #ffffff" in app_css,
+        "article_state_surface": ".article-view__waiting" in article_css and "background: #ffffff" in article_css,
+        "source_form_surface": ".source-form input" in sources_css and "background: #ffffff" in sources_css,
+        "source_row_surface": ".source-row {" in sources_css and "background: #ffffff" in sources_css,
+        "surface_subtle_token": "#f8fafc" in app_css.lower() and "#f8fafc" in article_css.lower(),
+        "border_token": all(LIGHT_BORDER in text.lower() for text in (app_css, article_css, sources_css)),
+    }
+
+
+def task_027_theme_checks(sources: dict[str, str]) -> dict[str, Any]:
+    app_css = sources["frontend/src/styles/app.css"].lower()
+    article_css = sources["frontend/src/styles/article.css"].lower()
+    sources_css = sources["frontend/src/styles/sources.css"].lower()
+    all_css = "\n".join([app_css, article_css, sources_css])
+    docs_text = "\n".join(
+        sources[path] for path in ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+    )
+    old_token_hits = sorted(token for token in OLD_DARK_BACKGROUND_TOKENS if token.lower() in all_css)
+    checks = {
+        "docs_light_gray_contract": all(token in docs_text for token in ["#F3F4F6", "#FFFFFF", "#F8FAFC"]),
+        "root_background_light_gray": ":root {" in app_css and f"background: {LIGHT_GRAY_BACKGROUND}" in app_css,
+        "body_background_light_gray": "body {" in app_css and f"background: {LIGHT_GRAY_BACKGROUND}" in app_css,
+        "app_shell_background_light_gray": ".app-shell {" in app_css and f"background: {LIGHT_GRAY_BACKGROUND}" in app_css,
+        "no_dark_color_scheme": "color-scheme: dark" not in all_css,
+        "no_old_dark_background_tokens": not old_token_hits,
+        "primary_text_dark": "#18202a" in all_css,
+        "secondary_text_muted": "#64717f" in all_css,
+        **task_027_surface_contract_checks(app_css, article_css, sources_css),
+        **task_028_card_contract_checks(app_css, docs_text),
+    }
+    return {"checks": checks, "old_token_hits": old_token_hits}
+
+
+def task_027_theme_observations() -> dict[str, Any]:
+    sources, read_issues = task_027_read_sources()
+    theme = task_027_theme_checks(sources)
+    issues = list(read_issues)
+    issues.extend(f"old_dark_background_token:{token}" for token in theme["old_token_hits"])
+    issues.extend(f"visual_theme:{name}=false" for name, passed in theme["checks"].items() if not passed)
+    return {"checks": theme["checks"], "issues": issues}
+
+
 def task_020_render_checks(home: dict[str, Any], article: dict[str, Any], sources: dict[str, Any]) -> dict[str, bool]:
     home_render = home["checks"]["render"]
     article_render = article["checks"]["render"]
@@ -3601,6 +3967,13 @@ def task_020_render_checks(home: dict[str, Any], article: dict[str, Any], source
         "ready_failed_home_omit_zh_nodes": home_render["ready_card_no_zh_body_nodes"] and home_render["failed_card_no_zh_body_nodes"],
         "article_translated_only_has_content": article_render["translated_detail_complete"],
         "article_ready_failed_omit_zh_nodes": article_render["ready_polls_and_omits_zh"] and article_render["failed_state_and_original_link"],
+        "click_to_read_no_empty_article": (
+            article_render["translated_detail_complete"]
+            and article_render["ready_explains_unreadable_content"]
+            and article_render["failed_explains_unreadable_content"]
+            and home_render["non_translated_card_links_explain_unreadable"]
+            and home_render["rank_non_translated_links_explain_unreadable"]
+        ),
         "article_not_found_state": article_render["not_found_state"],
         "sources_create_delete_states": sources_render["form_empty_invalid_success_states"] and sources_render["delete_removes_row"],
         "sources_structured_errors": sources_render["last_enabled_errors_visible"],
@@ -3635,10 +4008,14 @@ def task_020_ui_observations() -> dict[str, Any]:
     home = task_015_ui_observations()
     article = task_016_ui_observations()
     sources = task_017_ui_observations()
+    theme = task_027_theme_observations()
+    high_score_card = task_028_card_observations()
     checks = {
         "render": task_020_render_checks(home, article, sources),
         "interactions": task_020_interaction_checks(home, article, sources),
         "forbidden": task_020_forbidden_render_checks(home, article, sources),
+        "visual_theme": theme["checks"],
+        "high_score_card": high_score_card["checks"],
     }
     issues = [
         f"{area}:{name}=false"
@@ -3646,6 +4023,8 @@ def task_020_ui_observations() -> dict[str, Any]:
         for name, passed in values.items()
         if not passed
     ]
+    issues.extend(f"theme:{issue}" for issue in theme["issues"])
+    issues.extend(f"high_score_card:{issue}" for issue in high_score_card["issues"])
     leak_scan = scan_public_payload({"home_dom": home["dom"], "article_dom": article["dom"], "sources_dom": sources["dom"]})
     leak_scan["target"] = "ui_dom"
     if leak_scan["forbidden_field_count"] or leak_scan["sensitive_content_count"]:
@@ -3663,7 +4042,11 @@ def task_020_ui_observations() -> dict[str, Any]:
 
 def run_task_020_integration(report_dir: Path, task_id: str) -> int:
     observed = task_020_ui_observations()
-    render_passed = all(observed["checks"]["render"].values())
+    render_passed = (
+        all(observed["checks"]["render"].values())
+        and all(observed["checks"]["visual_theme"].values())
+        and all(observed["checks"]["high_score_card"].values())
+    )
     interactions_passed = all(observed["checks"]["interactions"].values())
     forbidden_passed = all(observed["checks"]["forbidden"].values())
     leak_passed = observed["leak_scan"]["forbidden_field_count"] == 0 and observed["leak_scan"]["sensitive_content_count"] == 0
@@ -3681,7 +4064,12 @@ def run_task_020_integration(report_dir: Path, task_id: str) -> int:
             "A-integration-ACC-STOP-006-ui-render-contract",
             "passed" if render_passed else "failed",
             {"ui_surfaces": "dense_home_ranked_article_sources_from_api_dtos"},
-            {"render_checks": observed["checks"]["render"], "fixture_counts": observed["fixture_counts"]},
+            {
+                "render_checks": observed["checks"]["render"],
+                "visual_theme_checks": observed["checks"]["visual_theme"],
+                "high_score_card_checks": observed["checks"]["high_score_card"],
+                "fixture_counts": observed["fixture_counts"],
+            },
             {},
             visibility="public_surface",
         ),
@@ -3719,6 +4107,442 @@ def run_task_020_integration(report_dir: Path, task_id: str) -> int:
         commands=[f"python3 scripts/run_harness.py --stage integration --task-id {task_id} --report-dir reports"],
     )
     write_test_report(report_destination(report_dir, "integration", task_id), report)
+    return 0 if passed else 1
+
+
+def task_027_theme_assertion(assertion_id: str, observed: dict[str, Any], visibility: str = "public_surface") -> dict[str, Any]:
+    passed = not observed["issues"] and all(observed["checks"].values())
+    return assertion(
+        assertion_id,
+        "passed" if passed else "failed",
+        {"light_gray_theme": "docs/03_ui_spec.md#4.2"},
+        {"theme_checks": observed["checks"], "issues": observed["issues"]},
+        {} if passed else {"issues": observed["issues"]},
+        visibility=visibility,
+    )
+
+
+def run_task_027_integration(report_dir: Path, task_id: str) -> int:
+    observed = task_027_theme_observations()
+    assertions = [
+        task_027_theme_assertion("A-integration-ACC-STOP-006-ui-render-contract", observed),
+        task_027_theme_assertion("task-027-integration-doc-sync", observed, "report_metadata"),
+    ]
+    passed = all(item["status"] == "passed" for item in assertions)
+    report = test_report(
+        stage="integration",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-light-gray-theme-integration",
+        assertions=assertions,
+        expected={"visual_theme": "light_gray"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        node="UI",
+        referenced_files=["scripts/run_harness.py", *TASK_027_SOURCE_FILES],
+        commands=[f"python3 scripts/run_harness.py --stage integration --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "integration", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_027_snapshot(report_dir: Path, task_id: str) -> int:
+    observed = task_027_theme_observations()
+    assertions = [task_027_theme_assertion("A-snapshot-ACC-STOP-006-layout-visual-contract", observed)]
+    passed = all(item["status"] == "passed" for item in assertions)
+    report = test_report(
+        stage="snapshot",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-light-gray-theme-snapshot",
+        assertions=assertions,
+        expected={"visual_theme_snapshot": "light_gray_tokens"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        node="UI",
+        referenced_files=["scripts/run_harness.py", *TASK_027_SOURCE_FILES],
+        commands=[f"python3 scripts/run_harness.py --stage snapshot --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "snapshot", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_027_e2e(report_dir: Path, task_id: str) -> int:
+    observed = task_027_theme_observations()
+    assertions = [task_027_theme_assertion("A-e2e-ACC-STOP-006-home-news-density", observed)]
+    passed = all(item["status"] == "passed" for item in assertions)
+    report = test_report(
+        stage="e2e",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-light-gray-theme-e2e",
+        assertions=assertions,
+        expected={"browser_visible_theme": "light_gray"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        node="UI",
+        referenced_files=["scripts/run_harness.py", *TASK_027_SOURCE_FILES],
+        commands=[f"python3 scripts/run_harness.py --stage e2e --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "e2e", task_id), report)
+    return 0 if passed else 1
+
+
+def task_028_card_assertion(assertion_id: str, observed: dict[str, Any], visibility: str = "public_surface") -> dict[str, Any]:
+    passed = not observed["issues"] and all(observed["checks"].values())
+    return assertion(
+        assertion_id,
+        "passed" if passed else "failed",
+        {"top_30_days": "one_overall_card_with_internal_rows"},
+        {"high_score_card_checks": observed["checks"], "issues": observed["issues"]},
+        {} if passed else {"issues": observed["issues"]},
+        visibility=visibility,
+    )
+
+
+def run_task_028_card_stage(report_dir: Path, task_id: str, stage: str, assertion_id: str) -> int:
+    observed = task_028_card_observations()
+    assertions = [
+        task_028_card_assertion(assertion_id, observed),
+        task_028_card_assertion("task-028-doc-sync", observed, "report_metadata"),
+    ]
+    passed = all(item["status"] == "passed" for item in assertions)
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-top-30-days-card-{stage}",
+        assertions=assertions,
+        expected={"top_30_days": "overall_card"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        node="UI",
+        referenced_files=["scripts/run_harness.py", *TASK_028_SOURCE_FILES],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_028_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_028_card_stage(report_dir, task_id, "integration", "A-integration-ACC-STOP-006-ui-render-contract")
+
+
+def run_task_028_snapshot(report_dir: Path, task_id: str) -> int:
+    return run_task_028_card_stage(report_dir, task_id, "snapshot", "A-snapshot-ACC-STOP-006-layout-visual-contract")
+
+
+def run_task_028_e2e(report_dir: Path, task_id: str) -> int:
+    return run_task_028_card_stage(report_dir, task_id, "e2e", "A-e2e-ACC-STOP-006-high-score-list-browser")
+
+
+def news_status_counts(items: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def task_029_unit_observations() -> dict[str, Any]:
+    *_, read_json, translation_records, has_valid_record, _ = task_008_pipeline_imports()
+    payload = read_json(Path("fixtures/llm/translation.json"))
+    records = translation_records(payload)
+    expected_valid_guids = {
+        "fixture-translated-96",
+        "fixture-rank-95",
+        "fixture-rank-94",
+        "fixture-rank-93",
+        "fixture-rank-92",
+        "fixture-rank-91",
+        "fixture-rank-90",
+        "fixture-rank-89",
+        "fixture-rank-88",
+        "fixture-rank-87",
+        "fixture-old-high-99",
+    }
+    valid_guids = {
+        guid for guid, record in records.items() if has_valid_record(record)
+    }
+    pending_guids = set(payload.get("pending_guids", []))
+    checks = {
+        "expected_valid_guids": sorted(expected_valid_guids),
+        "valid_guids": sorted(valid_guids),
+        "missing_valid_guids": sorted(expected_valid_guids - valid_guids),
+        "unexpected_missing_partial_failure": has_valid_record(records.get("fixture-translate-partial")),
+        "pending_guids": sorted(str(item) for item in pending_guids),
+    }
+    issues: list[str] = []
+    if valid_guids != expected_valid_guids:
+        issues.append(f"fixture:valid_guid_set_mismatch:{sorted(valid_guids)}")
+    if has_valid_record(records.get("fixture-translate-partial")):
+        issues.append("fixture:partial_translation_became_valid")
+    if "fixture-threshold-60" not in pending_guids:
+        issues.append("fixture:threshold_pending_guid_missing")
+    return {"checks": checks, "issues": issues}
+
+
+def task_029_integration_observations() -> dict[str, Any]:
+    observed = task_008_integration_observations()
+    issues: list[str] = []
+    if observed["translated_count"] != 11:
+        issues.append(f"integration:translated_count={observed['translated_count']}!=11")
+    if observed["failed_count"] != 1:
+        issues.append(f"integration:failed_count={observed['failed_count']}!=1")
+    if observed["pending_count"] != 1:
+        issues.append(f"integration:pending_count={observed['pending_count']}!=1")
+    if observed["translate_success_count"] != 11:
+        issues.append(f"integration:translate_success_count={observed['translate_success_count']}!=11")
+    if observed["translate_validation_failure_count"] != 1:
+        issues.append(
+            "integration:translate_validation_failure_count="
+            f"{observed['translate_validation_failure_count']}!=1"
+        )
+    if observed["partial_zh_count"] != 0 or observed["partial_failed"] != 1:
+        issues.append("integration:partial_failure_not_isolated")
+    if observed["pending_title"] is not None or observed["pending_failed"] != 0:
+        issues.append("integration:pending_fixture_not_ready")
+    return {"checks": observed, "issues": issues}
+
+
+def task_029_home_distribution_observations() -> dict[str, Any]:
+    app, client = task_014_client()
+    refresh_response = client.post("/api/refresh")
+    home_response = client.get("/api/home")
+    issues = envelope_issue(
+        name="task_029_refresh",
+        response=refresh_response,
+        expected_status=200,
+        expected_envelope="data",
+        required_data_keys={"refreshed_at"},
+    )
+    issues.extend(
+        envelope_issue(
+            name="task_029_home",
+            response=home_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"latest_news", "top_ranked_news"},
+        )
+    )
+    payload, parse_issues = _safe_json(home_response)
+    issues.extend(f"task_029_home:{issue}" for issue in parse_issues)
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    latest = data.get("latest_news") if isinstance(data, dict) else []
+    top = data.get("top_ranked_news") if isinstance(data, dict) else []
+    latest = latest if isinstance(latest, list) else []
+    top = top if isinstance(top, list) else []
+    latest_counts = news_status_counts(latest)
+    top_counts = news_status_counts(top)
+    if latest_counts != EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS:
+        issues.append(f"home:latest_status_counts:{latest_counts}")
+    if top_counts != EXPECTED_TRANSLATION_TOP_STATUS_COUNTS:
+        issues.append(f"home:top_status_counts:{top_counts}")
+
+    conn = app.state.db
+    partial = conn.execute(
+        """
+        SELECT title_zh, summary_zh, content_zh, has_translate_failed
+        FROM news_item
+        WHERE rss_guid = 'fixture-translate-partial'
+        """
+    ).fetchone()
+    pending = conn.execute(
+        """
+        SELECT title_zh, summary_zh, content_zh, has_translate_failed
+        FROM news_item
+        WHERE rss_guid = 'fixture-threshold-60'
+        """
+    ).fetchone()
+    partial_isolated = bool(
+        partial
+        and partial["has_translate_failed"] == 1
+        and not any(partial[field] for field in ("title_zh", "summary_zh", "content_zh"))
+    )
+    pending_ready = bool(
+        pending
+        and pending["has_translate_failed"] == 0
+        and not any(pending[field] for field in ("title_zh", "summary_zh", "content_zh"))
+    )
+    if not partial_isolated:
+        issues.append("home:partial_failure_not_isolated")
+    if not pending_ready:
+        issues.append("home:pending_fixture_not_ready")
+    return {
+        "checks": {
+            "latest_count": len(latest),
+            "top_count": len(top),
+            "latest_status_counts": latest_counts,
+            "top_status_counts": top_counts,
+            "partial_isolated": partial_isolated,
+            "pending_ready": pending_ready,
+        },
+        "issues": issues,
+    }
+
+
+def run_task_029_stage(report_dir: Path, task_id: str, stage: str, assertion_id: str) -> int:
+    if stage == "unit":
+        observed = task_029_unit_observations()
+        expected = {"fixture_valid_translation_guids": 11, "partial_failure": True, "pending_guid": True}
+    elif stage == "integration":
+        observed = task_029_integration_observations()
+        expected = {"translated_count": 11, "failed_count": 1, "pending_count": 1}
+    else:
+        observed = task_029_home_distribution_observations()
+        expected = {
+            "latest_status_counts": EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS,
+            "top_status_counts": EXPECTED_TRANSLATION_TOP_STATUS_COUNTS,
+        }
+    passed = not observed["issues"]
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-translation-fixture-majority-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                expected,
+                observed["checks"],
+                {"issues": observed["issues"]},
+                visibility="public_surface" if stage in {"api", "e2e", "integration"} else "internal_evidence",
+            )
+        ],
+        expected=expected,
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else stage,
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "fixtures/llm/translation.json",
+            "backend/app/services/pipeline.py",
+            "backend/app/main.py",
+            "docs/07_test_spec.md",
+            "docs/08_acceptance.md",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_029_unit(report_dir: Path, task_id: str) -> int:
+    return run_task_029_stage(report_dir, task_id, "unit", "task-029-unit-translation-fixture-majority")
+
+
+def run_task_029_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_029_stage(
+        report_dir,
+        task_id,
+        "integration",
+        "A-integration-ACC-STOP-003-translation-majority-visible",
+    )
+
+
+def run_task_029_api(report_dir: Path, task_id: str) -> int:
+    return run_task_029_stage(report_dir, task_id, "api", "task-029-api-home-translation-majority")
+
+
+def run_task_029_e2e(report_dir: Path, task_id: str) -> int:
+    return run_task_029_stage(report_dir, task_id, "e2e", "task-029-e2e-home-translation-majority")
+
+
+def task_030_readability_observations() -> dict[str, Any]:
+    docs = {
+        "docs/03_ui_spec.md": Path("docs/03_ui_spec.md").read_text(encoding="utf-8"),
+        "docs/07_test_spec.md": Path("docs/07_test_spec.md").read_text(encoding="utf-8"),
+        "docs/08_acceptance.md": Path("docs/08_acceptance.md").read_text(encoding="utf-8"),
+    }
+    home = task_015_ui_observations()
+    article = task_016_ui_observations()
+    ui = task_020_ui_observations()
+    checks = {
+        "docs_contract_updated": all(UNREADABLE_DETAIL_TITLE in text for text in docs.values())
+        and "A-e2e-ACC-STOP-006-click-to-read-readability" in docs["docs/07_test_spec.md"],
+        "translated_detail_has_content": article["checks"]["render"]["translated_detail_complete"],
+        "ready_detail_explains_unreadable": article["checks"]["render"]["ready_polls_and_omits_zh"]
+        and article["checks"]["render"]["ready_explains_unreadable_content"],
+        "failed_detail_explains_unreadable": article["checks"]["render"]["failed_state_and_original_link"]
+        and article["checks"]["render"]["failed_explains_unreadable_content"],
+        "home_card_links_explain_unreadable": home["checks"]["render"]["non_translated_card_links_explain_unreadable"],
+        "rank_links_explain_unreadable": home["checks"]["render"]["rank_non_translated_links_explain_unreadable"],
+        "click_to_read_no_empty_article": ui["checks"]["render"]["click_to_read_no_empty_article"],
+        "no_direct_original_navigation": ui["checks"]["interactions"]["news_card_internal_click"]
+        and ui["checks"]["interactions"]["high_score_internal_click"],
+    }
+    issues = [f"readability:{name}=false" for name, passed in checks.items() if not passed]
+    issues.extend(f"home:{issue}" for issue in home["issues"])
+    issues.extend(f"article:{issue}" for issue in article["issues"])
+    issues.extend(f"ui:{issue}" for issue in ui["issues"])
+    return {
+        "checks": checks,
+        "issues": sorted(set(issues)),
+        "home_link_examples": {
+            "ready": next(card["aria_label"] for card in home["dom"]["cards"] if card["id"] == "home-002"),
+            "failed": next(card["aria_label"] for card in home["dom"]["cards"] if card["id"] == "home-003"),
+        },
+        "article_states": {
+            "ready": {
+                "unreadable_title": article["dom"]["ready"]["unreadable_title"],
+                "unreadable_copy": article["dom"]["ready"]["unreadable_copy"],
+            },
+            "failed": {
+                "unreadable_title": article["dom"]["failed"]["unreadable_title"],
+                "unreadable_copy": article["dom"]["failed"]["unreadable_copy"],
+            },
+        },
+    }
+
+
+def run_task_030_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    observed = task_030_readability_observations()
+    passed = not observed["issues"]
+    assertion_id_by_stage = {
+        "integration": "A-integration-ACC-STOP-006-ui-render-contract",
+        "snapshot": "A-snapshot-ACC-STOP-006-layout-visual-contract",
+        "e2e": "A-e2e-ACC-STOP-006-click-to-read-readability",
+    }
+    assertion_id = assertion_id_by_stage[stage]
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-click-to-read-readability-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"click_to_read_no_empty_article": True},
+                {"checks": observed["checks"], "article_states": observed["article_states"]},
+                {"issues": observed["issues"]},
+                visibility="public_surface",
+            )
+        ],
+        expected={"click_to_read_no_empty_article": True},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "docs/03_ui_spec.md",
+            "docs/07_test_spec.md",
+            "docs/08_acceptance.md",
+            "frontend/src/pages/ArticleView.tsx",
+            "frontend/src/components/NewsCard.tsx",
+            "frontend/src/components/HighScoreList.tsx",
+            "frontend/src/styles/article.css",
+            "frontend/src/styles/app.css",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
     return 0 if passed else 1
 
 
@@ -3763,6 +4587,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         "fixture-rank-91",
         "fixture-rank-90",
         "fixture-rank-89",
+        "fixture-rank-88",
+        "fixture-rank-87",
         "fixture-old-high-99",
     }
     observed_guids = {str(row["rss_guid"]) for row in rows}
@@ -3771,8 +4597,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
             "pipeline:fixture_guid_set_missing:"
             f"{sorted(expected_guids - observed_guids)}"
         )
-    if len(rows) < 12:
-        issues.append(f"pipeline:news_item_count={len(rows)}<12")
+    if len(rows) < 14:
+        issues.append(f"pipeline:news_item_count={len(rows)}<14")
 
     by_guid = {str(row["rss_guid"]): row for row in rows}
     threshold = by_guid.get("fixture-threshold-60")
@@ -3824,8 +4650,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
     }
     if log_summary.get("crawl:0", 0) < 1:
         issues.append("pipeline:crawl_failure_fixture_not_logged")
-    if log_summary.get("score:1", 0) < 12:
-        issues.append("pipeline:score_success_count_less_than_12")
+    if log_summary.get("score:1", 0) < 14:
+        issues.append("pipeline:score_success_count_less_than_14")
     if log_summary.get("fetch:1", 0) < 2 or log_summary.get("fetch:0", 0) < 1:
         issues.append("pipeline:fetch_success_and_fallback_not_logged")
     if log_summary.get("translate:1", 0) < 1 or log_summary.get("translate:0", 0) < 1:
@@ -3843,10 +4669,14 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
     )
     latest_titles: list[str] = []
     ranked_scores: list[int] = []
+    latest_status_counts: dict[str, int] = {}
+    ranked_status_counts: dict[str, int] = {}
     if home_response.status_code == 200:
         payload = home_response.json()
         latest_news = payload["data"].get("latest_news", [])
         top_ranked_news = payload["data"].get("top_ranked_news", [])
+        latest_status_counts = news_status_counts(latest_news)
+        ranked_status_counts = news_status_counts(top_ranked_news)
         latest_titles = [
             str(item.get("original_title"))
             for item in latest_news
@@ -3870,6 +4700,10 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
             issues.append(f"pipeline:ranked_scores_not_desc:{ranked_scores}")
         if "Older AI milestone outside ranking window" in ranked_titles:
             issues.append("pipeline:old_high_score_visible_in_30_day_ranking")
+        if latest_status_counts != EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS:
+            issues.append(f"pipeline:latest_status_counts:{latest_status_counts}")
+        if ranked_status_counts != EXPECTED_TRANSLATION_TOP_STATUS_COUNTS:
+            issues.append(f"pipeline:ranked_status_counts:{ranked_status_counts}")
 
     snapshot = {
         "guids": sorted(observed_guids),
@@ -3890,6 +4724,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         "log_summary": log_summary,
         "latest_titles": latest_titles,
         "ranked_scores": ranked_scores,
+        "latest_status_counts": latest_status_counts,
+        "ranked_status_counts": ranked_status_counts,
     }
     return snapshot, issues
 
@@ -4535,6 +5371,25 @@ def canonicalize_fixture_url(value: str) -> str:
     return urlunsplit(
         (parts.scheme, parts.netloc, parts.path or "/", urlencode(query), "")
     )
+
+
+def is_reserved_placeholder_url(value: str) -> bool:
+    host = (urlsplit(value).hostname or "").lower()
+    return host in RESERVED_PLACEHOLDER_HOSTS or host.endswith(RESERVED_PLACEHOLDER_SUFFIXES)
+
+
+def is_public_http_url_value(value: str) -> bool:
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return False
+    host = parts.hostname.lower()
+    if host == "localhost" or host.endswith(".local"):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return bool(address.is_global)
 
 
 def task_003_fixture_paths() -> dict[str, Path]:
@@ -5244,14 +6099,14 @@ def run_task_004_unit(report_dir: Path, task_id: str) -> int:
 def run_task_004_integration(report_dir: Path, task_id: str) -> int:
     actual = task_004_integration_observations()
     passed = (
-        actual["inserted_count"] == 12
+        actual["inserted_count"] == 14
         and actual["source_success_count"] == 6
         and actual["source_failure_count"] == 1
-        and actual["news_item_count"] == 12
+        and actual["news_item_count"] == 14
         and actual["states"] == ["raw"]
-        and actual["score_null_count"] == 12
-        and actual["content_full_null_count"] == 12
-        and actual["title_zh_null_count"] == 12
+        and actual["score_null_count"] == 14
+        and actual["content_full_null_count"] == 14
+        and actual["title_zh_null_count"] == 14
         and actual["crawl_log_count"] == 7
         and actual["crawl_failure_errors"] == ["parsing"]
         and actual["all_logs_are_crawl_source_logs"]
@@ -5441,18 +6296,18 @@ def run_task_005_unit(report_dir: Path, task_id: str) -> int:
 def run_task_005_integration(report_dir: Path, task_id: str) -> int:
     actual = task_005_integration_observations()
     passed = (
-        actual["scored_count"] == 12
+        actual["scored_count"] == 14
         and actual["failed_count"] == 0
-        and actual["selected_count"] == 11
+        and actual["selected_count"] == 13
         and actual["states"] == ["scored"]
         and actual["threshold_score"] == 60
         and actual["threshold_selected"] == 1
         and actual["low_score"] == 59
         and actual["low_selected"] == 0
-        and actual["content_full_null_count"] == 12
-        and actual["title_zh_null_count"] == 12
-        and actual["score_log_count"] == 12
-        and actual["score_log_success_count"] == 12
+        and actual["content_full_null_count"] == 14
+        and actual["title_zh_null_count"] == 14
+        and actual["score_log_count"] == 14
+        and actual["score_log_success_count"] == 14
         and actual["all_score_logs_news_owned"]
         and actual["failure_result"]["failed_count"] == 2
         and actual["failure_states"] == ["raw"]
@@ -5563,7 +6418,7 @@ def run_task_006_unit(report_dir: Path, task_id: str) -> int:
 def run_task_006_integration(report_dir: Path, task_id: str) -> int:
     actual = task_006_integration_observations()
     passed = (
-        actual["candidate_count"] == 11
+        actual["candidate_count"] == 13
         and actual["canonical_count"] == actual["unique_canonical_count"]
         and actual["news_item_canonical_count"] == actual["news_item_unique_canonical_count"]
         and actual["all_states_scored"]
@@ -5572,7 +6427,7 @@ def run_task_006_integration(report_dir: Path, task_id: str) -> int:
         and actual["low_59_absent"]
         and actual["threshold_60_present"]
         and actual["distinct_rank_items_present"]
-        and actual["content_full_null_count"] == 11
+        and actual["content_full_null_count"] == 13
     )
     report = test_report(
         stage="integration",
@@ -5612,16 +6467,16 @@ def task_007_unit_observations() -> dict[str, Any]:
     *_, read_json, article_records, extract_article_text = task_007_pipeline_imports()
     payload = read_json(Path("fixtures/articles/article_map.json"))
     articles = article_records(payload)
-    threshold_record = articles.get("https://example.com/news/threshold", {})
+    threshold_record = articles.get(FIXTURE_THRESHOLD_CANONICAL_URL, {})
     threshold_path = Path("fixtures/articles") / str(threshold_record.get("path"))
     threshold_text = extract_article_text(threshold_path)
     return {
         "article_case_count": len(payload.get("cases", [])),
         "threshold_status": threshold_record.get("status"),
         "threshold_text_non_empty": bool(threshold_text.strip()),
-        "network_error": articles.get("https://example.com/news/translation-partial", {}).get("error"),
-        "parsing_error": articles.get("https://example.com/news/extraction-failure", {}).get("error"),
-        "empty_summary_error": articles.get("https://example.com/news/empty-summary", {}).get("error"),
+        "network_error": articles.get(FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL, {}).get("error"),
+        "parsing_error": articles.get(FIXTURE_EXTRACTION_FAILURE_URL, {}).get("error"),
+        "empty_summary_error": articles.get(FIXTURE_EMPTY_SUMMARY_URL, {}).get("error"),
     }
 
 
@@ -5727,9 +6582,9 @@ def run_task_007_unit(report_dir: Path, task_id: str) -> int:
 def run_task_007_integration(report_dir: Path, task_id: str) -> int:
     actual = task_007_integration_observations()
     passed = (
-        actual["fetched_count"] == 11
+        actual["fetched_count"] == 13
         and actual["content_full_count"] == 2
-        and actual["fallback_count"] == 9
+        and actual["fallback_count"] == 11
         and actual["failed_count"] == 0
         and actual["threshold_state"] == "fetched"
         and actual["threshold_content_full"]
@@ -5738,9 +6593,9 @@ def run_task_007_integration(report_dir: Path, task_id: str) -> int:
         and actual["partial_content_raw"]
         and actual["low_state"] == "scored"
         and actual["low_content_full"] is None
-        and actual["fetch_log_count"] == 11
+        and actual["fetch_log_count"] == 13
         and actual["fetch_success_count"] == 2
-        and actual["fetch_network_failure_count"] == 9
+        and actual["fetch_network_failure_count"] == 11
         and actual["all_fetch_logs_news_owned"]
         and actual["no_fallback_result"]["failed_count"] == 1
         and actual["no_fallback_state"] == "scored"
@@ -5879,9 +6734,9 @@ def run_task_008_unit(report_dir: Path, task_id: str) -> int:
 def run_task_008_integration(report_dir: Path, task_id: str) -> int:
     actual = task_008_integration_observations()
     passed = (
-        actual["translated_count"] == 2
+        actual["translated_count"] == 11
         and actual["pending_count"] == 1
-        and actual["failed_count"] == 8
+        and actual["failed_count"] == 1
         and actual["translated_title"] == "新的 AI 模型发布"
         and actual["fallback_content_full"] is None
         and bool(actual["fallback_summary_zh"])
@@ -5891,9 +6746,9 @@ def run_task_008_integration(report_dir: Path, task_id: str) -> int:
         and actual["pending_title"] is None
         and actual["pending_failed"] == 0
         and actual["states"] == ["fetched", "scored"]
-        and actual["translate_log_count"] == 10
-        and actual["translate_success_count"] == 2
-        and actual["translate_validation_failure_count"] == 8
+        and actual["translate_log_count"] == 12
+        and actual["translate_success_count"] == 11
+        and actual["translate_validation_failure_count"] == 1
         and actual["all_translate_logs_news_owned"]
     )
     report = test_report(
@@ -5936,16 +6791,16 @@ def run_task_009_integration(report_dir: Path, task_id: str) -> int:
         and actual["finished_at"] == "2026-06-28T09:00:00Z"
         and actual["source_success_count"] == 6
         and actual["source_failure_count"] == 1
-        and actual["rss_item_count"] == 13
-        and actual["new_item_count"] == 12
-        and actual["scored_item_count"] == 12
-        and actual["selected_item_count"] == 11
-        and actual["fetched_item_count"] == 11
-        and actual["translated_item_count"] == 2
+        and actual["rss_item_count"] == 15
+        and actual["new_item_count"] == 14
+        and actual["scored_item_count"] == 14
+        and actual["selected_item_count"] == 13
+        and actual["fetched_item_count"] == 13
+        and actual["translated_item_count"] == 11
         and actual["failure_details"] == {
             "crawl:parsing": 1,
-            "fetch:network": 9,
-            "translate:validation_llm_error": 8,
+            "fetch:network": 11,
+            "translate:validation_llm_error": 1,
         }
         and actual["processing_log_count"] >= 40
     )
@@ -6002,7 +6857,7 @@ def run_task_010_integration(report_dir: Path, task_id: str) -> int:
     actual = task_010_integration_observations()
     passed = (
         actual["manual_started"] is True
-        and actual["manual_translated_count"] == 2
+        and actual["manual_translated_count"] == 11
         and actual["morning_started"] is True
         and actual["evening_started"] is True
         and actual["idle"] == {"started": False, "reason": "not_scheduled_time", "summary": None}
@@ -6075,8 +6930,8 @@ def run_task_018_integration(report_dir: Path, task_id: str) -> int:
         )
         and actual["failure_details"] == {
             "crawl:parsing": 1,
-            "fetch:network": 9,
-            "translate:validation_llm_error": 8,
+            "fetch:network": 11,
+            "translate:validation_llm_error": 1,
         }
     )
     report = test_report(
@@ -6234,6 +7089,8 @@ def task_023_ui_snapshot() -> dict[str, Any]:
         "render": ui["checks"]["render"],
         "interactions": ui["checks"]["interactions"],
         "forbidden": ui["checks"]["forbidden"],
+        "visual_theme": ui["checks"]["visual_theme"],
+        "high_score_card": ui["checks"]["high_score_card"],
         "home_layout": {
             "two_columns": task_015_source_checks(task_015_read_sources()[0])["checks"]["desktop_home_two_columns"],
             "news_card_min_height": task_015_source_checks(task_015_read_sources()[0])["checks"]["news_card_min_height"],
@@ -6298,6 +7155,7 @@ def task_023_expected_ui_snapshot() -> dict[str, Any]:
         "ready_failed_home_omit_zh_nodes",
         "article_translated_only_has_content",
         "article_ready_failed_omit_zh_nodes",
+        "click_to_read_no_empty_article",
         "article_not_found_state",
         "sources_create_delete_states",
         "sources_structured_errors",
@@ -6317,10 +7175,48 @@ def task_023_expected_ui_snapshot() -> dict[str, Any]:
         "article_source_checks_safe",
         "sources_source_checks_safe",
     ]
+    visual_theme_keys = [
+        "docs_light_gray_contract",
+        "root_background_light_gray",
+        "body_background_light_gray",
+        "app_shell_background_light_gray",
+        "no_dark_color_scheme",
+        "no_old_dark_background_tokens",
+        "primary_text_dark",
+        "secondary_text_muted",
+        "news_card_surface",
+        "high_score_surface",
+        "state_surface",
+        "article_state_surface",
+        "source_form_surface",
+        "source_row_surface",
+        "surface_subtle_token",
+        "border_token",
+        "docs_high_score_card_contract",
+        "high_score_outer_card_surface",
+        "high_score_outer_card_border",
+        "high_score_outer_card_radius",
+        "high_score_outer_card_padding",
+        "high_score_items_are_rows",
+        "high_score_rows_divided",
+        "high_score_rows_not_nested_cards",
+    ]
+    high_score_card_keys = [
+        "docs_high_score_card_contract",
+        "high_score_outer_card_surface",
+        "high_score_outer_card_border",
+        "high_score_outer_card_radius",
+        "high_score_outer_card_padding",
+        "high_score_items_are_rows",
+        "high_score_rows_divided",
+        "high_score_rows_not_nested_cards",
+    ]
     return {
         "render": {key: True for key in render_keys},
         "interactions": {key: True for key in interaction_keys},
         "forbidden": {key: True for key in forbidden_keys},
+        "visual_theme": {key: True for key in visual_theme_keys},
+        "high_score_card": {key: True for key in high_score_card_keys},
         "home_layout": {
             "two_columns": True,
             "news_card_min_height": True,
@@ -6460,6 +7356,7 @@ def task_024_e2e_observations() -> dict[str, Any]:
     pipeline = pipeline_refresh_evidence()
     api = backend_api_response_evidence()
     ui = task_020_ui_observations()
+    browser_surface = e2e_surface_evidence()
     replay_status = task_024_report_status(Path("reports/tasks/TASK-022/replay.json"))
     snapshot_status = task_024_report_status(Path("reports/tasks/TASK-023/snapshot.json"))
     checks = {
@@ -6474,19 +7371,24 @@ def task_024_e2e_observations() -> dict[str, Any]:
             "snapshot_report_passed": snapshot_status == "passed",
         },
         "ui": ui["checks"],
+        "browser_surface": browser_surface["checks"],
         "api": {
             "refresh_home_detail_sources": not api["issues"],
         },
     }
-    leak_scan = scan_public_payload({"api": checks["api"], "ui": checks["ui"]})
+    leak_scan = scan_public_payload(
+        {"api": checks["api"], "ui": checks["ui"], "browser_surface": checks["browser_surface"]}
+    )
     leak_scan["target"] = "ui_dom"
     issues = task_024_e2e_issues(checks, leak_scan)
+    issues.extend(f"browser_surface:{issue}" for issue in browser_surface["issues"])
     return {
         "checks": checks,
         "issues": issues,
         "leak_scan": leak_scan,
         "pipeline": {"issue_count": len(pipeline["issues"])},
         "api": {"issue_count": len(api["issues"])},
+        "browser_surface": {"issue_count": len(browser_surface["issues"])},
         "runner": "deterministic_api_and_dom_projection",
     }
 
@@ -6498,6 +7400,12 @@ def task_024_e2e_issues(checks: dict[str, Any], leak_scan: dict[str, Any]) -> li
             issues.append(f"isolation:{name}=false")
     if not checks["api"]["refresh_home_detail_sources"]:
         issues.append("api:refresh_home_detail_sources=false")
+    primary_click = checks.get("browser_surface", {}).get("primary_click_readability", {})
+    if (
+        isinstance(primary_click, dict)
+        and primary_click.get("all_visible_items_translated_and_readable") is False
+    ):
+        issues.append("browser_surface:primary_click_readability=false")
     for area, values in checks["ui"].items():
         for name, passed in values.items():
             if not passed:
@@ -6512,11 +7420,35 @@ def task_024_e2e_assertions(observed: dict[str, Any]) -> list[dict[str, Any]]:
     ui = checks["ui"]
     isolation_passed = all(value is True or not isinstance(value, bool) for value in checks["isolation"].values())
     leak_passed = observed["leak_scan"]["forbidden_field_count"] == 0 and observed["leak_scan"]["sensitive_content_count"] == 0
+    visual_theme_passed = all(ui["visual_theme"].values())
+    high_score_card_passed = all(ui["high_score_card"].values())
+    browser_surface = checks.get("browser_surface", {})
+    primary_click = browser_surface.get("primary_click_readability", {}) if isinstance(browser_surface, dict) else {}
+    primary_click_passed = (
+        isinstance(primary_click, dict)
+        and primary_click.get("all_visible_items_translated_and_readable") is True
+    )
     assertions = [
         task_024_simple_assertion("A-e2e-ACC-STOP-008-clean-run-isolation", isolation_passed, checks["isolation"], "report_metadata"),
-        task_024_simple_assertion("A-e2e-ACC-STOP-006-home-news-density", ui["render"]["home_density_from_api_payload"] and ui["render"]["home_density_not_sparse_smoke"], {"render": ui["render"]}, "public_surface"),
-        task_024_simple_assertion("A-e2e-ACC-STOP-006-high-score-list-browser", ui["render"]["high_score_top_10_ordered"] and ui["interactions"]["high_score_internal_click"], {"render": ui["render"], "interactions": ui["interactions"]}, "public_surface"),
+        task_024_simple_assertion(
+            "A-e2e-ACC-STOP-006-home-news-density",
+            ui["render"]["home_density_from_api_payload"] and ui["render"]["home_density_not_sparse_smoke"] and visual_theme_passed,
+            {"render": ui["render"], "visual_theme": ui["visual_theme"]},
+            "public_surface",
+        ),
+        task_024_simple_assertion(
+            "A-e2e-ACC-STOP-006-high-score-list-browser",
+            ui["render"]["high_score_top_10_ordered"] and ui["interactions"]["high_score_internal_click"] and high_score_card_passed,
+            {"render": ui["render"], "interactions": ui["interactions"], "high_score_card": ui["high_score_card"]},
+            "public_surface",
+        ),
         task_024_simple_assertion("A-e2e-ACC-STOP-006-article-view-browser", ui["render"]["article_translated_only_has_content"] and ui["render"]["article_ready_failed_omit_zh_nodes"] and ui["render"]["article_not_found_state"], {"render": ui["render"]}, "public_surface"),
+        task_024_simple_assertion(
+            "A-e2e-ACC-STOP-006-click-to-read-readability",
+            ui["render"]["click_to_read_no_empty_article"] and primary_click_passed,
+            {"render": ui["render"], "browser_surface_primary_click": primary_click},
+            "public_surface",
+        ),
         task_024_simple_assertion("A-e2e-ACC-STOP-006-article-original-link-button", ui["interactions"]["original_link_only_in_article"], {"interactions": ui["interactions"]}, "public_surface"),
         task_024_simple_assertion("A-e2e-ACC-STOP-006-no-direct-original-navigation", ui["interactions"]["news_card_internal_click"] and ui["interactions"]["high_score_internal_click"], {"interactions": ui["interactions"]}, "public_surface"),
         task_024_simple_assertion("A-e2e-ACC-STOP-006-sources-page-browser", ui["render"]["sources_create_delete_states"] and ui["render"]["sources_structured_errors"], {"render": ui["render"], "interactions": ui["interactions"]}, "public_surface"),
@@ -6586,6 +7518,7 @@ def materialized_stage_behavior(stage: str) -> dict[str, Any]:
 def materialized_integration_behavior() -> dict[str, Any]:
     pipeline = pipeline_refresh_evidence()
     ui = task_020_ui_observations()
+    translation_quality = task_033_db_quality_observations()
     owner_reports = {
         "TASK-018": task_024_report_status(Path("reports/tasks/TASK-018/integration.json")),
         "TASK-020": task_024_report_status(Path("reports/tasks/TASK-020/integration.json")),
@@ -6593,6 +7526,7 @@ def materialized_integration_behavior() -> dict[str, Any]:
     }
     issues = [f"pipeline:{issue}" for issue in pipeline["issues"]]
     issues.extend(f"ui:{issue}" for issue in ui["issues"])
+    issues.extend(f"translation_quality:{issue}" for issue in translation_quality["issues"])
     for task_id, status in owner_reports.items():
         if status != "passed":
             issues.append(f"owner_report:{task_id}:status={status}")
@@ -6600,6 +7534,7 @@ def materialized_integration_behavior() -> dict[str, Any]:
         "checks": {
             "pipeline_issue_count": len(pipeline["issues"]),
             "ui_issue_count": len(ui["issues"]),
+            "translation_quality": translation_quality["checks"],
             "owner_reports": owner_reports,
         },
         "issues": issues,
@@ -7003,6 +7938,13 @@ def run_static_product_stage(report_dir: Path) -> int:
         SCHEMA_FILES["round_summary_report"],
         "RoundSummaryReport",
     )
+    docs_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (Path("docs/07_test_spec.md"), Path("docs/08_acceptance.md"))
+    )
+    local_acceptance_preservation_docs = (
+        "failed local user acceptance" in docs_text and "preserved" in docs_text
+    )
 
     base_checks = {
         "A-static-ACC-STOP-001-test-report-schema-contract": (
@@ -7028,6 +7970,7 @@ def run_static_product_stage(report_dir: Path) -> int:
             len(missing_paths) == 0 and not architecture_issues
         ),
         "A-static-ACC-STOP-010-contract-doc-sync": len(tasks_read_issues) == 0,
+        "A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs": local_acceptance_preservation_docs,
         "A-static-ACC-STOP-010-non-goal-files-absent": len(architecture_issues) == 0,
     }
     for assertion_id, info in catalog_static.items():
@@ -7631,9 +8574,11 @@ def task_026_test_spec_audit() -> dict[str, Any]:
         "A-api-ACC-STOP-002-default-source-crud-parity",
         "A-integration-ACC-STOP-003-dedupe-positive-distinct-items",
         "A-integration-ACC-STOP-003-fallback-summary-translation",
+        "A-integration-ACC-STOP-003-translation-majority-visible",
         "A-e2e-ACC-STOP-006-article-original-link-button",
         "A-e2e-ACC-STOP-006-no-direct-original-navigation",
         "A-e2e-ACC-STOP-006-article-view-browser",
+        "A-e2e-ACC-STOP-006-click-to-read-readability",
         "A-e2e-ACC-STOP-006-sources-page-browser",
         "A-e2e-ACC-STOP-006-refresh-action-browser",
     ]
@@ -7795,6 +8740,20 @@ def run_pipeline_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_008_unit(report_dir, task_id)
     if task_id == "TASK-008" and stage == "integration":
         return run_task_008_integration(report_dir, task_id)
+    if task_id == "TASK-029" and stage == "unit":
+        return run_task_029_unit(report_dir, task_id)
+    if task_id == "TASK-029" and stage == "integration":
+        return run_task_029_integration(report_dir, task_id)
+    if task_id == "TASK-032" and stage == "unit":
+        return run_task_032_unit(report_dir, task_id)
+    if task_id == "TASK-032" and stage == "integration":
+        return run_task_032_integration(report_dir, task_id)
+    if task_id == "TASK-033" and stage == "unit":
+        return run_task_033_unit(report_dir, task_id)
+    if task_id == "TASK-033" and stage == "integration":
+        return run_task_033_integration(report_dir, task_id)
+    if task_id == "TASK-034" and stage == "integration":
+        return run_task_034_integration(report_dir, task_id)
     if task_id == "TASK-009" and stage == "integration":
         return run_task_009_integration(report_dir, task_id)
     if task_id == "TASK-010" and stage == "integration":
@@ -7813,6 +8772,30 @@ def run_verification_task_stage(report_dir: Path, stage: str, task_id: str) -> i
         return run_task_023_snapshot(report_dir, task_id)
     if task_id == "TASK-024" and stage == "e2e":
         return run_task_024_e2e(report_dir, task_id)
+    if task_id == "TASK-027" and stage == "snapshot":
+        return run_task_027_snapshot(report_dir, task_id)
+    if task_id == "TASK-027" and stage == "e2e":
+        return run_task_027_e2e(report_dir, task_id)
+    if task_id == "TASK-028" and stage == "snapshot":
+        return run_task_028_snapshot(report_dir, task_id)
+    if task_id == "TASK-028" and stage == "e2e":
+        return run_task_028_e2e(report_dir, task_id)
+    if task_id == "TASK-029" and stage == "e2e":
+        return run_task_029_e2e(report_dir, task_id)
+    if task_id == "TASK-032" and stage == "e2e":
+        return run_task_032_e2e(report_dir, task_id)
+    if task_id == "TASK-033" and stage == "snapshot":
+        return run_task_033_snapshot(report_dir, task_id)
+    if task_id == "TASK-033" and stage == "e2e":
+        return run_task_033_e2e(report_dir, task_id)
+    if task_id == "TASK-034" and stage == "snapshot":
+        return run_task_034_snapshot(report_dir, task_id)
+    if task_id == "TASK-034" and stage == "e2e":
+        return run_task_034_e2e(report_dir, task_id)
+    if task_id == "TASK-030" and stage == "snapshot":
+        return run_task_030_stage(report_dir, task_id, stage)
+    if task_id == "TASK-030" and stage == "e2e":
+        return run_task_030_stage(report_dir, task_id, stage)
     return None
 
 
@@ -7833,6 +8816,14 @@ def run_api_task_stage(report_dir: Path, stage: str, task_id: str) -> int | None
         return run_task_014_contract(report_dir, task_id)
     if task_id == "TASK-014" and stage == "api":
         return run_task_014_api(report_dir, task_id)
+    if task_id == "TASK-029" and stage == "api":
+        return run_task_029_api(report_dir, task_id)
+    if task_id == "TASK-032" and stage == "api":
+        return run_task_032_api(report_dir, task_id)
+    if task_id == "TASK-033" and stage == "api":
+        return run_task_033_api(report_dir, task_id)
+    if task_id == "TASK-034" and stage == "api":
+        return run_task_034_api(report_dir, task_id)
     return None
 
 
@@ -7845,6 +8836,12 @@ def run_ui_task_stage(report_dir: Path, stage: str, task_id: str) -> int | None:
         return run_task_017_integration(report_dir, task_id)
     if task_id == "TASK-020" and stage == "integration":
         return run_task_020_integration(report_dir, task_id)
+    if task_id == "TASK-027" and stage == "integration":
+        return run_task_027_integration(report_dir, task_id)
+    if task_id == "TASK-028" and stage == "integration":
+        return run_task_028_integration(report_dir, task_id)
+    if task_id == "TASK-030" and stage == "integration":
+        return run_task_030_stage(report_dir, task_id, stage)
     return None
 
 
@@ -7867,6 +8864,12 @@ def run_workflow_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_025_static(report_dir, task_id)
     if task_id == "TASK-025" and stage == "unit":
         return run_task_025_unit(report_dir, task_id)
+    if task_id == "TASK-031" and stage == "static":
+        return run_task_031_static(report_dir, task_id)
+    if task_id == "TASK-031" and stage == "unit":
+        return run_task_031_unit(report_dir, task_id)
+    if task_id == "TASK-032" and stage == "static":
+        return run_task_032_static(report_dir, task_id)
     return None
 
 
@@ -8407,6 +9410,44 @@ def local_acceptance_failed_findings(
     return failed_findings
 
 
+def regression_assertion_passed(report_dir: Path, assertion_id: str) -> bool:
+    metadata = assertion_candidates_metadata(report_dir, [assertion_id])
+    return assertion_id in set(metadata.get("passed_ids", []))
+
+
+def preserved_local_user_findings(report_dir: Path, path: Path) -> list[dict[str, Any]]:
+    payload = read_report(path)
+    if not payload:
+        return []
+    failed_findings = payload.get("failed_findings", [])
+    if not isinstance(failed_findings, list):
+        return []
+    preserved: list[dict[str, Any]] = []
+    for finding in failed_findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("id") == "local-user-auto-check":
+            continue
+        regression_id = finding.get("regression_assertion_id")
+        if isinstance(regression_id, str) and regression_assertion_passed(report_dir, regression_id):
+            continue
+        preserved.append(dict(finding))
+    return preserved
+
+
+def merge_failed_findings(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for group in groups:
+        for finding in group:
+            key = (str(finding.get("id", "")), str(finding.get("summary", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(finding)
+    return merged
+
+
 def ensure_local_user_acceptance_report(report_dir: Path) -> None:
     path = report_dir / "acceptance" / "local_user_acceptance.json"
     browser_e2e = browser_e2e_stop_input_evidence(report_dir)
@@ -8414,7 +9455,10 @@ def ensure_local_user_acceptance_report(report_dir: Path) -> None:
     checked_surfaces = list(deployed_smoke.get("checked_surfaces") or browser_e2e.get("required_surfaces", E2E_REQUIRED_SURFACES))
     if not checked_surfaces:
         checked_surfaces = list(E2E_REQUIRED_SURFACES)
-    failed_findings = local_acceptance_failed_findings(browser_e2e, deployed_smoke)
+    failed_findings = merge_failed_findings(
+        preserved_local_user_findings(report_dir, path),
+        local_acceptance_failed_findings(browser_e2e, deployed_smoke),
+    )
     write_json(
         path,
         {
@@ -8433,6 +9477,1329 @@ def ensure_local_user_acceptance_report(report_dir: Path) -> None:
             "timestamp": FIXED_TIMESTAMP,
         },
     )
+
+
+def write_local_acceptance_probe_success_inputs(probe_dir: Path) -> None:
+    e2e_assertions = [
+        assertion(
+            assertion_id,
+            "passed",
+            {"surface": surface},
+            {"surface": surface},
+            {},
+            visibility="public_surface",
+        )
+        for surface, assertion_ids in E2E_SURFACE_ASSERTION_MAP.items()
+        for assertion_id in assertion_ids
+    ]
+    write_test_report(
+        probe_dir / "stages" / "e2e.json",
+        test_report(
+            stage="e2e",
+            status="passed",
+            test_id="local-acceptance-preservation-probe-e2e",
+            assertions=e2e_assertions,
+            expected={"surfaces": "covered"},
+            actual={"surfaces": "covered"},
+        ),
+    )
+    write_json(
+        probe_dir / "acceptance" / DEPLOYED_BROWSER_SMOKE_REPORT,
+        {
+            "status": "passed",
+            "local_url": DEPLOYED_BROWSER_SMOKE_URL,
+            "port": DEPLOYED_BROWSER_SMOKE_PORT,
+            "checked_surfaces": E2E_REQUIRED_SURFACES,
+            "failed_findings": [],
+            "browser": {
+                "http_status": 200,
+                "api_home_status": 200,
+                "root_child_count": 1,
+                "body_text_length": 100,
+                "app_shell_exists": True,
+                "news_card_count": 1,
+                "rank_item_count": 1,
+                "console_error_count": 0,
+                "page_error_count": 0,
+                "screenshot_path": "acceptance/deployed_browser_smoke.png",
+            },
+        },
+    )
+
+
+def write_probe_local_user_finding(probe_dir: Path, finding_id: str) -> None:
+    write_json(
+        probe_dir / "acceptance" / "local_user_acceptance.json",
+        {
+            "schema_ref": "workflows.md#LocalUserAcceptanceReport",
+            "schema_version": "v1",
+            "status": "failed",
+            "local_url": DEPLOYED_BROWSER_SMOKE_URL,
+            "port": DEPLOYED_BROWSER_SMOKE_PORT,
+            "database": {"kind": "sqlite", "fixture_set": FIXTURE_VERSION},
+            "checked_surfaces": E2E_REQUIRED_SURFACES,
+            "failed_findings": [
+                {
+                    "id": finding_id,
+                    "surface": "article_view",
+                    "severity": "critical",
+                    "summary": "Original link is still a placeholder.",
+                    "evidence": "local acceptance probe",
+                    "regression_assertion_id": "A-api-ACC-STOP-004-original-url-real-link",
+                }
+            ],
+            "timestamp": FIXED_TIMESTAMP,
+        },
+    )
+
+
+def task_031_local_acceptance_probe(report_dir: Path) -> dict[str, Any]:
+    unresolved_dir = report_dir / "tasks" / "TASK-031" / "probe_unresolved"
+    write_local_acceptance_probe_success_inputs(unresolved_dir)
+    write_probe_local_user_finding(unresolved_dir, "LUAF-probe-unresolved")
+    ensure_local_user_acceptance_report(unresolved_dir)
+    unresolved = read_report(unresolved_dir / "acceptance" / "local_user_acceptance.json") or {}
+
+    resolved_dir = report_dir / "tasks" / "TASK-031" / "probe_resolved"
+    write_local_acceptance_probe_success_inputs(resolved_dir)
+    write_probe_local_user_finding(resolved_dir, "LUAF-probe-resolved")
+    write_test_report(
+        resolved_dir / "stages" / "api.json",
+        test_report(
+            stage="api",
+            status="passed",
+            test_id="original-url-regression-probe",
+            assertions=[
+                assertion(
+                    "A-api-ACC-STOP-004-original-url-real-link",
+                    "passed",
+                    {"original_url": "non_placeholder"},
+                    {"original_url": "non_placeholder"},
+                    {},
+                    visibility="public_surface",
+                )
+            ],
+            expected={"original_url": "non_placeholder"},
+            actual={"original_url": "non_placeholder"},
+        ),
+    )
+    ensure_local_user_acceptance_report(resolved_dir)
+    resolved = read_report(resolved_dir / "acceptance" / "local_user_acceptance.json") or {}
+
+    unresolved_ids = [
+        item.get("id")
+        for item in unresolved.get("failed_findings", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "unresolved_status": unresolved.get("status"),
+        "unresolved_ids": unresolved_ids,
+        "resolved_status": resolved.get("status"),
+        "resolved_failed_findings": resolved.get("failed_findings"),
+    }
+
+
+def run_task_031_static(report_dir: Path, task_id: str) -> int:
+    tasks_payload, task_issues = read_yaml_object(Path("tasks.md"))
+    task = task_map(tasks_payload).get(task_id) if tasks_payload else None
+    plan = read_report(Path("reports/tasks/TASK-031/plan.json"))
+    plan_issues = validate_against_schema(
+        plan,
+        SCHEMA_FILES["task_plan_report"],
+        "TaskPlanReport",
+    )
+    docs_text = "\n".join(
+        path.read_text()
+        for path in (Path("docs/07_test_spec.md"), Path("docs/08_acceptance.md"))
+    )
+    observed = {
+        "task_exists": task is not None,
+        "task_status": task.get("status") if task else None,
+        "plan_schema_valid": not plan_issues,
+        "task_issues": task_issues,
+        "plan_issues": plan_issues,
+        "docs_preserve_failed_findings": "failed local user acceptance" in docs_text
+        and "preserved" in docs_text,
+    }
+    passed = (
+        observed["task_exists"]
+        and observed["task_status"] in {"pending", "passed"}
+        and observed["plan_schema_valid"]
+        and not task_issues
+        and observed["docs_preserve_failed_findings"]
+    )
+    report = test_report(
+        stage="static",
+        status="passed" if passed else "failed",
+        test_id="task-031-local-acceptance-preservation-static",
+        assertions=[
+            assertion(
+                "A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs",
+                "passed" if passed else "failed",
+                {"task_exists": True, "plan_schema_valid": True, "docs_preserve_failed_findings": True},
+                observed,
+                {"task_issues": task_issues, "plan_issues": plan_issues},
+            )
+        ],
+        expected={"task": task_id, "plan": "schema_valid"},
+        actual=observed,
+        failure_type=None if passed else "contract",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "tasks.md",
+            "reports/tasks/TASK-031/plan.json",
+            "docs/07_test_spec.md",
+            "docs/08_acceptance.md",
+        ],
+    )
+    write_test_report(report_destination(report_dir, "static", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_031_unit(report_dir: Path, task_id: str) -> int:
+    observed = task_031_local_acceptance_probe(report_dir)
+    preserved = observed["unresolved_status"] == "failed" and observed["unresolved_ids"] == [
+        "LUAF-probe-unresolved"
+    ]
+    cleared = observed["resolved_status"] == "passed" and observed["resolved_failed_findings"] == []
+    assertions = [
+        assertion(
+            "A-unit-ACC-STOP-001-local-acceptance-failure-preservation",
+            "passed" if preserved and cleared else "failed",
+            {"unresolved_preserved": True, "resolved_cleared": True},
+            {"unresolved_preserved": preserved, "resolved_cleared": cleared},
+            observed,
+        ),
+    ]
+    passed = all(item["status"] == "passed" for item in assertions)
+    report = test_report(
+        stage="unit",
+        status="passed" if passed else "failed",
+        test_id="task-031-local-acceptance-preservation-unit",
+        assertions=assertions,
+        expected={"local_user_acceptance_preservation": "passed"},
+        actual=observed,
+        failure_type=None if passed else "contract",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "scripts/run_harness.py",
+            "tests/test_harness_workflow_contract.py",
+            "reports/tasks/TASK-031/plan.json",
+        ],
+    )
+    write_test_report(report_destination(report_dir, "unit", task_id), report)
+    return 0 if passed else 1
+
+
+def task_032_load_url_inputs() -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    rss, rss_issues = read_json_object(Path("fixtures/rss/feeds.json"))
+    articles, article_issues = read_json_object(Path("fixtures/articles/article_map.json"))
+    return rss or {}, articles or {}, rss_issues + article_issues
+
+
+def task_032_rss_link_records(rss: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    feeds = rss.get("feeds", [])
+    if not isinstance(feeds, list):
+        return records
+    for feed in feeds:
+        if not isinstance(feed, dict):
+            continue
+        items = feed.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            link = str(item.get("link") or "")
+            records.append(
+                {
+                    "guid": str(item.get("guid") or ""),
+                    "link": link,
+                    "canonical_url": canonicalize_fixture_url(link) if link else "",
+                    "public_http": is_public_http_url_value(link),
+                    "reserved_placeholder": is_reserved_placeholder_url(link),
+                }
+            )
+    return records
+
+
+def task_032_fixture_url_observations() -> dict[str, Any]:
+    rss, articles, issues = task_032_load_url_inputs()
+    link_records = task_032_rss_link_records(rss)
+    article_urls = set(articles.get("articles", {})) if isinstance(articles.get("articles"), dict) else set()
+    cases = articles.get("cases", [])
+    case_urls = {
+        str(item.get("url"))
+        for item in cases
+        if isinstance(item, dict) and item.get("url")
+    } if isinstance(cases, list) else set()
+    all_urls = {record["link"] for record in link_records} | article_urls | case_urls
+    threshold_records = [
+        record for record in link_records if record["guid"].startswith("fixture-threshold-60")
+    ]
+    canonical_counts: dict[str, int] = {}
+    for record in link_records:
+        canonical = str(record["canonical_url"])
+        canonical_counts[canonical] = canonical_counts.get(canonical, 0) + 1
+    checks = {
+        "rss_fixture_version": rss.get("version") == FIXTURE_VERSION,
+        "article_fixture_version": articles.get("version") == FIXTURE_VERSION,
+        "rss_links_present": bool(link_records),
+        "rss_links_public_http": all(record["public_http"] for record in link_records),
+        "rss_links_non_placeholder": not [
+            record for record in link_records if record["reserved_placeholder"]
+        ],
+        "article_urls_public_http": all(is_public_http_url_value(url) for url in article_urls | case_urls),
+        "article_urls_non_placeholder": not [
+            url for url in article_urls | case_urls if is_reserved_placeholder_url(url)
+        ],
+        "article_cases_covered": case_urls.issubset(article_urls),
+        "threshold_canonical_article_present": FIXTURE_THRESHOLD_CANONICAL_URL in article_urls,
+        "translated_canonical_article_present": FIXTURE_TRANSLATED_CANONICAL_URL in article_urls,
+        "translation_partial_canonical_article_present": FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL in article_urls,
+        "threshold_duplicate_canonicalized": len(threshold_records) >= 2
+        and canonical_counts.get(FIXTURE_THRESHOLD_CANONICAL_URL) == 2,
+    }
+    issues.extend(f"fixture_url:{name}=false" for name, passed in checks.items() if not passed)
+    return {
+        "checks": checks,
+        "issues": issues,
+        "link_records": link_records,
+        "article_urls": sorted(article_urls),
+        "case_urls": sorted(case_urls),
+        "reserved_urls": sorted(url for url in all_urls if is_reserved_placeholder_url(url)),
+    }
+
+
+def task_032_docs_static_observations(task_id: str) -> dict[str, Any]:
+    tasks_payload, task_issues = read_yaml_object(Path("tasks.md"))
+    task = task_map(tasks_payload).get(task_id) if tasks_payload else None
+    plan = read_report(Path(f"reports/tasks/{task_id}/plan.json"))
+    plan_issues = validate_against_schema(
+        plan,
+        SCHEMA_FILES["task_plan_report"],
+        "TaskPlanReport",
+    )
+    docs = {
+        path.as_posix(): path.read_text(encoding="utf-8")
+        for path in (
+            Path("docs/01_prd.md"),
+            Path("docs/03_ui_spec.md"),
+            Path("docs/05_api_contract.md"),
+            Path("docs/07_test_spec.md"),
+            Path("docs/08_acceptance.md"),
+        )
+    }
+    api_doc = docs["docs/05_api_contract.md"]
+    test_doc = docs["docs/07_test_spec.md"]
+    checks = {
+        "task_exists": task is not None,
+        "task_actionable_or_complete": task is not None
+        and task.get("status") in {"pending", "in_progress", "passed"},
+        "plan_schema_valid": not plan_issues,
+        "api_contract_original_url_rules": all(
+            token in api_doc
+            for token in [
+                "MUST be the public HTTP(S) article URL read from the RSS item link",
+                "MUST NOT be synthesized by the API",
+                "Product-facing local acceptance fixtures MUST NOT use reserved placeholder hosts",
+            ]
+        ),
+        "mandatory_assertions_documented": all(
+            token in test_doc
+            for token in [
+                "A-api-ACC-STOP-004-original-url-real-link",
+                "A-e2e-ACC-STOP-006-article-original-link-button",
+            ]
+        ),
+        "api_examples_non_placeholder_original_url": '"original_url": "https://example.com/news/' not in api_doc,
+    }
+    issues = task_issues + plan_issues
+    issues.extend(f"static_original_url:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": issues}
+
+
+def task_032_api_original_url_observations() -> dict[str, Any]:
+    app, import_issue = import_backend_app()
+    if import_issue:
+        return {"checks": {"backend_imported": False}, "issues": [import_issue]}
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as error:
+        return {
+            "checks": {"backend_imported": True, "test_client_imported": False},
+            "issues": [f"fastapi_testclient_import_failed:{error.__class__.__name__}"],
+        }
+
+    rss, _, fixture_issues = task_032_load_url_inputs()
+    rss_link_by_guid = {
+        record["guid"]: record["link"]
+        for record in task_032_rss_link_records(rss)
+        if record["guid"]
+    }
+    client = TestClient(app)
+    issues = list(fixture_issues)
+    refresh_response = client.post("/api/refresh")
+    issues.extend(
+        envelope_issue(
+            name="task_032_refresh",
+            response=refresh_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"refreshed_at"},
+        )
+    )
+    conn = app.state.db
+    rows = conn.execute(
+        """
+        SELECT id, rss_guid, original_url, canonical_url, score, is_selected
+        FROM news_item
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    db_by_id = {str(row["id"]): row for row in rows}
+    db_by_guid = {str(row["rss_guid"]): row for row in rows if row.get("rss_guid")}
+    translated = db_by_guid.get("fixture-translated-96")
+    translated_detail: dict[str, Any] = {}
+    if translated:
+        detail_response = client.get(f"/api/news/{translated['id']}")
+        issues.extend(
+            envelope_issue(
+                name="task_032_translated_detail",
+                response=detail_response,
+                expected_status=200,
+                expected_envelope="data",
+                required_data_keys={"id", "original_url", "status", "summary_zh", "content_zh"},
+            )
+        )
+        payload, parse_issues = _safe_json(detail_response)
+        issues.extend(f"task_032_detail:{issue}" for issue in parse_issues)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        translated_detail = data if isinstance(data, dict) else {}
+    else:
+        issues.append("api_original_url:translated_fixture_missing")
+
+    home_response = client.get("/api/home")
+    issues.extend(
+        envelope_issue(
+            name="task_032_home",
+            response=home_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"latest_news", "top_ranked_news"},
+        )
+    )
+    home_payload, home_parse_issues = _safe_json(home_response)
+    issues.extend(f"task_032_home:{issue}" for issue in home_parse_issues)
+    home_data = home_payload.get("data") if isinstance(home_payload, dict) else {}
+    home_items = []
+    if isinstance(home_data, dict):
+        for list_name in ("latest_news", "top_ranked_news"):
+            items = home_data.get(list_name)
+            if isinstance(items, list):
+                home_items.extend(item for item in items if isinstance(item, dict))
+    home_translated_items = [item for item in home_items if item.get("status") == "translated"]
+    home_original_url_mismatches = [
+        {
+            "id": item.get("id"),
+            "api_original_url": item.get("original_url"),
+            "db_original_url": db_by_id.get(str(item.get("id") or ""), {}).get("original_url"),
+        }
+        for item in home_translated_items
+        if item.get("original_url") != db_by_id.get(str(item.get("id") or ""), {}).get("original_url")
+    ]
+    home_reserved_urls = [
+        item.get("original_url")
+        for item in home_items
+        if isinstance(item.get("original_url"), str)
+        and is_reserved_placeholder_url(str(item.get("original_url")))
+    ]
+    checks = {
+        "backend_imported": True,
+        "refresh_passed": refresh_response.status_code == 200,
+        "translated_db_row_exists": translated is not None,
+        "translated_db_original_equals_rss_link": bool(
+            translated
+            and translated["original_url"] == rss_link_by_guid.get("fixture-translated-96")
+        ),
+        "translated_db_canonical_internal_only": bool(
+            translated and translated["canonical_url"] == FIXTURE_TRANSLATED_CANONICAL_URL
+        ),
+        "detail_status_translated": translated_detail.get("status") == "translated",
+        "detail_original_equals_db_original": bool(
+            translated and translated_detail.get("original_url") == translated["original_url"]
+        ),
+        "detail_original_public_http": is_public_http_url_value(str(translated_detail.get("original_url") or "")),
+        "detail_original_non_placeholder": not is_reserved_placeholder_url(
+            str(translated_detail.get("original_url") or "")
+        ),
+        "home_translated_items_present": bool(home_translated_items),
+        "home_translated_original_urls_match_db": not home_original_url_mismatches,
+        "home_original_urls_non_placeholder": not home_reserved_urls,
+    }
+    issues.extend(f"api_original_url:{name}=false" for name, passed in checks.items() if not passed)
+    return {
+        "checks": checks,
+        "issues": issues,
+        "translated_detail": translated_detail,
+        "translated_db_row": dict(translated) if translated else None,
+        "home_translated_count": len(home_translated_items),
+        "home_original_url_mismatches": home_original_url_mismatches,
+        "home_reserved_urls": home_reserved_urls,
+    }
+
+
+def task_032_integration_original_url_observations() -> dict[str, Any]:
+    connect, initialize_database, seed_default_sources, ingest_fixture_rss, score_raw_news, fetch_selected_content, *_ = (
+        task_008_pipeline_imports()
+    )
+    conn = connect(":memory:")
+    initialize_database(conn)
+    seed_default_sources(conn)
+    ingest_fixture_rss(conn)
+    score_raw_news(conn)
+    fetch_selected_content(conn)
+    rows = conn.execute(
+        """
+        SELECT rss_guid, original_url, canonical_url, is_selected, score, pipeline_state, content_full
+        FROM news_item
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    conn.close()
+    by_guid = {str(row["rss_guid"]): row for row in rows}
+    threshold = by_guid.get("fixture-threshold-60")
+    translated = by_guid.get("fixture-translated-96")
+    selected_rows = [row for row in rows if row["is_selected"] == 1]
+    selected_reserved_urls = [
+        row["original_url"] for row in selected_rows if is_reserved_placeholder_url(str(row["original_url"]))
+    ]
+    selected_non_public_urls = [
+        row["original_url"] for row in selected_rows if not is_public_http_url_value(str(row["original_url"]))
+    ]
+    checks = {
+        "rows_created": len(rows) == 14,
+        "threshold_original_preserved_with_query": bool(
+            threshold
+            and threshold["original_url"] == "https://developers.openai.com/resources/agentic-app-production/?utm_source=rss"
+        ),
+        "threshold_canonical_used_for_dedupe": bool(
+            threshold and threshold["canonical_url"] == FIXTURE_THRESHOLD_CANONICAL_URL
+        ),
+        "threshold_duplicate_not_inserted": "fixture-threshold-60-duplicate" not in by_guid,
+        "translated_original_preserved_with_query": bool(
+            translated
+            and translated["original_url"] == "https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss"
+        ),
+        "translated_canonical_used_for_fetch_map": bool(
+            translated and translated["canonical_url"] == FIXTURE_TRANSLATED_CANONICAL_URL
+        ),
+        "selected_urls_public_http": not selected_non_public_urls,
+        "selected_urls_non_placeholder": not selected_reserved_urls,
+        "article_fixture_fetch_still_local": bool(
+            threshold and threshold["content_full"] and translated and translated["content_full"]
+        ),
+    }
+    issues = [f"integration_original_url:{name}=false" for name, passed in checks.items() if not passed]
+    return {
+        "checks": checks,
+        "issues": issues,
+        "row_count": len(rows),
+        "selected_non_public_urls": selected_non_public_urls,
+        "selected_reserved_urls": selected_reserved_urls,
+        "by_guid": {
+            guid: {
+                "original_url": row["original_url"],
+                "canonical_url": row["canonical_url"],
+                "is_selected": bool(row["is_selected"]),
+                "score": row["score"],
+                "pipeline_state": row["pipeline_state"],
+                "has_content_full": bool(row["content_full"]),
+            }
+            for guid, row in by_guid.items()
+        },
+    }
+
+
+def task_032_e2e_original_link_observations() -> dict[str, Any]:
+    api = task_032_api_original_url_observations()
+    sources, read_issues = task_016_read_sources()
+    article_source = sources.get("frontend/src/pages/ArticleView.tsx", "")
+    news_card_source = sources.get("frontend/src/components/NewsCard.tsx", "")
+    high_score_source = sources.get("frontend/src/components/HighScoreList.tsx", "")
+    detail = api.get("translated_detail") if isinstance(api, dict) else {}
+    original_url = str(detail.get("original_url") if isinstance(detail, dict) else "")
+    checks = {
+        "api_detail_original_url_public": is_public_http_url_value(original_url),
+        "api_detail_original_url_non_placeholder": not is_reserved_placeholder_url(original_url),
+        "article_link_uses_detail_original_url": "href={detail.original_url}" in article_source,
+        "article_link_opens_new_tab": 'target="_blank"' in article_source and 'rel="noreferrer"' in article_source,
+        "article_link_hidden_for_ready": "detail.status !== 'ready'" in article_source,
+        "news_card_uses_internal_route": "href={`/news/${item.id}`}" in news_card_source and "original_url" not in news_card_source,
+        "high_score_uses_internal_route": "href={`/news/${item.id}`}" in high_score_source and "original_url" not in high_score_source,
+    }
+    issues = list(read_issues)
+    issues.extend(api.get("issues", []) if isinstance(api.get("issues"), list) else [])
+    issues.extend(f"e2e_original_link:{name}=false" for name, passed in checks.items() if not passed)
+    return {
+        "checks": checks,
+        "issues": sorted(set(issues)),
+        "detail_original_url": original_url,
+    }
+
+
+def task_032_no_live_fetch_observations() -> dict[str, Any]:
+    source_text = Path("backend/app/services/pipeline.py").read_text(encoding="utf-8")
+    live_fetch_terms = [
+        "requests.",
+        "httpx.",
+        "aiohttp.",
+        "urllib.request",
+        "urlopen(",
+    ]
+    hits = [term for term in live_fetch_terms if term in source_text]
+    return {
+        "checks": {
+            "pipeline_uses_article_fixture_map": "ARTICLE_MAP_PATH" in source_text
+            and "article_map.json" in source_text,
+            "pipeline_has_no_live_fetch_client": not hits,
+        },
+        "issues": [f"live_fetch_term:{term}" for term in hits],
+    }
+
+
+def run_task_032_static(report_dir: Path, task_id: str) -> int:
+    docs = task_032_docs_static_observations(task_id)
+    fixtures = task_032_fixture_url_observations()
+    live_fetch = task_032_no_live_fetch_observations()
+    checks = {
+        "docs": docs["checks"],
+        "fixtures": fixtures["checks"],
+        "live_fetch": live_fetch["checks"],
+    }
+    issues = docs["issues"] + fixtures["issues"] + live_fetch["issues"]
+    passed = not issues and all(all(group.values()) for group in checks.values())
+    report = test_report(
+        stage="static",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-original-url-realism-static",
+        assertions=[
+            assertion(
+                "A-static-ACC-STOP-010-contract-doc-sync",
+                "passed" if passed else "failed",
+                {"docs_updated": True, "fixtures_non_placeholder": True, "no_live_fetch": True},
+                {"checks": checks, "reserved_urls": fixtures["reserved_urls"]},
+                {"issues": issues},
+            )
+        ],
+        expected={"original_url_realism_static": "pass"},
+        actual={"docs": docs, "fixtures": fixtures, "live_fetch": live_fetch},
+        diff={"issues": issues},
+        failure_type=None if passed else "contract",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "tasks.md",
+            f"reports/tasks/{task_id}/plan.json",
+            "docs/01_prd.md",
+            "docs/03_ui_spec.md",
+            "docs/05_api_contract.md",
+            "docs/07_test_spec.md",
+            "docs/08_acceptance.md",
+            "fixtures/rss/feeds.json",
+            "fixtures/articles/article_map.json",
+            "backend/app/services/pipeline.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage static --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "static", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_032_unit(report_dir: Path, task_id: str) -> int:
+    fixtures = task_032_fixture_url_observations()
+    checks = fixtures["checks"]
+    passed = not fixtures["issues"] and all(checks.values())
+    report = test_report(
+        stage="unit",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-fixture-url-unit",
+        assertions=[
+            assertion(
+                "task-032-unit-fixture-url-realism",
+                "passed" if passed else "failed",
+                {"rss_links": "public_non_placeholder", "article_cases": "covered"},
+                {"checks": checks, "reserved_urls": fixtures["reserved_urls"]},
+                {"issues": fixtures["issues"]},
+                visibility="internal_evidence",
+            )
+        ],
+        expected={"fixture_urls": "public_non_placeholder"},
+        actual=fixtures,
+        diff={"issues": fixtures["issues"]},
+        failure_type=None if passed else "validation",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "fixtures/rss/feeds.json",
+            "fixtures/articles/article_map.json",
+            "tests/test_fixture_config.py",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage unit --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "unit", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_032_api(report_dir: Path, task_id: str) -> int:
+    observed = task_032_api_original_url_observations()
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage="api",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-original-url-api",
+        assertions=[
+            assertion(
+                "A-api-ACC-STOP-004-original-url-real-link",
+                "passed" if passed else "failed",
+                {"original_url": "rss_link_public_non_placeholder"},
+                {
+                    "checks": observed["checks"],
+                    "detail_original_url": observed.get("translated_detail", {}).get("original_url"),
+                    "home_translated_count": observed.get("home_translated_count"),
+                },
+                {"issues": observed["issues"]},
+                visibility="public_surface",
+            )
+        ],
+        expected={"api_original_url": "rss_link_public_non_placeholder"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "api",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/main.py",
+            "backend/app/services/pipeline.py",
+            "fixtures/rss/feeds.json",
+            "tests/test_api_contract.py",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage api --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "api", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_032_integration(report_dir: Path, task_id: str) -> int:
+    observed = task_032_integration_original_url_observations()
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage="integration",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-original-url-integration",
+        assertions=[
+            assertion(
+                "task-032-integration-original-url-preservation",
+                "passed" if passed else "failed",
+                {"original_url": "preserved", "canonical_url": "dedupe_only"},
+                {"checks": observed["checks"], "row_count": observed["row_count"]},
+                {"issues": observed["issues"]},
+                visibility="internal_evidence",
+            )
+        ],
+        expected={"pipeline_original_url": "preserved_while_canonical_dedupes"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "integration",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/services/pipeline.py",
+            "fixtures/rss/feeds.json",
+            "fixtures/articles/article_map.json",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage integration --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "integration", task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_032_e2e(report_dir: Path, task_id: str) -> int:
+    observed = task_032_e2e_original_link_observations()
+    passed = not observed["issues"] and all(observed["checks"].values())
+    assertions = [
+        assertion(
+            "A-e2e-ACC-STOP-006-article-original-link-button",
+            "passed" if passed else "failed",
+            {"article_link_href": "detail.original_url", "target": "_blank"},
+            {"checks": observed["checks"], "detail_original_url": observed["detail_original_url"]},
+            {"issues": observed["issues"]},
+            visibility="public_surface",
+        ),
+        assertion(
+            "A-e2e-ACC-STOP-006-no-direct-original-navigation",
+            "passed" if passed else "failed",
+            {"cards_and_rank_items": "internal_article_route"},
+            {"checks": observed["checks"]},
+            {"issues": observed["issues"]},
+            visibility="public_surface",
+        ),
+    ]
+    report = test_report(
+        stage="e2e",
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-article-original-link-e2e",
+        assertions=assertions,
+        expected={"article_original_link": "api_original_url"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "ui",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "frontend/src/pages/ArticleView.tsx",
+            "frontend/src/components/NewsCard.tsx",
+            "frontend/src/components/HighScoreList.tsx",
+            "backend/app/main.py",
+            "fixtures/rss/feeds.json",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage e2e --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, "e2e", task_id), report)
+    return 0 if passed else 1
+
+
+def translation_quality_check(
+    guid: str,
+    title: str,
+    summary: str,
+    content: str,
+) -> dict[str, Any]:
+    joined = "\n".join([title, summary, content]).lower()
+    paragraphs = [part.strip() for part in content.split("\n\n") if part.strip()]
+    keywords = TRANSLATION_QUALITY_KEYWORDS.get(guid, ())
+    forbidden_terms = [
+        term for term in FORBIDDEN_TRANSLATION_PLACEHOLDER_TERMS if term.lower() in joined
+    ]
+    checks = {
+        "known_guid": guid in TRANSLATION_QUALITY_KEYWORDS,
+        "no_placeholder_terms": not forbidden_terms,
+        "summary_min_length": len(summary) >= 28,
+        "content_min_length": len(content) >= 110,
+        "body_has_multiple_paragraphs": len(paragraphs) >= 2,
+        "summary_matches_keywords": bool(keywords) and any(keyword in summary for keyword in keywords),
+        "content_matches_keywords": bool(keywords) and any(keyword in content for keyword in keywords),
+    }
+    issues = [
+        f"{guid}:{name}=false" for name, passed in checks.items() if not passed
+    ]
+    if forbidden_terms:
+        issues.append(f"{guid}:forbidden_terms={','.join(forbidden_terms)}")
+    return {
+        "guid": guid,
+        "checks": checks,
+        "issues": issues,
+        "summary_length": len(summary),
+        "content_length": len(content),
+        "paragraph_count": len(paragraphs),
+    }
+
+
+def task_033_fixture_quality_observations() -> dict[str, Any]:
+    payload, read_issues = read_json_object(Path("fixtures/llm/translation.json"))
+    payload = payload or {}
+    records = payload.get("translations", {})
+    records = records if isinstance(records, dict) else {}
+    quality_results: list[dict[str, Any]] = []
+    issues = list(read_issues)
+    expected_guids = set(TRANSLATION_QUALITY_KEYWORDS)
+    observed_guids = {guid for guid in records if guid in expected_guids}
+    if observed_guids != expected_guids:
+        issues.append(f"translation_quality:guid_set={sorted(observed_guids)}")
+    for guid in sorted(expected_guids):
+        record = records.get(guid)
+        if not isinstance(record, dict):
+            issues.append(f"{guid}:missing_translation_record")
+            continue
+        result = translation_quality_check(
+            guid,
+            str(record.get("title_zh") or ""),
+            str(record.get("summary_zh") or ""),
+            str(record.get("content_zh") or ""),
+        )
+        quality_results.append(result)
+        issues.extend(result["issues"])
+    partial = records.get("fixture-translate-partial")
+    partial_invalid = not (
+        isinstance(partial, dict)
+        and all(str(partial.get(field) or "").strip() for field in ("title_zh", "summary_zh", "content_zh", "category_zh"))
+    )
+    if not partial_invalid:
+        issues.append("fixture-translate-partial:partial_case_became_valid")
+    checks = {
+        "fixture_version": payload.get("version") == MOCK_VERSION,
+        "expected_guid_set_present": observed_guids == expected_guids,
+        "all_successful_records_readable": not any(result["issues"] for result in quality_results),
+        "partial_case_remains_invalid": partial_invalid,
+    }
+    issues.extend(f"translation_quality:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "quality_results": quality_results}
+
+
+def task_033_db_quality_observations() -> dict[str, Any]:
+    connect, initialize_database, seed_default_sources, ingest_fixture_rss, score_raw_news, fetch_selected_content, translate_fetched_content, *_ = (
+        task_008_pipeline_imports()
+    )
+    conn = connect(":memory:")
+    initialize_database(conn)
+    seed_default_sources(conn)
+    ingest_fixture_rss(conn)
+    score_raw_news(conn)
+    fetch_selected_content(conn)
+    translate_fetched_content(conn)
+    rows = conn.execute(
+        """
+        SELECT rss_guid, title_zh, summary_zh, content_zh, has_translate_failed
+        FROM news_item
+        WHERE title_zh IS NOT NULL
+          AND summary_zh IS NOT NULL
+          AND content_zh IS NOT NULL
+        ORDER BY rss_guid ASC
+        """
+    ).fetchall()
+    partial = conn.execute(
+        """
+        SELECT title_zh, summary_zh, content_zh, has_translate_failed
+        FROM news_item
+        WHERE rss_guid = 'fixture-translate-partial'
+        """
+    ).fetchone()
+    conn.close()
+    issues: list[str] = []
+    quality_results = [
+        translation_quality_check(
+            str(row["rss_guid"]),
+            str(row["title_zh"] or ""),
+            str(row["summary_zh"] or ""),
+            str(row["content_zh"] or ""),
+        )
+        for row in rows
+    ]
+    for result in quality_results:
+        issues.extend(result["issues"])
+    observed_guids = {str(row["rss_guid"]) for row in rows}
+    expected_guids = set(TRANSLATION_QUALITY_KEYWORDS)
+    checks = {
+        "translated_guid_set": observed_guids == expected_guids,
+        "translated_records_readable": not any(result["issues"] for result in quality_results),
+        "partial_failure_isolated": bool(
+            partial
+            and partial["has_translate_failed"] == 1
+            and not any(partial[field] for field in ("title_zh", "summary_zh", "content_zh"))
+        ),
+    }
+    issues.extend(f"db_translation_quality:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "quality_results": quality_results}
+
+
+def task_033_api_quality_observations() -> dict[str, Any]:
+    app, import_issue = import_backend_app()
+    if import_issue:
+        return {"checks": {"backend_imported": False}, "issues": [import_issue], "quality_results": []}
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as error:
+        return {
+            "checks": {"backend_imported": True, "test_client_imported": False},
+            "issues": [f"fastapi_testclient_import_failed:{error.__class__.__name__}"],
+            "quality_results": [],
+        }
+    client = TestClient(app)
+    issues = envelope_issue(
+        name="task_033_refresh",
+        response=client.post("/api/refresh"),
+        expected_status=200,
+        expected_envelope="data",
+        required_data_keys={"refreshed_at"},
+    )
+    rows = app.state.db.execute(
+        """
+        SELECT id, rss_guid
+        FROM news_item
+        WHERE title_zh IS NOT NULL
+          AND summary_zh IS NOT NULL
+          AND content_zh IS NOT NULL
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    quality_results: list[dict[str, Any]] = []
+    for row in rows:
+        response = client.get(f"/api/news/{row['id']}")
+        issues.extend(
+            envelope_issue(
+                name=f"task_033_detail_{row['rss_guid']}",
+                response=response,
+                expected_status=200,
+                expected_envelope="data",
+                required_data_keys={"id", "title", "summary_zh", "content_zh", "status"},
+            )
+        )
+        payload, parse_issues = _safe_json(response)
+        issues.extend(f"task_033_detail:{row['rss_guid']}:{issue}" for issue in parse_issues)
+        detail = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(detail, dict):
+            issues.append(f"{row['rss_guid']}:detail_payload_invalid")
+            continue
+        if detail.get("status") != "translated":
+            issues.append(f"{row['rss_guid']}:detail_status={detail.get('status')}")
+        result = translation_quality_check(
+            str(row["rss_guid"]),
+            str(detail.get("title") or ""),
+            str(detail.get("summary_zh") or ""),
+            str(detail.get("content_zh") or ""),
+        )
+        quality_results.append(result)
+        issues.extend(result["issues"])
+    observed_guids = {str(row["rss_guid"]) for row in rows}
+    expected_guids = set(TRANSLATION_QUALITY_KEYWORDS)
+    checks = {
+        "backend_imported": True,
+        "translated_guid_set": observed_guids == expected_guids,
+        "all_detail_content_readable": not any(result["issues"] for result in quality_results),
+    }
+    issues.extend(f"api_translation_quality:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "quality_results": quality_results}
+
+
+def task_033_ui_quality_observations() -> dict[str, Any]:
+    api = task_033_api_quality_observations()
+    article_source = Path("frontend/src/pages/ArticleView.tsx").read_text(encoding="utf-8")
+    checks = {
+        "api_detail_content_readable": api["checks"].get("all_detail_content_readable") is True,
+        "article_view_renders_summary": "article-view__summary" in article_source and "detail.summary_zh" in article_source,
+        "article_view_renders_body": "article-view__body" in article_source and "renderContentParagraphs(detail.content_zh)" in article_source,
+        "article_view_preserves_paragraphs": "split(/\\n{2,}/)" in article_source,
+        "article_view_no_dangerous_html": "dangerouslySetInnerHTML" not in article_source,
+    }
+    issues = list(api["issues"])
+    issues.extend(f"ui_translation_quality:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "api": api}
+
+
+def run_task_033_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    if stage == "unit":
+        observed = task_033_fixture_quality_observations()
+        assertion_id = "task-033-unit-translation-quality-fixtures"
+        visibility = "internal_evidence"
+    elif stage == "api":
+        observed = task_033_api_quality_observations()
+        assertion_id = "task-033-api-readable-detail-content"
+        visibility = "public_surface"
+    elif stage == "integration":
+        observed = task_033_db_quality_observations()
+        assertion_id = "A-integration-ACC-STOP-003-translation-quality-fixtures"
+        visibility = "public_surface"
+    elif stage == "snapshot":
+        observed = task_033_ui_quality_observations()
+        assertion_id = "task-033-snapshot-readable-article-dom"
+        visibility = "public_surface"
+    else:
+        observed = task_033_ui_quality_observations()
+        assertion_id = "task-033-e2e-readable-article-detail"
+        visibility = "public_surface"
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-summary-full-text-quality-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"summary_body_quality": "article_specific_readable_non_placeholder"},
+                {"checks": observed["checks"], "quality_results": observed.get("quality_results", [])},
+                {"issues": observed["issues"]},
+                visibility=visibility,
+            )
+        ],
+        expected={"summary_body_quality": "article_specific_readable_non_placeholder"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else stage,
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "fixtures/llm/translation.json",
+            "backend/app/services/pipeline.py",
+            "backend/app/main.py",
+            "frontend/src/pages/ArticleView.tsx",
+            "tests/test_fixture_config.py",
+            "tests/test_api_contract.py",
+            "tests/test_pipeline_refresh.py",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_033_unit(report_dir: Path, task_id: str) -> int:
+    return run_task_033_stage(report_dir, task_id, "unit")
+
+
+def run_task_033_api(report_dir: Path, task_id: str) -> int:
+    return run_task_033_stage(report_dir, task_id, "api")
+
+
+def run_task_033_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_033_stage(report_dir, task_id, "integration")
+
+
+def run_task_033_snapshot(report_dir: Path, task_id: str) -> int:
+    return run_task_033_stage(report_dir, task_id, "snapshot")
+
+
+def run_task_033_e2e(report_dir: Path, task_id: str) -> int:
+    return run_task_033_stage(report_dir, task_id, "e2e")
+
+
+def task_034_home_translated_observations() -> dict[str, Any]:
+    app, client = task_014_client()
+    issues: list[str] = []
+    refresh_response = client.post("/api/refresh")
+    issues.extend(
+        envelope_issue(
+            name="task_034_refresh",
+            response=refresh_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"refreshed_at"},
+        )
+    )
+
+    home_response = client.get("/api/home")
+    issues.extend(
+        envelope_issue(
+            name="task_034_home",
+            response=home_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"latest_news", "top_ranked_news"},
+        )
+    )
+    home_payload, parse_issues = _safe_json(home_response)
+    issues.extend(f"task_034_home:{issue}" for issue in parse_issues)
+    home_data = home_payload.get("data", {}) if isinstance(home_payload, dict) else {}
+    latest = home_data.get("latest_news") if isinstance(home_data, dict) else []
+    top = home_data.get("top_ranked_news") if isinstance(home_data, dict) else []
+    latest = latest if isinstance(latest, list) else []
+    top = top if isinstance(top, list) else []
+    latest_status_counts = news_status_counts(latest)
+    top_status_counts = news_status_counts(top)
+
+    if latest_status_counts != EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS:
+        issues.append(f"task_034:latest_status_counts:{latest_status_counts}")
+    if top_status_counts != EXPECTED_TRANSLATION_TOP_STATUS_COUNTS:
+        issues.append(f"task_034:top_status_counts:{top_status_counts}")
+    if len(latest) < 10:
+        issues.append(f"task_034:latest_count={len(latest)}<10")
+    if len(top) != 10:
+        issues.append(f"task_034:top_count={len(top)}!=10")
+
+    latest_titles = [str(item.get("original_title")) for item in latest if isinstance(item, dict)]
+    top_scores = [item.get("score") for item in top if isinstance(item, dict)]
+    expected_latest_prefix = [
+        "New AI model released",
+        "AI safety benchmark reaches enterprise pilots",
+        "Open model eval suite adds agent tasks",
+        "AI chip scheduler cuts inference latency",
+        "Research lab publishes multimodal tool use benchmark",
+        "AI data pipeline validates synthetic QA traces",
+        "Small language model improves retrieval planning",
+        "AI observability tool traces prompt regressions",
+        "AI coding assistant checks repository contracts",
+        "AI product analytics detects agent drift",
+    ]
+    if latest_titles[:10] != expected_latest_prefix:
+        issues.append(f"task_034:latest_prefix:{latest_titles[:10]}")
+    if top_scores != [96, 95, 94, 93, 92, 91, 90, 89, 88, 87]:
+        issues.append(f"task_034:top_scores:{top_scores}")
+
+    conn = app.state.db
+    rows = conn.execute("SELECT id, rss_guid FROM news_item").fetchall()
+    guid_by_id = {str(row["id"]): str(row["rss_guid"]) for row in rows}
+    quality_results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for list_name, item in [
+        *[("latest_news", item) for item in latest if isinstance(item, dict)],
+        *[("top_ranked_news", item) for item in top if isinstance(item, dict)],
+    ]:
+        item_id = str(item.get("id") or "")
+        if not item_id or item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        if item.get("status") != "translated":
+            issues.append(f"task_034:{list_name}:{item_id}:status={item.get('status')}")
+        if not item.get("summary_zh"):
+            issues.append(f"task_034:{list_name}:{item_id}:missing_list_summary")
+        if "content_zh" in item:
+            issues.append(f"task_034:{list_name}:{item_id}:content_leaked_in_list")
+        detail_response = client.get(f"/api/news/{item_id}")
+        detail_payload, detail_parse_issues = _safe_json(detail_response)
+        issues.extend(f"task_034:{list_name}:{item_id}:{issue}" for issue in detail_parse_issues)
+        detail = detail_payload.get("data") if isinstance(detail_payload, dict) else None
+        if detail_response.status_code != 200 or not isinstance(detail, dict):
+            issues.append(f"task_034:{list_name}:{item_id}:detail_unavailable")
+            continue
+        if detail.get("status") != "translated":
+            issues.append(f"task_034:{list_name}:{item_id}:detail_status={detail.get('status')}")
+        result = translation_quality_check(
+            guid_by_id.get(item_id, ""),
+            str(detail.get("title") or ""),
+            str(detail.get("summary_zh") or ""),
+            str(detail.get("content_zh") or ""),
+        )
+        quality_results.append(result)
+        issues.extend(result["issues"])
+        original_url = str(detail.get("original_url") or "")
+        if not is_public_http_url_value(original_url):
+            issues.append(f"task_034:{list_name}:{item_id}:original_url_not_public_http")
+        if is_reserved_placeholder_url(original_url):
+            issues.append(f"task_034:{list_name}:{item_id}:original_url_placeholder")
+
+    ready_id = conn.execute(
+        "SELECT id FROM news_item WHERE rss_guid = 'fixture-threshold-60'"
+    ).fetchone()["id"]
+    failed_id = conn.execute(
+        "SELECT id FROM news_item WHERE rss_guid = 'fixture-translate-partial'"
+    ).fetchone()["id"]
+    ready_detail = client.get(f"/api/news/{ready_id}").json()["data"]
+    failed_detail = client.get(f"/api/news/{failed_id}").json()["data"]
+    direct_checks = {
+        "ready_status_preserved": ready_detail.get("status") == "ready",
+        "ready_omits_summary": "summary_zh" not in ready_detail and "content_zh" not in ready_detail,
+        "failed_status_preserved": failed_detail.get("status") == "translation_failed",
+        "failed_omits_summary": "summary_zh" not in failed_detail and "content_zh" not in failed_detail,
+    }
+    issues.extend(f"task_034:direct:{name}=false" for name, passed in direct_checks.items() if not passed)
+
+    checks = {
+        "latest_translated_only": latest_status_counts == EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS,
+        "top_translated_only": top_status_counts == EXPECTED_TRANSLATION_TOP_STATUS_COUNTS,
+        "latest_density": len(latest) >= 10,
+        "top_density": len(top) == 10,
+        "latest_order": latest_titles[:10] == expected_latest_prefix,
+        "top_order": top_scores == [96, 95, 94, 93, 92, 91, 90, 89, 88, 87],
+        "all_click_details_readable": not any(result["issues"] for result in quality_results),
+        "direct_ready_failed_preserved": all(direct_checks.values()),
+    }
+    return {
+        "checks": checks,
+        "issues": sorted(set(issues)),
+        "latest_status_counts": latest_status_counts,
+        "top_status_counts": top_status_counts,
+        "latest_count": len(latest),
+        "top_count": len(top),
+        "quality_results": quality_results,
+        "direct_checks": direct_checks,
+    }
+
+
+def task_034_e2e_observations() -> dict[str, Any]:
+    home = task_034_home_translated_observations()
+    surface = e2e_surface_evidence()
+    primary_click = surface.get("checks", {}).get("primary_click_readability", {})
+    checks = {
+        "home_translated_contract": all(home["checks"].values()),
+        "surface_primary_click_readable": isinstance(primary_click, dict)
+        and primary_click.get("all_visible_items_translated_and_readable") is True,
+        "surface_density": surface.get("checks", {}).get("home_news_density_ok") is True,
+        "surface_high_score_count": surface.get("checks", {}).get("top_news_count") == 10,
+    }
+    issues = list(home["issues"])
+    issues.extend(f"e2e_surface:{issue}" for issue in surface.get("issues", []))
+    issues.extend(f"task_034_e2e:{name}=false" for name, passed in checks.items() if not passed)
+    return {
+        "checks": checks,
+        "issues": sorted(set(issues)),
+        "home": home,
+        "surface": surface,
+    }
+
+
+def run_task_034_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    if stage == "e2e":
+        observed = task_034_e2e_observations()
+        assertion_id = "A-e2e-ACC-STOP-006-click-to-read-readability"
+        visibility = "public_surface"
+        failure_type = "ui"
+    elif stage == "api":
+        observed = task_034_home_translated_observations()
+        assertion_id = "A-api-ACC-STOP-004-home-translated-only"
+        visibility = "public_surface"
+        failure_type = "api"
+    elif stage == "integration":
+        observed = task_034_home_translated_observations()
+        assertion_id = "task-034-integration-home-translated-clicks"
+        visibility = "internal_evidence"
+        failure_type = "integration"
+    else:
+        observed = task_034_home_translated_observations()
+        assertion_id = "task-034-snapshot-home-translated-surface"
+        visibility = "public_surface"
+        failure_type = "ui"
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-translated-primary-reading-lists-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"home_top_lists": "translated_only_clicks_readable"},
+                {"checks": observed["checks"]},
+                {"issues": observed["issues"]},
+                visibility=visibility,
+            )
+        ],
+        expected={"home_top_lists": "translated_only_clicks_readable"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else failure_type,
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/main.py",
+            "frontend/src/components/NewsCard.tsx",
+            "frontend/src/components/HighScoreList.tsx",
+            "frontend/src/pages/ArticleView.tsx",
+            "fixtures/rss/feeds.json",
+            "fixtures/llm/scoring.json",
+            "fixtures/llm/translation.json",
+            "tests/test_api_contract.py",
+            "tests/test_pipeline_refresh.py",
+            "scripts/run_harness.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_034_api(report_dir: Path, task_id: str) -> int:
+    return run_task_034_stage(report_dir, task_id, "api")
+
+
+def run_task_034_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_034_stage(report_dir, task_id, "integration")
+
+
+def run_task_034_snapshot(report_dir: Path, task_id: str) -> int:
+    return run_task_034_stage(report_dir, task_id, "snapshot")
+
+
+def run_task_034_e2e(report_dir: Path, task_id: str) -> int:
+    return run_task_034_stage(report_dir, task_id, "e2e")
 
 
 def prd_coverage_evidence(report_dir: Path) -> dict[str, Any]:

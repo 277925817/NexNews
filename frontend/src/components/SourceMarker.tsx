@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 
-const SOURCE_COLORS = ['#7DD3FC', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#F472B6']
+const SOURCE_COLORS = ['#2563EB', '#059669', '#B45309', '#DC2626', '#7C3AED', '#DB2777']
 
 function getSourceColor(sourceName: string): string {
   const seed = Array.from(sourceName).reduce(

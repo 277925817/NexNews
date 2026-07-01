@@ -1,5 +1,5 @@
 meta:
-  version: tasks_mvp@v8
+  version: tasks_mvp@v10
   mode: dag_execution
   purpose: "stable executable MVP product task system"
   architecture: "single FastAPI app + React/Vite SPA + SQLite"
@@ -986,7 +986,7 @@ dag:
       acceptance_criteria:
         - "E2E run loads fixtures, executes full pipeline, verifies API output, and verifies UI render from clean isolated state."
         - "E2E run uses a real browser or equivalent DOM-capable runner to verify homepage news feed, 30-day high-score list, news detail, and sources management."
-        - "Browser E2E proves Home News Feed fixture density, HighScoreList 30-day ranking, NewsCard summary text-only rendering, NewsCard click-through, HighScoreList click-through, ArticleView translated/ready/translation_failed/404 states, ArticleView original_url button, no direct original-site navigation from cards or rank items, Sources create/disable/delete flows, default source CRUD parity, and refresh POST /api/refresh then GET /api/home behavior."
+        - "Browser E2E proves Home News Feed fixture density, HighScoreList 30-day ranking, NewsCard summary text-only rendering, NewsCard click-through, HighScoreList click-through, ArticleView translated/ready/translation_failed/404 states, click-to-read readability without unexplained empty ArticleView states, ArticleView original_url button, no direct original-site navigation from cards or rank items, Sources create/disable/delete flows, default source CRUD parity, and refresh POST /api/refresh then GET /api/home behavior."
         - "E2E run emits no live dependency access and no forbidden public-surface fields."
         - "E2E report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
         - "e2e stage result = pass for deterministic full run."
@@ -1188,8 +1188,8 @@ dag:
         - "Stop-rule audit FAILS if task_blocked, pending, in_progress, missing browser E2E, incomplete PRD coverage, incomplete task acceptance coverage, missing local user acceptance, or failed local user acceptance can reach DONE."
         - "Round-lifecycle audit PASS only when every passed task has a parseable RoundSummaryReport with round_index, completed_round_count, review evidence, fix_optimize evidence, and DONE before 10 rounds is allowed only by round_count_policy.early_done_allowed = true."
         - "Test-spec audit PASS only when docs/07_test_spec.md gives a deterministic, executable test method for every验收标准 mentioned in docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
-        - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
-        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, round evidence schema enforcement, round count policy enforcement, coverage schema hardening, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
+        - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, click-to-read readability, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
+        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, round evidence schema enforcement, round count policy enforcement, coverage schema hardening, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, click-to-read readability, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
         - "Any PRD acceptance item without executed passing evidence appears in uncovered_acceptance_items and blocks STOP_ALLOWED."
         - "Any task acceptance criterion without executed passing evidence appears in uncovered_task_acceptance_items and blocks STOP_ALLOWED."
         - "Local user acceptance records local URL, port, database, checked surfaces, failed findings, and current status."
@@ -1203,3 +1203,317 @@ dag:
         - "FAIL if workflow, acceptance, or tasks stop rules allow task_blocked, pending, in_progress, missing browser E2E, missing PRD coverage, missing task acceptance coverage, or failed local user acceptance to reach DONE."
         - "FAIL if completed rounds can be counted without review/fix_optimize evidence, or if STOP_ALLOWED can be true before 10 rounds without round_count_policy proving all stop conditions passed."
         - "FAIL if browser E2E evidence is replaced by API-only tests, static string scans, screenshots without assertions, or manual visual judgment."
+
+    - id: TASK-027
+      name: "UI light gray theme"
+      layer: "UI Layer"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-027/e2e.json"
+      test_report: "reports/tasks/TASK-027/e2e.json"
+      plan_report: "reports/tasks/TASK-027/plan.json"
+      summary_report: "reports/tasks/TASK-027/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-020", "TASK-023", "TASK-024", "TASK-026"]
+      description: "Apply the requirement change that the UI uses a light gray page background, with documentation-first traceability and deterministic UI visual evidence."
+      inputs:
+        - "User requirement change: main interface style must use a light gray background."
+        - "Updated UI visual tokens in docs/03_ui_spec.md."
+        - "Updated UI visual regression rules in docs/07_test_spec.md and docs/08_acceptance.md."
+      outputs:
+        - "Root, body, app shell and all MVP pages use the documented light gray background contract."
+        - "Primary cards, ranking section container, ranking rows, forms, buttons and state surfaces use documented white or near-white surface tokens."
+        - "Harness UI/snapshot/E2E evidence proves the light gray visual contract and rejects old dark main backgrounds."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before CSS implementation."
+        - "Root, body and app shell backgrounds use #F3F4F6 and the frontend does not set color-scheme: dark."
+        - "NewsCard, HighScoreList overall card, HighScoreList rows, ArticleView state container, SourceForm controls and SourceRow use #FFFFFF or #F8FAFC surfaces with #D8DEE6 borders."
+        - "Old dark background tokens #0B0F14, #111820 and #151E28 are not used as page, card, form or primary content backgrounds."
+        - "Integration, snapshot and E2E UI evidence include and pass the light gray theme contract."
+      failure_criteria:
+        - "FAIL if implementation changes API behavior, data model fields, pipeline behavior, UI interactions, component inventory, or text rendering rules."
+        - "FAIL if the light gray theme is accepted only by manual screenshot review without structured assertions."
+
+    - id: TASK-028
+      name: "Top 30 Days overall card"
+      layer: "UI Layer"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-028/e2e.json"
+      test_report: "reports/tasks/TASK-028/e2e.json"
+      plan_report: "reports/tasks/TASK-028/plan.json"
+      summary_report: "reports/tasks/TASK-028/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-020", "TASK-023", "TASK-024", "TASK-027"]
+      description: "Apply the requirement change that Top 30 Days renders as one overall card in the Home right column, with documentation-first traceability and deterministic UI evidence."
+      inputs:
+        - "User requirement change: Top 30 Days needs one overall card."
+        - "Updated HighScoreList layout rules in docs/03_ui_spec.md."
+        - "Updated UI visual regression rules in docs/07_test_spec.md and docs/08_acceptance.md."
+      outputs:
+        - "HighScoreList uses a single outer card surface for the Top 30 Days section."
+        - "Ranked items render as rows inside the outer card rather than independent nested cards."
+        - "Harness UI/snapshot/E2E and deployed browser smoke evidence prove the Top 30 Days overall card contract."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before CSS implementation."
+        - "Top 30 Days / HighScoreList renders as one overall card surface with #FFFFFF background, #D8DEE6 border, 8px radius and 16px padding."
+        - "Ranked items inside Top 30 Days render as rows inside the overall card, separated by dividers and without independent card borders."
+        - "Integration, snapshot, E2E and deployed browser smoke evidence include and pass the HighScoreList overall card contract."
+        - "The change preserves the existing Home two-column layout, HighScoreList click-through behavior, API contract and light gray theme."
+      failure_criteria:
+        - "FAIL if implementation adds API behavior, data model fields, pipeline behavior, new UI components or new interactions."
+        - "FAIL if the Top 30 Days card is accepted only by manual screenshot review without structured assertions."
+
+    - id: TASK-029
+      name: "Translation fixture success coverage"
+      layer: "Pipeline/Test Harness"
+      type: ["docs", "fixture", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit", "integration", "api", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-029/e2e.json"
+      test_report: "reports/tasks/TASK-029/e2e.json"
+      plan_report: "reports/tasks/TASK-029/plan.json"
+      summary_report: "reports/tasks/TASK-029/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-008", "TASK-018", "TASK-024", "TASK-028"]
+      description: "Fix the acceptance gap where deterministic translation fixtures allowed most displayable news to become translation_failed while still passing."
+      inputs:
+        - "User-reported local acceptance finding: most news entries are translation_failed."
+        - "docs/01_prd.md closed loop 4.2 translation requirements."
+        - "Current fixtures/llm/translation.json only contains two valid translated records for the displayable fixture set."
+      outputs:
+        - "Translation fixture coverage produces a majority of translated selected news while retaining isolated failure and pending samples."
+        - "Tests and harness assertions reject the previous 2 translated / 8 failed internal fixture distribution."
+        - "TASK-033 and TASK-034 supersede the old Home/Top visible-surface distribution with article-quality translated-only reading evidence."
+      acceptance_criteria:
+        - "Relevant test and acceptance documents are updated before fixture or test implementation."
+        - "After deterministic refresh, the selected fixture dataset contains a majority of translated items while preserving one translation_failed item and one ready item for direct detail-state coverage."
+        - "This historical task no longer requires ready or translation_failed items to appear in latest_news or top_ranked_news; TASK-034 owns the translated-only Home and Top 30 Days surface contract."
+        - "The partial translation fixture remains translation_failed with no title_zh, summary_zh or content_zh written."
+        - "The pending translation fixture remains ready with no translate failure fact."
+        - "Unit and integration harness evidence include and pass the internal majority-translated fixture contract."
+      failure_criteria:
+        - "FAIL if the fix uses live RSS, live webpages, live LLM calls, production data, network time, or manual visual judgment."
+        - "FAIL if translation_failed is removed entirely or partial/pending translation edge cases are no longer proven."
+        - "FAIL if API contract, data model fields, status projection priority, or UI rendering rules are changed to mask failures."
+
+    - id: TASK-030
+      name: "Article click readability hardening"
+      layer: "UI/Test Harness"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-030/e2e.json"
+      test_report: "reports/tasks/TASK-030/e2e.json"
+      plan_report: "reports/tasks/TASK-030/plan.json"
+      summary_report: "reports/tasks/TASK-030/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-016", "TASK-020", "TASK-024", "TASK-029"]
+      description: "Fix the local acceptance regression where clicking a non-translated news item can enter an ArticleView that has neither Chinese summary/body nor an explicit unreadable-content explanation."
+      inputs:
+        - "User-reported local acceptance finding: clicking a news item enters ArticleView but no summary or body is visible."
+        - "API contract requires ready and translation_failed details to omit summary_zh and content_zh."
+        - "Updated UI/test/acceptance documents require explicit unreadable-content copy instead of an unexplained empty reading page."
+      outputs:
+        - "ArticleView explains ready and translation_failed detail states with 摘要和正文暂不可用 plus status-specific reason text."
+        - "Direct ready and translation_failed ArticleView routes expose 摘要和正文暂不可用 with status-specific reason text."
+        - "TASK-034 supersedes the old primary-list non-translated link behavior by removing ready and translation_failed from Home/Top ordinary news entries."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before frontend or harness implementation."
+        - "ArticleView translated detail still renders non-empty summary_zh and content_zh."
+        - "ArticleView ready detail does not render summary_zh/content_zh but renders 摘要和正文暂不可用 and 翻译完成后将自动显示中文摘要和正文。"
+        - "ArticleView translation_failed detail does not render summary_zh/content_zh but renders 摘要和正文暂不可用 and 翻译失败，当前无法显示中文摘要和正文。"
+        - "Ready and translation_failed direct detail routes remain explicit unreadable states with 摘要和正文暂不可用."
+        - "This historical task no longer requires ready or translation_failed NewsCard/HighScoreList links in the primary Home/Top reading path; TASK-034 owns the translated-only click-through contract."
+      failure_criteria:
+        - "FAIL if the fix changes API response shape, data model fields, status projection priority, or returns placeholder summary_zh/content_zh for non-translated items."
+        - "FAIL if the fix uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+        - "FAIL if NewsCard or HighScoreList starts navigating directly to original_url instead of the internal ArticleView route."
+
+    - id: TASK-031
+      name: "Local acceptance failure preservation"
+      layer: "Harness Layer"
+      type: ["docs", "test", "harness"]
+      status: "passed"
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-031/static.json"
+      test_report: "reports/tasks/TASK-031/unit.json"
+      plan_report: "reports/tasks/TASK-031/plan.json"
+      summary_report: "reports/tasks/TASK-031/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-026C", "TASK-030"]
+      description: "Fix the harness gap where a later user acceptance finding can be overwritten by automatic smoke evidence, allowing STOP_ALLOWED to remain true after a real user-reported failure."
+      inputs:
+        - "User-reported failed findings: no readable full text, incorrect summaries, and virtual original links."
+        - "docs/08_acceptance.md rule that failed local user acceptance must be preserved and force ITERATE."
+        - "Current ensure_local_user_acceptance_report rewrites local_user_acceptance.json from automated smoke evidence only."
+      outputs:
+        - "Local user acceptance report preserves manual/user-reported failed findings until mapped regression assertions pass."
+        - "Acceptance evaluation keeps local_user_acceptance_status = FAIL and STOP_ALLOWED = false while unresolved user findings exist."
+        - "New structured regression finding ids exist for full text readability, summary correctness, and original URL realism."
+      acceptance_criteria:
+        - "Relevant test and acceptance documents are updated before harness implementation."
+        - "A failed user finding in reports/acceptance/local_user_acceptance.json is not overwritten by a passing deployed browser smoke run."
+        - "Acceptance writes STOP_ALLOWED = false when unresolved failed_findings exist, even if all product stages pass."
+        - "The three current user findings are recorded with stable ids and mapped to planned regression assertion ids."
+        - "Static and unit harness evidence proves local user acceptance failures persist until the corresponding regression assertions pass."
+      failure_criteria:
+        - "FAIL if the harness drops manual failed findings, treats stale PASS reports as current, or restores STOP_ALLOWED before the mapped regression assertions pass."
+        - "FAIL if the fix depends on external CI, live RSS, live webpages, live LLM, network time, or manual-only judgment."
+
+    - id: TASK-032
+      name: "Original URL realism"
+      layer: "Pipeline/API/UI Test"
+      type: ["docs", "fixture", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "api_contract_failures"
+      test_scope: ["static", "unit", "api", "integration", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-032/api.json"
+      test_report: "reports/tasks/TASK-032/e2e.json"
+      plan_report: "reports/tasks/TASK-032/plan.json"
+      summary_report: "reports/tasks/TASK-032/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-004", "TASK-019", "TASK-024"]
+      description: "Replace product-facing placeholder original URLs with RSS-derived public article URLs and prove the ArticleView original-link button uses the API original_url."
+      inputs:
+        - "User-reported finding: 原文链接 is virtual and cannot access the original article."
+        - "Current acceptance fixtures use https://example.com/news/... links."
+        - "API contract requires original_url to come from the RSS item link while tests must still use local article fixtures."
+      outputs:
+        - "RSS acceptance fixtures use public, non-reserved article URLs for displayable news items."
+        - "Article fixture mapping remains local and keyed by canonicalized public URLs; tests do not fetch real webpages."
+        - "API and browser evidence prove original_url is non-placeholder and ArticleView link href equals API original_url."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before fixture or code implementation."
+        - "Every displayable fixture RSS item link uses public http/https and does not use example.com/example.org/example.net/.test/.invalid or local/private hosts."
+        - "The pipeline preserves RSS item link as news_item.original_url while canonical_url is used only for dedupe."
+        - "GET /api/home and GET /api/news/{id} expose original_url values that exactly match the RSS item link for translated items."
+        - "ArticleView original link href equals detail.original_url and opens in a new tab/window target without replacing internal NewsCard/HighScoreList navigation."
+        - "Static, unit, API, integration and E2E evidence prove no external webpage fetch occurs during tests."
+      failure_criteria:
+        - "FAIL if displayable original_url remains on reserved placeholder domains or is rewritten to a local fixture path."
+        - "FAIL if tests validate original links by fetching live webpages, real RSS, production data or network time."
+        - "FAIL if NewsCard or HighScoreList starts navigating directly to original_url instead of internal ArticleView."
+
+    - id: TASK-033
+      name: "Summary and full-text quality"
+      layer: "Pipeline/API/UI Test"
+      type: ["docs", "fixture", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-007", "ACC-STOP-010"]
+      priority: "critical_bugs"
+      test_scope: ["unit", "api", "integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-033/integration.json"
+      test_report: "reports/tasks/TASK-033/e2e.json"
+      plan_report: "reports/tasks/TASK-033/plan.json"
+      summary_report: "reports/tasks/TASK-033/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-032", "TASK-008", "TASK-018", "TASK-020"]
+      description: "Replace placeholder translated summaries and bodies with article-specific readable Chinese content, and add assertions that reject wrong summaries or short placeholder full text."
+      inputs:
+        - "User-reported finding: all news entries cannot show full text."
+        - "User-reported finding: summary content is wrong."
+        - "Current translation fixtures include generic placeholder strings such as 这是一篇来自 fixture 的中文正文。"
+      outputs:
+        - "Translated fixture content contains article-specific Chinese summaries and readable multi-paragraph Chinese bodies."
+        - "Translation validation and harness assertions reject fixture/mock/模拟/占位 placeholder text and unrelated summaries."
+        - "API, UI and browser E2E evidence prove translated ArticleView shows summary and readable full body."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before fixture or code implementation."
+        - "Every successful translation fixture has non-placeholder title_zh, summary_zh and content_zh, with content_zh long enough to read as article body and rendered as multiple paragraphs where appropriate."
+        - "Every translated summary_zh is tied to the same fixture article facts as content_zh; mismatched generic summaries fail structured tests."
+        - "GET /api/news/{id} for every translated fixture detail returns non-placeholder summary_zh and content_zh."
+        - "ArticleView renders the translated summary and full body without hiding, truncating, replacing, or collapsing the body to a short placeholder."
+        - "Unit, API, integration, snapshot and E2E evidence include and pass the translated content quality contract."
+      failure_criteria:
+        - "FAIL if non-empty alone is accepted as proof of readable full text."
+        - "FAIL if summary_zh can be unrelated to original_title/content_zh and still pass."
+        - "FAIL if the fix uses live LLM output, live RSS, live webpages, production data, network time, manual screenshots, or prose-only judgment."
+
+    - id: TASK-034
+      name: "Translated-only primary reading lists"
+      layer: "API/UI/Harness"
+      type: ["docs", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["api", "integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-034/api.json"
+      test_report: "reports/tasks/TASK-034/e2e.json"
+      plan_report: "reports/tasks/TASK-034/plan.json"
+      summary_report: "reports/tasks/TASK-034/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-032", "TASK-033", "TASK-019", "TASK-024", "TASK-030"]
+      description: "Change the Home News Feed and Top 30 Days primary user-click path so ordinary visible news entries are translated and always open to readable Chinese summary and full text."
+      inputs:
+        - "User-reported finding: ordinary news entries do not show full text after click."
+        - "Updated PRD/API/UI contract that Home and Top 30 Days primary lists are translated-only reading surfaces."
+        - "Ready and translation_failed states remain valid direct detail states but are no longer ordinary Home/Top news entries."
+      outputs:
+        - "GET /api/home.latest_news returns only translated NewsListItem rows with non-empty summary_zh."
+        - "GET /api/home.top_ranked_news returns only translated 30-day rows, sorted by score DESC and published_at DESC."
+        - "Browser E2E clicks every Home and Top 30 Days item and verifies translated ArticleView summary/body/original-link readability."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before backend or frontend implementation."
+        - "GET /api/home latest_news contains no ready or translation_failed items and each item includes status translated and non-empty summary_zh."
+        - "GET /api/home top_ranked_news contains no ready or translation_failed items and each item includes status translated."
+        - "Direct GET /api/news/{id} still returns ready and translation_failed detail states for fixture edge cases without summary_zh/content_zh."
+        - "NewsCard and HighScoreList click-through never land on 摘要和正文暂不可用 in the primary Home/Top reading path."
+        - "E2E and deployed browser smoke evidence prove every visible Home/Top news click opens a translated ArticleView with readable Chinese summary/body and real original_url href."
+      failure_criteria:
+        - "FAIL if Home or Top 30 Days still exposes ready or translation_failed as ordinary news entries."
+        - "FAIL if the fix removes direct ready/translation_failed detail-state coverage or masks translation failures by fabricating summary_zh/content_zh."
+        - "FAIL if the fix uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."

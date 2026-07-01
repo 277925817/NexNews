@@ -324,17 +324,18 @@ dag:
       intentionally_out_of_scope: false
       blocker: "none"
       depends_on: ["TASK-005"]
-      description: "Apply score threshold filtering and canonical_url dedupe, producing the selected set for content fetch."
+      description: "Apply AI value filtering and canonical_url dedupe, producing the selected set for content fetch."
       inputs:
         - "scored news_item rows."
-        - "Threshold config with default value 60."
+        - "AI value thresholds: is_ai_news = true, ai_relevance_score >= 70, score >= 75."
       outputs:
-        - "is_selected is computed from score immediately after scoring."
-        - "Selected query returns score >= 60 items only."
+        - "is_selected is computed from is_ai_news, ai_relevance_score and score immediately after scoring."
+        - "Selected query returns high-value AI items only."
         - "Duplicate canonical_url appears once."
       acceptance_criteria:
-        - "score = 60 sets is_selected = 1."
+        - "is_ai_news = true, ai_relevance_score = 70 and score = 75 sets is_selected = 1."
         - "score = 59 sets is_selected = 0."
+        - "is_ai_news = false sets is_selected = 0 even when score is high."
         - "is_selected does not change pipeline_state."
         - "Duplicate canonical_url count in news_item/displayable output <= 1."
         - "Distinct high-score items with different canonical_url or different domains remain separate fetch candidates."
@@ -757,7 +758,7 @@ dag:
         - "Partial source/fetch/translation failures remain isolated in DB facts."
       acceptance_criteria:
         - "Full pipeline creates at least 1 displayable DB item."
-        - "score = 60 item reaches fetched/translation path; score = 59 item does not."
+        - "AI threshold item reaches fetched/translation path; score = 59 and non-AI high-score items do not."
         - "Duplicate canonical_url appears once in DB displayable query."
         - "processing_log contains DB facts for crawl, score, fetch, and translate success/failure."
         - "No live RSS, live webpage, live LLM, production DB, or current system time is used."
@@ -794,7 +795,7 @@ dag:
         - "Source and refresh endpoints preserve contract behavior."
       acceptance_criteria:
         - "GET /api/home returns the PRD fixture density after pipeline integration; a 1-3 item smoke sample is not sufficient when fixture data contains at least 10 displayable items."
-        - "score = 60 item appears through API; score = 59 item does not."
+        - "Only translated high-value AI items appear through API; score = 59 and non-AI high-score items do not."
         - "top_ranked_news returns 10 items when the latest-30-day fixture has at least 10 eligible items, excludes 30-day-window-outside items, and applies score DESC plus published_at DESC tie-break ordering."
         - "Duplicate canonical_url appears once through API."
         - "Detail API returns content_zh only for translated item."
@@ -1558,3 +1559,45 @@ dag:
         - "FAIL if infinite loading uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
         - "FAIL if News Feed pagination exposes ready or translation_failed items, duplicates news cards, clears loaded cards on failure, or keeps requesting after the final page."
         - "FAIL if the implementation adds a new public endpoint instead of using GET /api/home cursor pagination."
+
+    - id: TASK-036
+      name: "AI value news filtering"
+      layer: "Pipeline/API/Harness"
+      type: ["docs", "backend", "data", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/02_arch.md", "docs/04_data_model.md", "docs/05_api_contract.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-005", "ACC-STOP-009"]
+      priority: "content_quality"
+      test_scope: ["unit", "integration", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-036/unit.json"
+      test_report: "reports/tasks/TASK-036/integration.json"
+      plan_report: "reports/tasks/TASK-036/plan.json"
+      summary_report: "reports/tasks/TASK-036/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-034", "TASK-035"]
+      description: "Upgrade scoring from a single value score into AI relevance plus AI value filtering so only high-value AI news enters fetch, translation, Home and Top 30 Days."
+      inputs:
+        - "Scoring LLM response with is_ai_news, ai_relevance_score, score and reason."
+        - "Balanced filter thresholds: is_ai_news = true, ai_relevance_score >= 70, score >= 75."
+        - "Fixture bait rows for low-value AI-adjacent content and non-AI high-score content."
+      outputs:
+        - "news_item stores internal is_ai_news and ai_relevance_score fields for filtering and audit."
+        - "is_selected is computed from AI news flag, AI relevance score and final AI value score."
+        - "Only selected high-value AI news enters fetch, translation, Home latest_news and top_ranked_news."
+        - "API continues to expose only final score and does not expose is_ai_news, ai_relevance_score or LLM reason."
+        - "Local reclassification command can re-score existing acceptance DB rows using .env live LLM settings."
+      acceptance_criteria:
+        - "Relevant PRD, architecture, data model, API, dev rules, test and acceptance documents are updated before or with implementation."
+        - "Scoring validator rejects responses missing is_ai_news, ai_relevance_score, score or reason."
+        - "ai_relevance_score = 69 is not selected; score = 74 is not selected; ai_relevance_score = 70 and score = 75 is selected when is_ai_news = true."
+        - "A non-AI high-score fixture is scored but remains is_selected = 0 and does not enter fetch, translate, Home or top ranked outputs."
+        - "GET /api/home.latest_news and top_ranked_news contain only translated high-value AI items and do not expose internal AI relevance fields."
+        - "scripts/reclassify_ai_value.py uses .env live LLM config for local acceptance reclassification and is not used as strict-mock evidence."
+      failure_criteria:
+        - "FAIL if low-value, non-AI or AI-adjacent bait content appears in Home, Top 30 Days or translation candidates."
+        - "FAIL if API/UI exposes is_ai_news, ai_relevance_score or LLM reason."
+        - "FAIL if strict-mock tests depend on live RSS, live webpages, live LLM, production DB, current system time or prose-only judgment."

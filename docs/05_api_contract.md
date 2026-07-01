@@ -13,7 +13,7 @@ API 只暴露 UI 必需能力：
 - 手动刷新 RSS。
 - 添加 / 删除 / 启用 / 停用 RSS 源。
 
-API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`、`deleted_at`。
+API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、LLM `reason`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`、`deleted_at`。
 
 ## 2. API Conventions（接口约定）
 
@@ -191,7 +191,7 @@ Field mapping:
 | `original_url` | `news_item.original_url` |
 | `discussion_url` | Internal only; not returned in current News API responses |
 | `published_at` | `news_item.published_at` |
-| `score` | `news_item.score` |
+| `score` | `news_item.score`，公开含义为最终 AI 价值分 |
 | `status` | derived API/UI status |
 
 Display field language rules:
@@ -200,7 +200,7 @@ Display field language rules:
 - `original_title`: original source title and may be non-Chinese.
 - `summary_zh`: required for translated detail responses, returned only for translated list/detail responses, must be Chinese, and must never contain raw RSS summary.
 - `content_zh`: only returned in translated detail responses, must be Chinese, and must never contain raw article content.
-- API must never return `content_raw` or `content_full`.
+- API must never return `content_raw`、`content_full`、`is_ai_news`、`ai_relevance_score` or LLM scoring `reason`.
 
 Allowed API content fields:
 

@@ -55,7 +55,7 @@ def test_local_runtime_config_points_to_fixture_and_mock_inputs():
 
     assert config.database_path == ROOT / "rss.sqlite3"
     assert config.fixture_set == "mvp_acceptance_fixture@v1"
-    assert config.mock_set == "mvp_mock@v1"
+    assert config.mock_set == "mvp_mock@v2_ai_value_filter"
     assert config.clock_source == "fixed_clock_fixture@v1"
     assert config.rss_fixture_path == ROOT / "fixtures/rss/feeds.json"
     assert config.article_fixture_path == ROOT / "fixtures/articles/article_map.json"
@@ -140,7 +140,7 @@ def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     articles = read_fixture("fixtures/articles/article_map.json")
 
     assert rss["version"] == "mvp_acceptance_fixture@v1"
-    assert scoring["version"] == "mvp_mock@v1"
+    assert scoring["version"] == "mvp_mock@v2_ai_value_filter"
     assert translation["version"] == "mvp_mock@v1"
     assert clock["version"] == "fixed_clock_fixture@v1"
     assert sources["version"] == "mvp_acceptance_fixture@v1"
@@ -173,6 +173,16 @@ def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     assert any(count >= 2 for count in canonical_counts.values())
 
     assert scoring["scores"]
+    assert all(
+        {
+            "is_ai_news",
+            "ai_relevance_score",
+            "score",
+            "reason",
+        }.issubset(record)
+        for record in scoring["scores"].values()
+    )
+    assert scoring["scores"]["fixture-non-ai-high-score"]["is_ai_news"] is False
     assert scoring["invalid_cases"]["missing_score"]["response"]
     assert scoring["invalid_cases"]["out_of_range"]["response"]
     assert scoring["timeout_cases"]
@@ -202,7 +212,7 @@ def test_displayable_rss_fixture_links_are_public_non_placeholder_urls():
         item
         for feed in rss["feeds"]
         for item in feed.get("items", [])
-        if item["guid"] != "fixture-low-59"
+        if item["guid"] not in {"fixture-low-59", "fixture-non-ai-high-score"}
     ]
     item_links = [item["link"] for item in displayable_items]
     assert item_links
@@ -253,7 +263,7 @@ def test_displayable_openai_fixture_does_not_use_archival_gpt_4_1_release():
         for feed in rss["feeds"]
         if feed.get("rss_url") == "https://openai.com/news/rss.xml"
         for item in feed.get("items", [])
-        if item["guid"] != "fixture-low-59"
+        if item["guid"] not in {"fixture-low-59", "fixture-non-ai-high-score"}
     }
 
     assert displayable_openai_urls

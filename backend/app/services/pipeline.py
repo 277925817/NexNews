@@ -22,7 +22,8 @@ ARTICLE_MAP_PATH = ROOT_DIR / "fixtures" / "articles" / "article_map.json"
 SCORING_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "scoring.json"
 TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
 TRACE_ID = "refresh-fixture-20260628T090000Z"
-SELECTION_THRESHOLD = 60
+AI_VALUE_SCORE_THRESHOLD = 75
+AI_RELEVANCE_THRESHOLD = 70
 SCORING_RETRY_MAX = 2
 LIVE_LLM_RETRY_MAX = 2
 LIVE_LLM_RETRY_BACKOFF_SECONDS = 0.5
@@ -43,10 +44,13 @@ LIVE_TRANSLATION_SYSTEM_PROMPT = (
 )
 LIVE_SCORING_SYSTEM_PROMPT = (
     "你是 AI 新闻聚合系统的新闻价值评分器。"
-    "请根据用户提供的 JSON 判断该新闻对 AI 从业者的信息价值。"
+    "请根据用户提供的 JSON 判断该新闻是否是高价值 AI 新闻。"
+    "非 AI 新闻、泛科技但没有 AI 信息增量、SEO 软文、广告导流、普通编程工具、"
+    "加密或财经噪声、标题党和重复转述必须给低相关性或低价值分。"
     "只返回 JSON 对象，不要 Markdown，不要解释。"
-    "必须包含字段：score、reason。"
-    "score 必须是 0 到 100 的整数；reason 必须用一句话说明评分依据。"
+    "必须包含字段：is_ai_news、ai_relevance_score、score、reason。"
+    "is_ai_news 必须是布尔值；ai_relevance_score 和 score 必须是 0 到 100 的整数；"
+    "reason 必须用一句话说明评分依据。"
 )
 
 LIVE_REQUEST_HEADERS = {
@@ -486,16 +490,32 @@ def build_scoring_request(record: dict[str, object]) -> dict[str, str]:
     }
 
 
-def validate_scoring_response(response: object) -> tuple[int | None, str | None]:
+def validate_scoring_response(response: object) -> tuple[dict[str, object] | None, str | None]:
     if not isinstance(response, dict):
         return None, "validation_llm_error"
+    is_ai_news = response.get("is_ai_news")
+    ai_relevance_score = response.get("ai_relevance_score")
     score = response.get("score")
     reason = response.get("reason")
-    if not isinstance(score, int) or score < 0 or score > 100:
+    if not isinstance(is_ai_news, bool):
+        return None, "validation_llm_error"
+    if (
+        not isinstance(ai_relevance_score, int)
+        or isinstance(ai_relevance_score, bool)
+        or ai_relevance_score < 0
+        or ai_relevance_score > 100
+    ):
+        return None, "validation_llm_error"
+    if not isinstance(score, int) or isinstance(score, bool) or score < 0 or score > 100:
         return None, "validation_llm_error"
     if not isinstance(reason, str) or not reason.strip():
         return None, "validation_llm_error"
-    return score, None
+    return {
+        "is_ai_news": is_ai_news,
+        "ai_relevance_score": ai_relevance_score,
+        "score": score,
+        "reason": reason,
+    }, None
 
 
 def live_score_for_record(record: dict[str, object]) -> int:
@@ -513,6 +533,10 @@ def apply_missing_summary_penalty(score: int, request: dict[str, str]) -> int:
     if request["summary"].strip():
         return score
     return max(0, score - 20)
+
+
+def apply_scoring_penalties(record: dict[str, object], request: dict[str, str]) -> dict[str, object]:
+    return {**record, "score": apply_missing_summary_penalty(int(record["score"]), request)}
 
 
 def scoring_timeout_error(guid: str, scoring_payload: dict[str, object]) -> str | None:
@@ -542,17 +566,25 @@ def score_request_with_fixture(
     scoring_payload: dict[str, object],
 ) -> dict[str, object]:
     if not request["title"].strip() or not request["original_link"].strip():
-        return {"score": 0, "error": None, "retry_count": 0}
+        return {
+            "is_ai_news": False,
+            "ai_relevance_score": 0,
+            "score": 0,
+            "reason": "Missing title or original link.",
+            "error": None,
+            "retry_count": 0,
+        }
 
     timeout_error = scoring_timeout_error(guid, scoring_payload)
     if timeout_error:
         return {"score": None, "error": timeout_error, "retry_count": SCORING_RETRY_MAX}
 
-    score, error = validate_scoring_response(scoring_response_for_guid(guid, scoring_payload))
+    record, error = validate_scoring_response(scoring_response_for_guid(guid, scoring_payload))
     if error:
         return {"score": None, "error": error, "retry_count": SCORING_RETRY_MAX}
+    assert record is not None
     return {
-        "score": apply_missing_summary_penalty(int(score), request),
+        **apply_scoring_penalties(record, request),
         "error": None,
         "retry_count": 0,
     }
@@ -627,7 +659,14 @@ def score_raw_news(
         score_result = score_request_with_fixture(str(row["rss_guid"] or ""), request, scoring_payload)
         score = score_result["score"]
         if isinstance(score, int):
-            selected = apply_score(conn, news_item_id=int(row["id"]), score=score, now=now)
+            selected = apply_score(
+                conn,
+                news_item_id=int(row["id"]),
+                score=score,
+                is_ai_news=bool(score_result.get("is_ai_news")),
+                ai_relevance_score=int(score_result.get("ai_relevance_score") or 0),
+                now=now,
+            )
             result["scored_count"] += 1
             result["selected_count"] += 1 if selected else 0
             continue
@@ -703,12 +742,26 @@ def score_raw_news_live(
         request = build_scoring_request(row)
         if use_live_llm:
             record, error = live_results_by_id[int(row["id"])]
-            score = apply_missing_summary_penalty(int(record["score"]), request) if record else None
+            record = apply_scoring_penalties(record, request) if record else None
+            score = int(record["score"]) if record else None
         else:
             score = live_score_for_record(row)
+            record = {
+                "is_ai_news": True,
+                "ai_relevance_score": 100,
+                "score": score,
+                "reason": "Local fallback scoring heuristic.",
+            }
             error = None
         if isinstance(score, int):
-            selected = apply_score(conn, news_item_id=int(row["id"]), score=score, now=now)
+            selected = apply_score(
+                conn,
+                news_item_id=int(row["id"]),
+                score=score,
+                is_ai_news=bool(record["is_ai_news"]),
+                ai_relevance_score=int(record["ai_relevance_score"]),
+                now=now,
+            )
             result["scored_count"] += 1
             result["selected_count"] += 1 if selected else 0
             continue
@@ -732,41 +785,66 @@ def apply_score(
     *,
     news_item_id: int,
     score: int,
+    is_ai_news: bool,
+    ai_relevance_score: int,
     now: str,
 ) -> bool:
-    is_selected = score_is_selected(score)
+    is_selected = score_is_selected(
+        score,
+        is_ai_news=is_ai_news,
+        ai_relevance_score=ai_relevance_score,
+    )
     conn.execute(
         """
         UPDATE news_item
         SET score = ?,
+            is_ai_news = ?,
+            ai_relevance_score = ?,
             pipeline_state = 'scored',
             is_selected = ?,
             updated_at = ?
         WHERE id = ?
         """,
-        (score, 1 if is_selected else 0, now, news_item_id),
+        (
+            score,
+            1 if is_ai_news else 0,
+            ai_relevance_score,
+            1 if is_selected else 0,
+            now,
+            news_item_id,
+        ),
     )
     log_processing(conn, news_item_id=news_item_id, stage="score", success=1, now=now)
     return is_selected
 
 
-def score_is_selected(score: int, threshold: int = SELECTION_THRESHOLD) -> bool:
-    return score >= threshold
+def score_is_selected(
+    score: int,
+    *,
+    is_ai_news: bool = True,
+    ai_relevance_score: int = 100,
+    score_threshold: int = AI_VALUE_SCORE_THRESHOLD,
+    relevance_threshold: int = AI_RELEVANCE_THRESHOLD,
+) -> bool:
+    return bool(is_ai_news) and ai_relevance_score >= relevance_threshold and score >= score_threshold
 
 
 def selected_fetch_candidates(conn: sqlite3.Connection) -> list[dict[str, object]]:
     return conn.execute(
         """
         SELECT
-          id, rss_guid, canonical_url, score, pipeline_state, is_selected,
-          content_full, published_at
+          id, rss_guid, canonical_url, score, is_ai_news,
+          ai_relevance_score, pipeline_state, is_selected, content_full,
+          published_at
         FROM news_item
         WHERE pipeline_state = 'scored'
           AND is_selected = 1
           AND score >= ?
+          AND is_ai_news = 1
+          AND ai_relevance_score >= ?
         ORDER BY score DESC, published_at DESC, id ASC
         """,
-        (SELECTION_THRESHOLD,),
+        (AI_VALUE_SCORE_THRESHOLD, AI_RELEVANCE_THRESHOLD),
     ).fetchall()
 
 
@@ -1105,11 +1183,11 @@ def parse_live_scoring_response(response: httpx.Response) -> tuple[dict[str, obj
         record = json.loads(strip_json_code_fence(str(content)))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None, "validation_llm_error"
-    score, error = validate_scoring_response(record)
+    scoring_record, error = validate_scoring_response(record)
     if error:
         return None, error
-    assert score is not None
-    return {"score": score, "reason": str(record["reason"])}, None
+    assert scoring_record is not None
+    return scoring_record, None
 
 
 def request_live_scoring(
@@ -1832,7 +1910,14 @@ def process_refresh_item(
         error = str(score_result["error"] or "validation_llm_error")
         log_processing(conn, news_item_id=news_item_id, stage="score", success=0, error=error, now=now)
         return
-    if not apply_score(conn, news_item_id=news_item_id, score=score, now=now):
+    if not apply_score(
+        conn,
+        news_item_id=news_item_id,
+        score=score,
+        is_ai_news=bool(score_result.get("is_ai_news")),
+        ai_relevance_score=int(score_result.get("ai_relevance_score") or 0),
+        now=now,
+    ):
         return
     fetched = fetch_content(
         conn,

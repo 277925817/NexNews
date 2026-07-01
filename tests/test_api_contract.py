@@ -115,39 +115,44 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert_json_response(client.post("/api/refresh"), 200)
     assert_json_response(client.post("/api/refresh"), 200)
 
-    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 14
+    assert conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()["count"] == 15
     assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] >= 16
 
     home = assert_json_response(client.get("/api/home"), 200)["data"]
     assert [item["id"] for item in home["latest_news"][:10]] == [
         "5",
         "6",
-        "7",
         "8",
         "9",
         "10",
         "11",
         "12",
         "13",
+        "14",
         "3",
     ]
     assert [item["id"] for item in home["top_ranked_news"]] == [
         "3",
         "5",
         "6",
-        "7",
         "8",
         "9",
         "10",
         "11",
         "12",
         "13",
+        "14",
     ]
-    assert "14" not in [item["id"] for item in home["top_ranked_news"]]
+    visible_ids = [item["id"] for item in home["latest_news"] + home["top_ranked_news"]]
+    assert "4" not in visible_ids
+    assert "7" not in visible_ids
+    assert "15" not in [item["id"] for item in home["top_ranked_news"]]
     assert all(item["status"] == "translated" for item in home["latest_news"])
     assert all(item["status"] == "translated" for item in home["top_ranked_news"])
     assert all(item.get("summary_zh") for item in home["latest_news"] + home["top_ranked_news"])
     assert all("content_zh" not in item for item in home["latest_news"] + home["top_ranked_news"])
+    assert all("is_ai_news" not in item for item in home["latest_news"] + home["top_ranked_news"])
+    assert all("ai_relevance_score" not in item for item in home["latest_news"] + home["top_ranked_news"])
 
     ready_detail = assert_json_response(client.get("/api/news/1"), 200)["data"]
     assert ready_detail["status"] == "ready"

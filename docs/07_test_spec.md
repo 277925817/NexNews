@@ -59,7 +59,7 @@ isolation: strict_mock
 - 禁止自造缩写和模糊变量名，例如 `tmp`、`data1`、`foo`、`srcNm`、`pubAt`。
 - 单个函数超过 `60` 行、单个文件超过 `300` 行时必须失败。
 - API 调用必须集中在 API client；UI 组件不得直接拼接 endpoint 字符串。
-- Frontend 不得读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full` 或任何数据库字段名。
+- Frontend 不得读取 `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、`content_raw`、`content_full` 或任何数据库字段名。
 - `pipeline_state` 只能由 backend pipeline service 写入；API handler 和 frontend 写入必须失败。
 - API handler 不得直接返回 DB model；必须返回 DTO。
 - SQL/data access 必须集中在 repository 或 database helper。
@@ -69,8 +69,8 @@ isolation: strict_mock
 ### 2.1 Unit Test（函数级）
 - RSS parser：固定 RSS XML → 标准 item 列表。
 - URL normalizer：链接变体 → 同一 canonical URL。
-- Scoring parser：固定 LLM JSON → `0-100` score。
-- Selection rule：默认 threshold `60` → selected / not selected。
+- Scoring parser：固定 LLM JSON → `is_ai_news`、`ai_relevance_score`、`0-100` final AI value `score`。
+- Selection rule：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75` → selected / not selected。
 - Translation mapper：固定翻译 JSON → 中文字段。
 - API projector：内部对象 → `NewsListItem` / `NewsDetailItem`。
 - API status projector：`title_zh`、`summary_zh`、`content_zh`、`content_raw`、`content_full`、`has_translate_failed` → `ready | translated | untranslated | translation_failed`。
@@ -287,7 +287,7 @@ Mandatory catalog:
 | `A-api-ACC-STOP-002-default-source-crud-parity` | api | ACC-STOP-002 | public_surface | Default seeded sources and user-created sources have identical enable, disable, delete, tombstone and no-auto-restore behavior. |
 | `A-integration-ACC-STOP-002-source-ui-crud-parity` | integration | ACC-STOP-002 | public_surface | Sources UI renders identical controls and state transitions for default seeded and user-created sources. |
 | `A-integration-ACC-STOP-003-scheduler-fixed-clock` | integration | ACC-STOP-003 | internal_evidence | Fixed clock cases trigger scheduled refresh at 09:00 and 18:00 and do not trigger at non-scheduled times. |
-| `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold fixture proves score 60 is selected and score 59 is not API/UI visible. |
+| `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold fixture proves `is_ai_news = true`, `ai_relevance_score = 70`, `score = 75` is selected; `score = 59` and non-AI high-score bait are not API/UI visible. |
 | `A-integration-ACC-STOP-003-dedupe-positive-distinct-items` | integration | ACC-STOP-003 | internal_evidence | Distinct high-score items with different canonical URLs or different domains remain separate fetch candidates. |
 | `A-integration-ACC-STOP-003-fetch-fallback` | integration | ACC-STOP-003 | internal_evidence | Fetch success, extraction failure with RSS fallback and no-content failure produce the documented displayability outcomes. |
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | integration | ACC-STOP-003 | internal_evidence | A fetched item using RSS summary fallback produces non-empty Chinese summary and content through translation. |
@@ -448,16 +448,17 @@ Rules:
 
 ### 3.2 LLM 评分
 - Scoring request JSON 必须包含 `title`、`summary`、`source`、`published_at`、`original_link`。
-- Scoring response JSON 必须通过 schema validation；`score` 必须为 `0-100` 数字。
+- Scoring response JSON 必须通过 schema validation；`is_ai_news` 必须为布尔值，`ai_relevance_score` 和 `score` 必须为 `0-100` 整数。
 - Scoring response JSON 必须包含非空 `reason`；缺失或空 `reason` 必须归类为 `validation_llm_error`。
-- score 范围合法：小于 `0` 或大于 `100` 时拒绝写入。
-- 高分过滤正确：score `80` 的新闻进入可展示链路。
-- 低分过滤正确：score `30` 的新闻不出现在 `GET /api/home`。
+- score 和 ai_relevance_score 范围合法：小于 `0` 或大于 `100` 时拒绝写入。
+- 高价值 AI 过滤正确：`is_ai_news = true AND ai_relevance_score = 70 AND score = 75` 的新闻进入可展示链路。
+- 低价值过滤正确：`score = 74` 或 `ai_relevance_score = 69` 的新闻不进入 fetch/translate/home/top ranked。
+- 非 AI 过滤正确：`is_ai_news = false` 即使 `score` 很高也不进入 fetch/translate/home/top ranked。
 - 标题或原文链接缺失时评分为 `0`，且不得进入 fetch。
 - 摘要缺失时 scoring input 必须保留空字段，并断言最终 score 比同等完整摘要基准扣 `20` 分。
-- 写入 `score` 后必须立即计算 `is_selected`，默认 threshold 为 `60`。
+- 写入 `is_ai_news`、`ai_relevance_score`、`score` 后必须立即计算 `is_selected`。
 - `is_selected = 1` 不得改变 `pipeline_state`；`pipeline_state` 只允许 `raw → scored → fetched`。
-- JSON schema 错误：缺少 `score` 时归类为 `validation_llm_error`。
+- JSON schema 错误：缺少 `is_ai_news`、`ai_relevance_score`、`score` 或 `reason` 时归类为 `validation_llm_error`。
 - retry 上限：连续失败超过 `2` 次后不继续推进该 item，并按 `06_dev_rules.md` 保持 `pipeline_state` 不被错误推进。
 
 ### 3.3 翻译层
@@ -552,7 +553,8 @@ Rules:
 - `news_item.canonical_url` 必须唯一。
 - `news_item.pipeline_state` 只允许 `raw`、`scored`、`fetched`。
 - `pipeline_state = scored` 必须满足 `score IS NOT NULL`。
-- `is_selected` 必须由 threshold 计算，不得作为 pipeline 状态。
+- `is_selected` 必须由 AI 价值筛选计算，不得作为 pipeline 状态。
+- `is_ai_news`、`ai_relevance_score` 是内部筛选字段，不得通过 API/UI 暴露。
 - `content_raw` 保存 RSS 摘要或原始内容；`content_full` 只保存抓取全文。
 - 不得保存 `content_source`、`title_domain_hash`、`translation_status`、`is_ready`、`display_mode`、独立任务队列表或多语言表。
 - `processing_log` 是必需核心表，必须满足 `source_id` 与 `news_item_id` 恰好一个非空。
@@ -836,7 +838,7 @@ Output rules:
 - CI MUST persist the full report collection as JSON.
 - Human-readable logs MAY be generated from the structured report, but MUST NOT be the source of truth.
 - Report fields MUST NOT contain完整 prompt、密钥、token、secret 或超过 `1024` 字符的正文片段。
-- Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url` or `deleted_at`.
+- Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url` or `deleted_at`.
 - Report fields with assertion `visibility = internal_evidence` MAY contain internal field names required to prove DB/schema/state facts, but MUST NOT contain raw field values that are full article bodies, full prompts, secrets, or token-like credentials.
 - Failure routing MUST use `stage`、`failure_type`、`error_category`、`node` and `trace_id`, not free-form error text.
 - AI automatic repair MUST consume this report contract before reading raw logs.

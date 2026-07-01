@@ -58,6 +58,8 @@ acceptance_gate:
     forbidden_internal_fields:
       - pipeline_state
       - is_selected
+      - is_ai_news
+      - ai_relevance_score
       - content_raw
       - content_full
       - has_translate_failed
@@ -284,10 +286,10 @@ Correctness:
 
 Policy validation:
 
-- mock scoring 输出稳定 `0-100` 分数。
-- score threshold 从配置读取，默认值为 `60`。
-- threshold fixture 中 `score = 60` 的 item 进入 fetch/translate/API 可见链路。
-- threshold fixture 中 `score = 59` 的 item 不出现在 `GET /api/home`。
+- mock scoring 输出稳定 `is_ai_news`、`ai_relevance_score` 和 `0-100` 最终 AI 价值分。
+- AI 价值筛选规则固定为 `is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75`。
+- threshold fixture 中 `is_ai_news = true`、`ai_relevance_score = 70`、`score = 75` 的 item 进入 fetch 链路。
+- `score = 59` 的低价值 item 和 `is_ai_news = false` 的高分诱饵都不出现在 `GET /api/home` 或排行榜。
 
 ✘ Fail:
 
@@ -336,7 +338,7 @@ Policy validation:
 - `processing_log` 是必需核心表。
 - `news_item.pipeline_state` 只允许 `raw`、`scored`、`fetched`。
 - `pipeline_state` transition 只允许 `raw -> scored -> fetched`。
-- `is_selected` 由 score threshold 计算，默认 threshold 为 `60`。
+- `is_selected` 由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 75`。
 - `canonical_url` 唯一约束阻止重复新闻。
 - API `status` 只由 API 层投影，不写入数据库。
 - 翻译完成事实只由 `title_zh`、`summary_zh`、`content_zh` 判断。
@@ -429,6 +431,8 @@ Policy validation:
 - API JSON、UI DOM、logs 和 `visibility = public_surface` report assertion 中，`acceptance_gate.leak_policy.forbidden_internal_fields` 命中数为 `0`：
   - `pipeline_state`
   - `is_selected`
+  - `is_ai_news`
+  - `ai_relevance_score`
   - `content_raw`
   - `content_full`
   - `has_translate_failed`

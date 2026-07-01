@@ -53,7 +53,7 @@
 - 每个组件必须对应 `03_ui_spec.md` 的最终实现单元，否则必须删除。
 - 页面组件只负责组合组件和加载数据，否则业务逻辑必须下沉到 API client 或 service。
 - `NewsCard`、`ArticleView`、`HighScoreList` 只能消费 API DTO 字段，否则字段泄漏检查必须失败。
-- 前端不得读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full`。
+- 前端不得读取 `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、`content_raw`、`content_full`。
 - 前端只能根据 API `status` 渲染新闻状态，否则状态逻辑会重复实现。
 - 全局状态只能保存跨页面必需数据，否则必须改成本地 state。
 - 禁止用 `useEffect` 保存可由 props 计算出的状态，否则会产生双状态。
@@ -84,7 +84,7 @@
 
 - `pipeline_state` 只允许 `raw`、`scored`、`fetched`，否则数据库写入必须失败。
 - `pipeline_state` transition independent of `is_selected`，否则流程状态会被业务判断污染。
-- `is_selected` 必须由 configurable threshold 计算，默认值为 `60`。
+- `is_selected` 必须由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 75`。
 - 写入 `score` 后必须立即计算 `is_selected`，否则 fetch 条件会漂移。
 - 去重只能使用 `canonical_url`，否则同一新闻会重复入库。
 - 来源讨论页链接只能保存为 `discussion_url`，不得替代 `original_url`、`canonical_url` 或正文抓取目标。
@@ -100,7 +100,9 @@
 
 - LLM 请求必须通过统一 client 入口，否则 mock 和限流无法集中处理。
 - live LLM translation 必须使用环境变量或 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`，并调用统一 client 入口。
-- LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `score`。
+- LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `is_ai_news`、`ai_relevance_score` 或 `score`。
+- LLM scoring 输出必须包含 `is_ai_news`、`ai_relevance_score`、`score`、`reason`；API/UI 不得暴露内部子分或评分理由。
+- live scoring prompt 必须压低或拒绝非 AI 新闻、泛科技但无 AI 信息增量、SEO/软文、广告导流、普通工具、加密/财经噪声、标题党和重复转述。
 - LLM translation 输出必须按 JSON schema 校验，否则不得写入中文字段。
 - If LLM output fails JSON schema validation, classify as `validation_llm_error`, not `llm_error`.
 - 无效 LLM response 必须在 `processing_log` 中记录为 `llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
@@ -111,6 +113,7 @@
 - LLM prompt 不得包含完整 `content_full` 之外的敏感配置，否则日志和错误处理会泄漏。
 - LLM mock 必须覆盖 scoring 和 translation，否则 pipeline 测试会依赖外部服务。
 - live LLM 未启用或配置缺失时，原文兜底只能投影为 `untranslated`，不得计入 translation success。
+- 本地人工验收前可运行 `python3 scripts/reclassify_ai_value.py --limit 0` 用 `.env` 中的真实 LLM 对既有库执行 AI 价值重评估；测试阶段不得使用该命令作为 strict-mock 证据。
 
 ## 6. Error Handling Rules（错误处理规范）
 

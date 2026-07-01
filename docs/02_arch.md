@@ -13,7 +13,7 @@
 
 The MVP runs as a single FastAPI application on one machine for local deployed use. The frontend is a React + Vite single-page app; in development it may run through Vite, but the long-running local service serves the Vite build output from FastAPI on `http://127.0.0.1:8010/` alongside `/api/*`. The backend owns RSS collection, LLM scoring, content fetching, LLM translation, scheduling, SQLite persistence, and local static SPA serving.
 
-RSS sources provide the initial news entries. FastAPI reads RSS feeds, applies the live RSS 30-day freshness window before raw persistence, stores eligible raw entries in SQLite, sends title and summary data to the LLM for scoring, marks high-value items with `is_selected`, fetches content for selected items, translates fetched content, and exposes display-ready API/UI projections to the frontend.
+RSS sources provide the initial news entries. FastAPI reads RSS feeds, applies the live RSS 30-day freshness window before raw persistence, stores eligible raw entries in SQLite, sends title and summary data to the LLM for AI relevance and AI value scoring, marks only high-value AI items with `is_selected`, fetches content for selected items, translates fetched content, and exposes display-ready API/UI projections to the frontend.
 
 Core data flow:
 
@@ -40,7 +40,7 @@ RSS → Crawl → Score → Filter → Fetch → Translate → UI
 1. RSS sources enter the system through the RSS Collector during scheduled crawling or manual refresh.
 2. The RSS Collector parses enabled RSS feeds and, in live runtime, writes only items whose RSS `published_at` is within the last 30 days relative to refresh time as raw news records.
 3. The News Scoring Service calls the LLM after a new raw item is available, using its title, summary, source, published time, and original link.
-4. Items with score greater than or equal to `60` set `is_selected = 1`; this does not change `pipeline_state`.
+4. Items set `is_selected = 1` only when `is_ai_news = true`, `ai_relevance_score >= 70`, and final `score >= 75`; this does not change `pipeline_state`.
 5. The Content Fetcher runs only for selected items and stores either extracted article content or RSS summary fallback content.
 6. When usable content exists, `pipeline_state` becomes `fetched`.
 7. The Translation Service calls the LLM after the item is fetched, using the original title, summary, content, source, and score.
@@ -53,7 +53,7 @@ RSS → raw → scored → fetched → API/UI status projection → UI
 
 - RSS: Enabled RSS sources provide news entries; live runtime filters parsed entries by a 30-day RSS `published_at` window before persistence.
 - raw: New freshness-eligible parsed entries are stored as unscored news.
-- scored: The LLM returns a `0-100` value score for each raw item.
+- scored: The LLM returns `is_ai_news`, `ai_relevance_score`, and final `0-100` AI value `score` for each raw item.
 - fetched: Selected items receive extracted article content or RSS summary fallback content.
 - API/UI status projection: The API derives `ready`, `translated`, or `translation_failed` from `title_zh`, `summary_zh`, `content_zh`, and `has_translate_failed`.
 - UI: The frontend displays ready, translated, or translation-failed news according to API `status`, never database internals.

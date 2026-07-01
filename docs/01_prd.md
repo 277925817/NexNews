@@ -176,25 +176,27 @@
 
 **输出**
 
-- 新闻价值评分，范围为 `0-100`
+- 是否为 AI 新闻：`is_ai_news`
+- AI 相关性评分：`ai_relevance_score`，范围为 `0-100`
+- 最终 AI 价值评分：`score`，范围为 `0-100`
 - 是否进入全文抓取队列
 
 **运行流程**
 
 1. 系统读取通过 crawl 入库的新 RSS 条目，并写入 `pipeline_state = raw`。
 2. 系统按标准 JSON 格式将标题、摘要、来源、信息源发布时间和原文链接发送给 LLM。
-3. LLM 按标准 JSON 格式返回 `0-100` 的新闻价值评分。
+3. LLM 按标准 JSON 格式返回 `is_ai_news`、`ai_relevance_score`、`score` 和 `reason`。
 4. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
-5. 评分大于或等于 `60` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
-6. 评分小于 `60` 的条目不抓取全文。
+5. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
+6. 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不抓取全文。
 7. 标题或原文链接缺少任意一个，直接评分为 `0`。
 8. 缺少摘要时，评分扣 `20` 分。
 
 **验收标准**
 
-- 每条新 RSS 条目都有一个数值评分。
-- 评分大于或等于 `60` 的条目被标记为待抓取全文。
-- 评分小于 `60` 的条目不会触发全文抓取。
+- 每条新 RSS 条目都有完整 AI 价值筛选结果：`is_ai_news`、`ai_relevance_score`、`score`。
+- 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目被标记为待抓取全文。
+- 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不会触发全文抓取。
 - 标题或原文链接缺失的条目评分为 `0`，且不会触发全文抓取。
 - 评分成功后，`pipeline_state` 必须从 `raw` 更新为 `scored`；高价值新闻必须写入 `is_selected = 1`。
 
@@ -204,7 +206,7 @@
 
 **输入**
 
-- 评分大于或等于 `60` 的 RSS 条目
+- 通过 AI 价值筛选的 RSS 条目：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75`
 
 **输出**
 
@@ -285,7 +287,7 @@
 
 **验收标准**
 
-- 评分大于或等于 `60` 且内容可用的新闻会进入 API 可展示查询结果。
+- 通过 AI 价值筛选且内容可用的新闻会进入 API 可展示查询结果。
 - 展示就绪新闻保留原文标题字段。
 - 展示就绪新闻可以出现在主页面列表和 30 天高分榜单中。
 - 翻译未完成不影响新闻展示。
@@ -561,7 +563,7 @@
 
 1. RSS 条目首次入库时，`pipeline_state = raw`。
 2. 评分完成后，`pipeline_state` 从 `raw` 更新为 `scored`。
-3. 评分大于或等于 `60` 时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
+3. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
 4. 全文抓取或 RSS 摘要兜底内容可用后，`pipeline_state` 从 `scored` 更新为 `fetched`。
 5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`untranslated`、`translation_failed`。
 6. 翻译成功由 `title_zh`、`summary_zh`、`content_zh` 全部存在表达。
@@ -573,7 +575,7 @@
 
 - `pipeline_state` 只允许取值：`raw`、`scored`、`fetched`。
 - 新闻不得跳过中间状态直接从 `raw` 变为 `fetched`。
-- 评分小于 `60` 的新闻停留在 `scored`，不会进入全文抓取。
+- 未通过 AI 价值筛选的新闻停留在 `scored`，不会进入全文抓取。
 - 翻译失败的新闻 API/UI status 必须为 `translation_failed`。
 - 主列表和榜单只展示 API/UI status 为 `ready`、`translated` 或 `translation_failed` 的新闻。
 - 数据库和 API 不得返回独立翻译状态字段。
@@ -601,7 +603,7 @@
 3. 系统使用 `processing_log` 记录 crawl、score、fetch、translate 的最小处理结果。
 4. 每次定时抓取或手动刷新都为每个处理阶段写入可追踪的 `processing_log`。
 5. crawl 处理读取所有启用信息源、请求 RSS XML、解析 RSS 条目；live RSS 路径只为信息源发布时间位于本次抓取最近 30 天窗口内的条目创建或更新 `raw` 状态的 `news_item`，fixture 路径可保留窗口外样本。
-6. score 处理对新条目执行标题和摘要评分，并为评分大于或等于 `60` 的非重复新闻写入 `is_selected = 1`。
+6. score 处理对新条目执行 AI 新闻判定、AI 相关性评分和最终 AI 价值评分，并为同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的非重复新闻写入 `is_selected = 1`。
 7. fetch 处理只读取 `is_selected = 1` 的新闻并抓取正文。
 8. translate 处理只读取 `pipeline_state = fetched` 且存在可用内容的新闻。
 9. 每个处理阶段都不得绕过 `raw -> scored -> fetched` 状态机。
@@ -634,7 +636,7 @@
 **运行流程**
 
 1. 评分请求 JSON 必须包含 `title`、`summary`、`source`、`published_at` 和 `original_link`，其中 `published_at` 表示信息源发布时间。
-2. 评分响应 JSON 必须包含 `score` 和 `reason`，其中 `score` 必须是 `0-100` 的数字。
+2. 评分响应 JSON 必须包含 `is_ai_news`、`ai_relevance_score`、`score` 和 `reason`，其中 `is_ai_news` 必须是布尔值，`ai_relevance_score` 和 `score` 必须是 `0-100` 的整数，`reason` 必须非空。
 3. 评分调用超时、返回非 JSON 或字段不合法时，系统最多重试 2 次。
 4. 评分调用超时、返回非 JSON 或字段不合法并在重试后仍失败时，系统不得写入 `score`，不得推进 `pipeline_state`，必须写入失败 `processing_log`，且该新闻不进入全文抓取。
 5. 翻译请求 JSON 必须包含 `original_title`、`original_summary`、`original_content`、`source` 和 `score`。

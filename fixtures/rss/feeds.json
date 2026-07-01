@@ -72,6 +72,14 @@
           "comments_url": "https://news.ycombinator.com/item?id=44255118",
           "published_at": "2026-06-28T05:50:00Z",
           "summary": "Dense ranking fixture summary 94."
+        },
+        {
+          "guid": "fixture-non-ai-high-score",
+          "title": "Developer conference travel discounts surge",
+          "link": "https://www.python.org/events/python-events/",
+          "comments_url": "https://news.ycombinator.com/item?id=44255119",
+          "published_at": "2026-06-28T05:45:00Z",
+          "summary": "Non-AI high-score bait that must be rejected by the AI value filter."
         }
       ]
     },

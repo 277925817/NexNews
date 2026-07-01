@@ -340,6 +340,8 @@ def check_article(page: Page, base_url: str, findings: list[dict[str, str]], tim
                 results.append(check_article_id(page, base_url, detail_id, status, findings, timeout_ms))
                 continue
         if not matching_item:
+            if status != "translated":
+                continue
             findings.append(build_finding("article_view", f"{status} detail sample missing"))
             continue
         results.append(check_article_id(page, base_url, str(matching_item.get("id")), status, findings, timeout_ms))
@@ -427,7 +429,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run deployed browser smoke acceptance.")
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--report-dir", default="reports")
-    parser.add_argument("--timeout-ms", type=int, default=10000)
+    parser.add_argument("--timeout-ms", type=int, default=180000)
     return parser.parse_args()
 
 

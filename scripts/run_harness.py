@@ -45,11 +45,13 @@ REQUIRED_GATES = [f"ACC-STOP-{index:03d}" for index in range(1, 11)]
 SCHEMA_REF = "07_test_spec.md#6"
 SCHEMA_VERSION = "v2"
 FIXTURE_SET = "mvp_acceptance_fixture@v1"
-MOCK_SET = "mvp_mock@v1"
+MOCK_SET = "mvp_mock@v2_ai_value_filter"
 CLOCK_SOURCE = "fixed_clock_fixture@v1"
 FIXED_TIMESTAMP = "2026-06-28T09:00:00Z"
 FIXTURE_VERSION = "mvp_acceptance_fixture@v1"
-MOCK_VERSION = "mvp_mock@v1"
+MOCK_VERSION = "mvp_mock@v2_ai_value_filter"
+SCORING_MOCK_VERSION = "mvp_mock@v2_ai_value_filter"
+TRANSLATION_MOCK_VERSION = "mvp_mock@v1"
 REQUIRED_TASK_IDS = {"TASK-000", "TASK-001", "TASK-003", "TASK-021"}
 
 REPORT_VISIBILITY_VALUES = {
@@ -60,6 +62,8 @@ REPORT_VISIBILITY_VALUES = {
 FORBIDDEN_PUBLIC_FIELDS = {
     "pipeline_state",
     "is_selected",
+    "is_ai_news",
+    "ai_relevance_score",
     "content_raw",
     "content_full",
     "has_translate_failed",
@@ -2466,7 +2470,7 @@ def task_011_home_observations() -> dict[str, Any]:
         "top_size_ok": len(top) <= 10,
         "latest_density_ok": len(latest) >= 10,
         "layout_fields_present": sorted(set(data) & HOME_LAYOUT_FIELDS) if isinstance(data, dict) else [],
-        "all_scores_selected": all(int(item.get("score", -1)) >= 60 for item in latest + top if isinstance(item, dict)),
+        "all_scores_selected": all(int(item.get("score", -1)) >= 75 for item in latest + top if isinstance(item, dict)),
     }
     shape_issues = task_011_item_shape_issues("latest_news", latest)
     shape_issues += task_011_item_shape_issues("top_ranked_news", top)
@@ -3021,7 +3025,7 @@ def task_014_api_observations() -> dict[str, Any]:
         "early_concurrent_no_run": log_count_initial == log_count_after_early,
         "success_timestamp": task_014_refreshed_at(success_payload) == FIXED_TIMESTAMP,
         "second_timestamp": task_014_refreshed_at(second_payload) == FIXED_TIMESTAMP,
-        "idempotent_news_count": news_count_after_success == 14 and news_count_after_second == 14,
+        "idempotent_news_count": news_count_after_success == 15 and news_count_after_second == 15,
         "late_concurrent_last_timestamp": task_014_refreshed_at(late_payload) == FIXED_TIMESTAMP,
         "late_concurrent_no_run": log_count_before_late == log_count_after_late,
     }
@@ -3096,16 +3100,23 @@ def task_019_public_item_issues(label: str, items: list[Any]) -> list[str]:
 
 
 def task_019_detail_checks(client: Any, latest_items: list[dict[str, Any]]) -> dict[str, Any]:
-    by_title = {str(item["original_title"]): str(item["id"]) for item in latest_items}
     checks: dict[str, Any] = {}
     issues: list[str] = []
-    cases = {
-        "translated": ("Introducing LifeSciBench", "translated"),
-        "ready": ("Threshold AI agent reaches production", "ready"),
-        "failed": ("AI translation mock emits partial output", "translation_failed"),
+    guid_ids = {
+        row["rss_guid"]: str(row["id"])
+        for row in client.app.state.db.execute("SELECT id, rss_guid FROM news_item").fetchall()
     }
-    for label, (title, expected_status) in cases.items():
-        response, payload, parse_issues = task_019_public_response(client, "GET", f"/api/news/{by_title.get(title, 'missing')}")
+    cases = {
+        "translated": ("fixture-translated-96", "translated"),
+        "ready": ("fixture-threshold-60", "ready"),
+        "failed": ("fixture-translate-partial", "translation_failed"),
+    }
+    for label, (guid, expected_status) in cases.items():
+        response, payload, parse_issues = task_019_public_response(
+            client,
+            "GET",
+            f"/api/news/{guid_ids.get(guid, 'missing')}",
+        )
         issues.extend(parse_issues)
         issues.extend(envelope_issue(name=f"detail_{label}", response=response, expected_status=200, expected_envelope="data"))
         data = payload.get("data") if isinstance(payload, dict) else {}
@@ -3130,8 +3141,9 @@ def task_019_home_checks(home_payload: dict[str, Any] | None) -> dict[str, Any]:
     top_pairs = [(int(item.get("score")), str(item.get("published_at"))) for item in top if isinstance(item, dict) and isinstance(item.get("score"), int)]
     checks = {
         "latest_density_ok": len(latest) >= 10,
-        "threshold_60_visible": "Threshold AI agent reaches production" in latest_titles,
+        "threshold_pending_not_in_translated_home": "Threshold AI agent reaches production" not in latest_titles,
         "score_59_hidden": "Low signal AI funding rumor" not in latest_titles,
+        "non_ai_high_score_hidden": "Developer conference travel discounts surge" not in latest_titles,
         "threshold_duplicate_hidden": "Threshold AI agent reaches production duplicate" not in latest_titles,
         "top_count_10": len(top) == 10,
         "top_sorted": all(a[0] > b[0] or (a[0] == b[0] and a[1] >= b[1]) for a, b in zip(top_pairs, top_pairs[1:])),
@@ -4643,9 +4655,9 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
     rows = conn.execute(
         """
         SELECT
-          rss_guid, canonical_url, score, pipeline_state, is_selected,
-          title_zh, summary_zh, content_zh, has_translate_failed,
-          content_full, content_raw
+          rss_guid, canonical_url, score, is_ai_news, ai_relevance_score,
+          pipeline_state, is_selected, title_zh, summary_zh, content_zh,
+          has_translate_failed, content_full, content_raw
         FROM news_item
         ORDER BY canonical_url ASC
         """
@@ -4657,6 +4669,7 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         "fixture-translate-partial",
         "fixture-rank-95",
         "fixture-rank-94",
+        "fixture-non-ai-high-score",
         "fixture-rank-93",
         "fixture-rank-92",
         "fixture-rank-91",
@@ -4672,18 +4685,20 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
             "pipeline:fixture_guid_set_missing:"
             f"{sorted(expected_guids - observed_guids)}"
         )
-    if len(rows) < 14:
-        issues.append(f"pipeline:news_item_count={len(rows)}<14")
+    if len(rows) < 15:
+        issues.append(f"pipeline:news_item_count={len(rows)}<15")
 
     by_guid = {str(row["rss_guid"]): row for row in rows}
     threshold = by_guid.get("fixture-threshold-60")
     if (
         not threshold
-        or threshold["score"] != 60
+        or threshold["score"] != 75
+        or threshold["is_ai_news"] != 1
+        or threshold["ai_relevance_score"] != 70
         or threshold["pipeline_state"] != "fetched"
         or threshold["is_selected"] != 1
     ):
-        issues.append("pipeline:threshold_60_not_selected_and_fetched")
+        issues.append("pipeline:ai_value_threshold_not_selected_and_fetched")
 
     low_score = by_guid.get("fixture-low-59")
     if (
@@ -4693,6 +4708,16 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         or low_score["is_selected"] != 0
     ):
         issues.append("pipeline:score_59_not_filtered_at_scored_state")
+
+    non_ai_high_score = by_guid.get("fixture-non-ai-high-score")
+    if (
+        not non_ai_high_score
+        or non_ai_high_score["score"] != 96
+        or non_ai_high_score["is_ai_news"] != 0
+        or non_ai_high_score["is_selected"] != 0
+        or non_ai_high_score["pipeline_state"] != "scored"
+    ):
+        issues.append("pipeline:non_ai_high_score_not_filtered_at_scored_state")
 
     translated = by_guid.get("fixture-translated-96")
     if not translated or not all(
@@ -4725,8 +4750,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
     }
     if log_summary.get("crawl:0", 0) < 1:
         issues.append("pipeline:crawl_failure_fixture_not_logged")
-    if log_summary.get("score:1", 0) < 14:
-        issues.append("pipeline:score_success_count_less_than_14")
+    if log_summary.get("score:1", 0) < 15:
+        issues.append("pipeline:score_success_count_less_than_15")
     if log_summary.get("fetch:1", 0) < 2 or log_summary.get("fetch:0", 0) < 1:
         issues.append("pipeline:fetch_success_and_fallback_not_logged")
     if log_summary.get("translate:1", 0) < 1 or log_summary.get("translate:0", 0) < 1:
@@ -4769,6 +4794,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         ]
         if "Low signal AI funding rumor" in latest_titles:
             issues.append("pipeline:score_59_visible_in_home")
+        if "Developer conference travel discounts surge" in latest_titles:
+            issues.append("pipeline:non_ai_high_score_visible_in_home")
         if len(ranked_scores) != 10:
             issues.append(f"pipeline:high_score_list_count={len(ranked_scores)}!=10")
         if ranked_scores != sorted(ranked_scores, reverse=True):
@@ -4785,6 +4812,8 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         "state_by_guid": {
             guid: {
                 "score": row["score"],
+                "is_ai_news": row["is_ai_news"],
+                "ai_relevance_score": row["ai_relevance_score"],
                 "state": row["pipeline_state"],
                 "selected": bool(row["is_selected"]),
                 "has_full_text": bool(row["content_full"]),
@@ -5603,8 +5632,8 @@ def task_003_version_checks(
         "sources": FIXTURE_VERSION,
         "source_cases": FIXTURE_VERSION,
         "clock": CLOCK_SOURCE,
-        "scoring": MOCK_VERSION,
-        "translation": MOCK_VERSION,
+        "scoring": SCORING_MOCK_VERSION,
+        "translation": TRANSLATION_MOCK_VERSION,
     }
     actual_versions = {name: payload.get("version") for name, payload in payloads.items()}
     version_issues = list(payload_issues)
@@ -6256,14 +6285,14 @@ def run_task_004_integration(report_dir: Path, task_id: str) -> int:
     actual = task_004_integration_observations()
     expected_counts = rss_fixture_counts()
     passed = (
-        actual["inserted_count"] == 14
+        actual["inserted_count"] == 15
         and actual["source_success_count"] == expected_counts["source_success_count"]
         and actual["source_failure_count"] == expected_counts["source_failure_count"]
-        and actual["news_item_count"] == 14
+        and actual["news_item_count"] == 15
         and actual["states"] == ["raw"]
-        and actual["score_null_count"] == 14
-        and actual["content_full_null_count"] == 14
-        and actual["title_zh_null_count"] == 14
+        and actual["score_null_count"] == 15
+        and actual["content_full_null_count"] == 15
+        and actual["title_zh_null_count"] == 15
         and actual["crawl_log_count"] == expected_counts["feed_count"]
         and actual["crawl_failure_errors"] == ["parsing"]
         and actual["all_logs_are_crawl_source_logs"]
@@ -6328,7 +6357,14 @@ def task_005_unit_observations() -> dict[str, Any]:
     invalid = score_request("missing_score", request, scoring_payload)
     timeout = score_request("score_timeout", request, scoring_payload)
     missing_title = score_request("fixture-translated-96", {**request, "title": ""}, scoring_payload)
-    _, empty_reason_error = validate_response({"score": 10, "reason": ""})
+    _, empty_reason_error = validate_response(
+        {
+            "is_ai_news": True,
+            "ai_relevance_score": 90,
+            "score": 10,
+            "reason": "",
+        }
+    )
     return {
         "request_keys": sorted(request),
         "summary_present": "summary" in request and request["summary"] == "",
@@ -6398,7 +6434,14 @@ def task_005_integration_observations() -> dict[str, Any]:
     seed_default_sources(conn)
     ingest_fixture_rss(conn)
     result = score_raw_news(conn)
-    rows = conn.execute("SELECT rss_guid, score, pipeline_state, is_selected, content_full, title_zh FROM news_item").fetchall()
+    rows = conn.execute(
+        """
+        SELECT
+          rss_guid, score, is_ai_news, ai_relevance_score, pipeline_state,
+          is_selected, content_full, title_zh
+        FROM news_item
+        """
+    ).fetchall()
     logs = conn.execute("SELECT success, source_id, news_item_id FROM processing_log WHERE stage = 'score'").fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
     conn.close()
@@ -6406,9 +6449,13 @@ def task_005_integration_observations() -> dict[str, Any]:
         **result,
         "states": sorted({row["pipeline_state"] for row in rows}),
         "threshold_score": by_guid["fixture-threshold-60"]["score"],
+        "threshold_ai_relevance": by_guid["fixture-threshold-60"]["ai_relevance_score"],
         "threshold_selected": by_guid["fixture-threshold-60"]["is_selected"],
         "low_score": by_guid["fixture-low-59"]["score"],
         "low_selected": by_guid["fixture-low-59"]["is_selected"],
+        "non_ai_score": by_guid["fixture-non-ai-high-score"]["score"],
+        "non_ai_flag": by_guid["fixture-non-ai-high-score"]["is_ai_news"],
+        "non_ai_selected": by_guid["fixture-non-ai-high-score"]["is_selected"],
         "content_full_null_count": sum(row["content_full"] is None for row in rows),
         "title_zh_null_count": sum(row["title_zh"] is None for row in rows),
         "score_log_count": len(logs),
@@ -6453,18 +6500,22 @@ def run_task_005_unit(report_dir: Path, task_id: str) -> int:
 def run_task_005_integration(report_dir: Path, task_id: str) -> int:
     actual = task_005_integration_observations()
     passed = (
-        actual["scored_count"] == 14
+        actual["scored_count"] == 15
         and actual["failed_count"] == 0
         and actual["selected_count"] == 13
         and actual["states"] == ["scored"]
-        and actual["threshold_score"] == 60
+        and actual["threshold_score"] == 75
+        and actual["threshold_ai_relevance"] == 70
         and actual["threshold_selected"] == 1
         and actual["low_score"] == 59
         and actual["low_selected"] == 0
-        and actual["content_full_null_count"] == 14
-        and actual["title_zh_null_count"] == 14
-        and actual["score_log_count"] == 14
-        and actual["score_log_success_count"] == 14
+        and actual["non_ai_score"] == 96
+        and actual["non_ai_flag"] == 0
+        and actual["non_ai_selected"] == 0
+        and actual["content_full_null_count"] == 15
+        and actual["title_zh_null_count"] == 15
+        and actual["score_log_count"] == 15
+        and actual["score_log_success_count"] == 15
         and actual["all_score_logs_news_owned"]
         and actual["failure_result"]["failed_count"] == 2
         and actual["failure_states"] == ["raw"]
@@ -6507,11 +6558,16 @@ def task_006_pipeline_imports() -> tuple[Any, ...]:
 def task_006_unit_observations() -> dict[str, Any]:
     *_, score_is_selected, _ = task_006_pipeline_imports()
     return {
-        "score_60_selected": score_is_selected(60),
-        "score_59_selected": score_is_selected(59),
-        "score_0_selected": score_is_selected(0),
-        "score_100_selected": score_is_selected(100),
-        "threshold": 60,
+        "score_75_ai_relevance_70_selected": score_is_selected(
+            75,
+            is_ai_news=True,
+            ai_relevance_score=70,
+        ),
+        "score_74_rejected": score_is_selected(74, is_ai_news=True, ai_relevance_score=90),
+        "relevance_69_rejected": score_is_selected(95, is_ai_news=True, ai_relevance_score=69),
+        "non_ai_rejected": score_is_selected(100, is_ai_news=False, ai_relevance_score=100),
+        "score_threshold": 75,
+        "relevance_threshold": 70,
     }
 
 
@@ -6536,9 +6592,12 @@ def task_006_integration_observations() -> dict[str, Any]:
         "unique_canonical_count": len(set(canonical_urls)),
         "all_states_scored": all(row["pipeline_state"] == "scored" for row in candidates),
         "all_selected": all(row["is_selected"] == 1 for row in candidates),
+        "all_ai_news": all(row["is_ai_news"] == 1 for row in candidates),
+        "min_ai_relevance": min(row["ai_relevance_score"] for row in candidates),
         "min_candidate_score": min(row["score"] for row in candidates),
         "low_59_absent": "fixture-low-59" not in guids,
-        "threshold_60_present": "fixture-threshold-60" in guids,
+        "non_ai_high_score_absent": "fixture-non-ai-high-score" not in guids,
+        "threshold_75_present": "fixture-threshold-60" in guids,
         "distinct_rank_items_present": {"fixture-rank-95", "fixture-rank-94"}.issubset(guids),
         "content_full_null_count": sum(row["content_full"] is None for row in candidates),
         "news_item_canonical_count": len([row["canonical_url"] for row in rows]),
@@ -6549,18 +6608,19 @@ def task_006_integration_observations() -> dict[str, Any]:
 def run_task_006_unit(report_dir: Path, task_id: str) -> int:
     actual = task_006_unit_observations()
     passed = (
-        actual["score_60_selected"]
-        and not actual["score_59_selected"]
-        and not actual["score_0_selected"]
-        and actual["score_100_selected"]
-        and actual["threshold"] == 60
+        actual["score_75_ai_relevance_70_selected"]
+        and not actual["score_74_rejected"]
+        and not actual["relevance_69_rejected"]
+        and not actual["non_ai_rejected"]
+        and actual["score_threshold"] == 75
+        and actual["relevance_threshold"] == 70
     )
     report = test_report(
         stage="unit",
         status="passed" if passed else "failed",
         test_id=f"{task_id.lower()}-filter-dedupe-unit",
         assertions=[assertion("task-006-unit-threshold-filter", "passed" if passed else "failed", {}, actual, {})],
-        expected={"threshold": "score_60_selected_score_59_rejected"},
+        expected={"threshold": "score_75_and_relevance_70_ai_news_required"},
         actual=actual,
         diff={},
         failure_type=None if passed else "contract",
@@ -6580,9 +6640,12 @@ def run_task_006_integration(report_dir: Path, task_id: str) -> int:
         and actual["news_item_canonical_count"] == actual["news_item_unique_canonical_count"]
         and actual["all_states_scored"]
         and actual["all_selected"]
-        and actual["min_candidate_score"] >= 60
+        and actual["all_ai_news"]
+        and actual["min_ai_relevance"] >= 70
+        and actual["min_candidate_score"] >= 75
         and actual["low_59_absent"]
-        and actual["threshold_60_present"]
+        and actual["non_ai_high_score_absent"]
+        and actual["threshold_75_present"]
         and actual["distinct_rank_items_present"]
         and actual["content_full_null_count"] == 13
     )
@@ -6642,10 +6705,10 @@ def task_007_insert_no_fallback(conn: Any, source_id: int) -> None:
         """
         INSERT INTO news_item (
           source_id, rss_guid, original_url, canonical_url, original_title,
-          published_at, score, pipeline_state, is_selected, content_raw,
-          created_at, updated_at
+          published_at, score, is_ai_news, ai_relevance_score, pipeline_state,
+          is_selected, content_raw, created_at, updated_at
         )
-        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 'scored', 1, '', ?, ?)
+        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 1, 90, 'scored', 1, '', ?, ?)
         """,
         (
             source_id,
@@ -6950,8 +7013,8 @@ def run_task_009_integration(report_dir: Path, task_id: str) -> int:
         and actual["source_success_count"] == expected_counts["source_success_count"]
         and actual["source_failure_count"] == expected_counts["source_failure_count"]
         and actual["rss_item_count"] == expected_counts["rss_item_count"]
-        and actual["new_item_count"] == 14
-        and actual["scored_item_count"] == 14
+        and actual["new_item_count"] == 15
+        and actual["scored_item_count"] == 15
         and actual["selected_item_count"] == 13
         and actual["fetched_item_count"] == 13
         and actual["translated_item_count"] == 11
@@ -8926,6 +8989,10 @@ def run_pipeline_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_034_integration(report_dir, task_id)
     if task_id == "TASK-035" and stage == "integration":
         return run_task_035_integration(report_dir, task_id)
+    if task_id == "TASK-036" and stage == "unit":
+        return run_task_036_unit(report_dir, task_id)
+    if task_id == "TASK-036" and stage == "integration":
+        return run_task_036_integration(report_dir, task_id)
     if task_id == "TASK-009" and stage == "integration":
         return run_task_009_integration(report_dir, task_id)
     if task_id == "TASK-010" and stage == "integration":
@@ -9000,6 +9067,8 @@ def run_api_task_stage(report_dir: Path, stage: str, task_id: str) -> int | None
         return run_task_034_api(report_dir, task_id)
     if task_id == "TASK-035" and stage == "api":
         return run_task_035_api(report_dir, task_id)
+    if task_id == "TASK-036" and stage == "api":
+        return run_task_036_api(report_dir, task_id)
     return None
 
 
@@ -10212,7 +10281,7 @@ def task_032_integration_original_url_observations() -> dict[str, Any]:
         row["original_url"] for row in selected_rows if not is_public_http_url_value(str(row["original_url"]))
     ]
     checks = {
-        "rows_created": len(rows) == 14,
+        "rows_created": len(rows) == 15,
         "threshold_original_preserved_with_query": bool(
             threshold
             and threshold["original_url"] == "https://developers.openai.com/resources/agentic-app-production/?utm_source=rss"
@@ -10581,7 +10650,7 @@ def task_033_fixture_quality_observations() -> dict[str, Any]:
     if not partial_invalid:
         issues.append("fixture-translate-partial:partial_case_became_valid")
     checks = {
-        "fixture_version": payload.get("version") == MOCK_VERSION,
+        "fixture_version": payload.get("version") == TRANSLATION_MOCK_VERSION,
         "expected_guid_set_present": observed_guids == expected_guids,
         "all_successful_records_readable": not any(result["issues"] for result in quality_results),
         "partial_case_remains_invalid": partial_invalid,
@@ -11337,6 +11406,202 @@ def run_task_035_integration(report_dir: Path, task_id: str) -> int:
 
 def run_task_035_e2e(report_dir: Path, task_id: str) -> int:
     return run_task_035_stage(report_dir, task_id, "e2e")
+
+
+def task_036_unit_observations() -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.app.services.pipeline import score_is_selected, validate_scoring_response
+
+    valid, valid_error = validate_scoring_response(
+        {
+            "is_ai_news": True,
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "High-signal AI update.",
+        }
+    )
+    missing_ai, missing_ai_error = validate_scoring_response(
+        {
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "Missing AI flag.",
+        }
+    )
+    missing_relevance, missing_relevance_error = validate_scoring_response(
+        {
+            "is_ai_news": True,
+            "score": 91,
+            "reason": "Missing relevance.",
+        }
+    )
+    checks = {
+        "valid_contract": valid == {
+            "is_ai_news": True,
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "High-signal AI update.",
+        } and valid_error is None,
+        "missing_ai_flag_rejected": missing_ai is None and missing_ai_error == "validation_llm_error",
+        "missing_relevance_rejected": missing_relevance is None and missing_relevance_error == "validation_llm_error",
+        "score_74_rejected": score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False,
+        "relevance_69_rejected": score_is_selected(95, is_ai_news=True, ai_relevance_score=69) is False,
+        "threshold_selected": score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True,
+        "non_ai_rejected": score_is_selected(96, is_ai_news=False, ai_relevance_score=96) is False,
+    }
+    issues = [f"ai_value_unit:{name}=false" for name, passed in checks.items() if not passed]
+    return {"checks": checks, "issues": issues}
+
+
+def task_036_integration_observations() -> dict[str, Any]:
+    connect, initialize_database, seed_default_sources, ingest_fixture_rss, score_raw_news, _, selected_candidates = (
+        task_006_pipeline_imports()
+    )
+    conn = connect(":memory:")
+    initialize_database(conn)
+    seed_default_sources(conn)
+    ingest_fixture_rss(conn)
+    result = score_raw_news(conn)
+    candidates = selected_candidates(conn)
+    rows = conn.execute(
+        """
+        SELECT
+          rss_guid, score, is_ai_news, ai_relevance_score, is_selected,
+          pipeline_state, content_full, title_zh
+        FROM news_item
+        """
+    ).fetchall()
+    conn.close()
+    by_guid = {row["rss_guid"]: row for row in rows}
+    candidate_guids = {row["rss_guid"] for row in candidates}
+    checks = {
+        "scored_count": result["scored_count"] == 15,
+        "selected_count": result["selected_count"] == 13,
+        "threshold_selected": bool(
+            by_guid["fixture-threshold-60"]["is_ai_news"] == 1
+            and by_guid["fixture-threshold-60"]["ai_relevance_score"] == 70
+            and by_guid["fixture-threshold-60"]["score"] == 75
+            and by_guid["fixture-threshold-60"]["is_selected"] == 1
+        ),
+        "low_value_rejected": bool(
+            by_guid["fixture-low-59"]["score"] == 59
+            and by_guid["fixture-low-59"]["is_selected"] == 0
+            and by_guid["fixture-low-59"]["pipeline_state"] == "scored"
+        ),
+        "non_ai_high_score_rejected": bool(
+            by_guid["fixture-non-ai-high-score"]["score"] == 96
+            and by_guid["fixture-non-ai-high-score"]["is_ai_news"] == 0
+            and by_guid["fixture-non-ai-high-score"]["is_selected"] == 0
+            and by_guid["fixture-non-ai-high-score"]["pipeline_state"] == "scored"
+        ),
+        "candidate_count": len(candidates) == 13,
+        "candidate_scores_high_enough": all(row["score"] >= 75 for row in candidates),
+        "candidate_relevance_high_enough": all(row["ai_relevance_score"] >= 70 for row in candidates),
+        "candidate_all_ai": all(row["is_ai_news"] == 1 for row in candidates),
+        "bait_absent_from_candidates": not ({"fixture-low-59", "fixture-non-ai-high-score"} & candidate_guids),
+    }
+    issues = [f"ai_value_integration:{name}=false" for name, passed in checks.items() if not passed]
+    return {"checks": checks, "issues": issues, "candidate_guids": sorted(candidate_guids)}
+
+
+def task_036_api_observations() -> dict[str, Any]:
+    _, client = task_014_client()
+    refresh_payload, refresh_issues = task_014_json(client.post("/api/refresh"), "ai_value_refresh")
+    home_response, home_payload, home_issues = task_019_public_response(client, "GET", "/api/home")
+    home_issues.extend(
+        envelope_issue(
+            name="ai_value_home",
+            response=home_response,
+            expected_status=200,
+            expected_envelope="data",
+            required_data_keys={"latest_news", "top_ranked_news"},
+        )
+    )
+    data = home_payload.get("data") if isinstance(home_payload, dict) else {}
+    latest = data.get("latest_news") if isinstance(data, dict) else []
+    top = data.get("top_ranked_news") if isinstance(data, dict) else []
+    latest = latest if isinstance(latest, list) else []
+    top = top if isinstance(top, list) else []
+    items = [item for item in latest + top if isinstance(item, dict)]
+    titles = {str(item.get("original_title")) for item in items}
+    leak_scan = scan_public_payload({"home": home_payload})
+    checks = {
+        "refresh_contract": not refresh_issues and bool(refresh_payload),
+        "home_contract": not home_issues,
+        "low_value_hidden": "Low signal AI funding rumor" not in titles,
+        "non_ai_hidden": "Developer conference travel discounts surge" not in titles,
+        "all_scores_high_enough": all(int(item.get("score", -1)) >= 75 for item in items),
+        "translated_only": all(item.get("status") == "translated" for item in items),
+        "no_internal_ai_fields": leak_scan["forbidden_field_count"] == 0,
+    }
+    issues = refresh_issues + home_issues
+    issues.extend(f"ai_value_api:{name}=false" for name, passed in checks.items() if not passed)
+    return {"checks": checks, "issues": sorted(set(issues)), "leak_scan": leak_scan}
+
+
+def run_task_036_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    if stage == "unit":
+        observed = task_036_unit_observations()
+        assertion_id = "task-036-unit-ai-value-scoring-contract"
+        visibility = "internal_evidence"
+        failure_type = "contract"
+    elif stage == "integration":
+        observed = task_036_integration_observations()
+        assertion_id = "task-036-integration-ai-value-selection"
+        visibility = "internal_evidence"
+        failure_type = "integration"
+    else:
+        observed = task_036_api_observations()
+        assertion_id = "task-036-api-ai-value-public-surface"
+        visibility = "public_surface"
+        failure_type = "api"
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-ai-value-filter-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"ai_value_filter": "high_value_ai_only"},
+                {"checks": observed["checks"]},
+                {"issues": observed["issues"]},
+                visibility=visibility,
+            )
+        ],
+        expected={"ai_value_filter": "high_value_ai_only"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else failure_type,
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/services/pipeline.py",
+            "backend/app/db.py",
+            "backend/app/main.py",
+            "fixtures/rss/feeds.json",
+            "fixtures/llm/scoring.json",
+            "tests/test_pipeline_refresh.py",
+            "tests/test_api_contract.py",
+            "scripts/reclassify_ai_value.py",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_036_unit(report_dir: Path, task_id: str) -> int:
+    return run_task_036_stage(report_dir, task_id, "unit")
+
+
+def run_task_036_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_036_stage(report_dir, task_id, "integration")
+
+
+def run_task_036_api(report_dir: Path, task_id: str) -> int:
+    return run_task_036_stage(report_dir, task_id, "api")
 
 
 def prd_coverage_evidence(report_dir: Path) -> dict[str, Any]:

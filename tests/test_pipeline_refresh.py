@@ -24,6 +24,7 @@ from backend.app.services.pipeline import (
     score_raw_news,
     score_raw_news_live,
     score_request_with_fixture,
+    validate_scoring_response,
     selected_fetch_candidates,
     score_is_selected,
     translate_fetched_content,
@@ -154,10 +155,10 @@ def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
         """
     ).fetchall()
 
-    assert result["inserted_count"] == 14
+    assert result["inserted_count"] == 15
     assert result["source_success_count"] == 22
     assert result["source_failure_count"] == 1
-    assert len(rows) == 14
+    assert len(rows) == 15
     assert {row["pipeline_state"] for row in rows} == {"raw"}
     assert all(row["score"] is None for row in rows)
     assert all(row["content_full"] is None for row in rows)
@@ -377,6 +378,8 @@ def test_scoring_request_validation_retry_and_missing_summary_penalty():
     assert set(request) == {"title", "summary", "source", "published_at", "original_link"}
     assert request["summary"] == ""
     assert valid_result["score"] == 55
+    assert valid_result["is_ai_news"] is True
+    assert valid_result["ai_relevance_score"] == 88
     assert valid_result["error"] is None
     assert invalid_result["score"] is None
     assert invalid_result["error"] == "validation_llm_error"
@@ -388,6 +391,70 @@ def test_scoring_request_validation_retry_and_missing_summary_penalty():
     assert missing_title_result["retry_count"] == 0
 
 
+def test_scoring_response_requires_ai_value_filter_contract():
+    valid_record, valid_error = validate_scoring_response(
+        {
+            "is_ai_news": True,
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "High-signal AI infrastructure update.",
+        }
+    )
+    missing_ai_flag, missing_ai_flag_error = validate_scoring_response(
+        {
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "Missing AI flag.",
+        }
+    )
+    missing_relevance, missing_relevance_error = validate_scoring_response(
+        {
+            "is_ai_news": True,
+            "score": 91,
+            "reason": "Missing relevance score.",
+        }
+    )
+    non_boolean_ai_flag, non_boolean_ai_flag_error = validate_scoring_response(
+        {
+            "is_ai_news": "yes",
+            "ai_relevance_score": 86,
+            "score": 91,
+            "reason": "AI flag must be boolean.",
+        }
+    )
+    boolean_score, boolean_score_error = validate_scoring_response(
+        {
+            "is_ai_news": True,
+            "ai_relevance_score": 86,
+            "score": True,
+            "reason": "Score must be an integer, not a boolean.",
+        }
+    )
+
+    assert valid_error is None
+    assert valid_record == {
+        "is_ai_news": True,
+        "ai_relevance_score": 86,
+        "score": 91,
+        "reason": "High-signal AI infrastructure update.",
+    }
+    assert missing_ai_flag is None
+    assert missing_ai_flag_error == "validation_llm_error"
+    assert missing_relevance is None
+    assert missing_relevance_error == "validation_llm_error"
+    assert non_boolean_ai_flag is None
+    assert non_boolean_ai_flag_error == "validation_llm_error"
+    assert boolean_score is None
+    assert boolean_score_error == "validation_llm_error"
+
+
+def test_score_selection_requires_ai_relevance_and_value_thresholds():
+    assert score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True
+    assert score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False
+    assert score_is_selected(95, is_ai_news=True, ai_relevance_score=69) is False
+    assert score_is_selected(95, is_ai_news=False, ai_relevance_score=95) is False
+
+
 def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     conn = connect(":memory:")
     initialize_database(conn)
@@ -397,7 +464,9 @@ def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     result = score_raw_news(conn)
     rows = conn.execute(
         """
-        SELECT rss_guid, score, pipeline_state, is_selected, content_full, title_zh
+        SELECT
+          rss_guid, score, is_ai_news, ai_relevance_score, pipeline_state,
+          is_selected, content_full, title_zh
         FROM news_item
         ORDER BY rss_guid ASC
         """
@@ -412,17 +481,22 @@ def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     ).fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
 
-    assert result["scored_count"] == 14
+    assert result["scored_count"] == 15
     assert result["failed_count"] == 0
     assert result["selected_count"] == 13
     assert {row["pipeline_state"] for row in rows} == {"scored"}
-    assert by_guid["fixture-threshold-60"]["score"] == 60
+    assert by_guid["fixture-threshold-60"]["score"] == 75
+    assert by_guid["fixture-threshold-60"]["is_ai_news"] == 1
+    assert by_guid["fixture-threshold-60"]["ai_relevance_score"] == 70
     assert by_guid["fixture-threshold-60"]["is_selected"] == 1
     assert by_guid["fixture-low-59"]["score"] == 59
     assert by_guid["fixture-low-59"]["is_selected"] == 0
+    assert by_guid["fixture-non-ai-high-score"]["score"] == 96
+    assert by_guid["fixture-non-ai-high-score"]["is_ai_news"] == 0
+    assert by_guid["fixture-non-ai-high-score"]["is_selected"] == 0
     assert all(row["content_full"] is None for row in rows)
     assert all(row["title_zh"] is None for row in rows)
-    assert len(logs) == 14
+    assert len(logs) == 15
     assert all(log["success"] == 1 and log["news_item_id"] is not None for log in logs)
     assert all(log["source_id"] is None for log in logs)
 
@@ -480,16 +554,19 @@ def test_selected_fetch_candidates_filter_threshold_and_preserve_distinct_items(
     guids = [row["rss_guid"] for row in candidates]
     canonical_urls = [row["canonical_url"] for row in candidates]
 
-    assert score_is_selected(60) is True
-    assert score_is_selected(59) is False
+    assert score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True
+    assert score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False
     assert len(candidates) == 13
     assert len(canonical_urls) == len(set(canonical_urls))
     assert "fixture-threshold-60" in guids
     assert "fixture-low-59" not in guids
+    assert "fixture-non-ai-high-score" not in guids
     assert {"fixture-rank-95", "fixture-rank-94", "fixture-rank-88", "fixture-rank-87"}.issubset(guids)
     assert all(row["pipeline_state"] == "scored" for row in candidates)
     assert all(row["is_selected"] == 1 for row in candidates)
-    assert all(row["score"] >= 60 for row in candidates)
+    assert all(row["is_ai_news"] == 1 for row in candidates)
+    assert all(row["ai_relevance_score"] >= 70 for row in candidates)
+    assert all(row["score"] >= 75 for row in candidates)
     assert all(row["content_full"] is None for row in candidates)
 
 
@@ -544,10 +621,10 @@ def test_fetch_selected_content_without_fallback_keeps_item_scored():
         """
         INSERT INTO news_item (
           source_id, rss_guid, original_url, canonical_url, original_title,
-          published_at, score, pipeline_state, is_selected, content_raw,
-          created_at, updated_at
+          published_at, score, is_ai_news, ai_relevance_score, pipeline_state,
+          is_selected, content_raw, created_at, updated_at
         )
-        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 'scored', 1, '', ?, ?)
+        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 1, 90, 'scored', 1, '', ?, ?)
         """,
         (
             source_id,
@@ -672,7 +749,12 @@ def test_request_live_scoring_posts_chat_completion_and_parses_score(monkeypatch
                     {
                         "message": {
                             "content": json.dumps(
-                                {"score": 87, "reason": "High-signal AI infrastructure update."},
+                                {
+                                    "is_ai_news": True,
+                                    "ai_relevance_score": 87,
+                                    "score": 87,
+                                    "reason": "High-signal AI infrastructure update.",
+                                },
                                 ensure_ascii=False,
                             )
                         }
@@ -712,7 +794,12 @@ def test_request_live_scoring_posts_chat_completion_and_parses_score(monkeypatch
 
     post_call = calls[1]
     assert error is None
-    assert record == {"score": 87, "reason": "High-signal AI infrastructure update."}
+    assert record == {
+        "is_ai_news": True,
+        "ai_relevance_score": 87,
+        "score": 87,
+        "reason": "High-signal AI infrastructure update.",
+    }
     assert post_call["url"] == "https://llm.example.test/api/v4/chat/completions"
     assert post_call["headers"]["Authorization"] == "Bearer secret-token"
     assert post_call["json"]["model"] == "glm-test"
@@ -755,7 +842,12 @@ def test_request_live_llm_supports_anthropic_messages_format(monkeypatch):
                     {
                         "type": "text",
                         "text": json.dumps(
-                            {"score": 91, "reason": "Anthropic-compatible scoring response."},
+                            {
+                                "is_ai_news": True,
+                                "ai_relevance_score": 91,
+                                "score": 91,
+                                "reason": "Anthropic-compatible scoring response.",
+                            },
                             ensure_ascii=False,
                         ),
                     }
@@ -812,7 +904,12 @@ def test_request_live_llm_supports_anthropic_messages_format(monkeypatch):
     assert translation_error is None
     assert translation_record["title_zh"] == "Anthropic 格式中文标题"
     assert scoring_error is None
-    assert scoring_record == {"score": 91, "reason": "Anthropic-compatible scoring response."}
+    assert scoring_record == {
+        "is_ai_news": True,
+        "ai_relevance_score": 91,
+        "score": 91,
+        "reason": "Anthropic-compatible scoring response.",
+    }
     assert translation_call["url"] == "https://api.deepseek.com/anthropic/messages"
     assert scoring_call["url"] == "https://api.deepseek.com/anthropic/messages"
     assert translation_call["headers"]["x-api-key"] == "secret-token"
@@ -1046,7 +1143,12 @@ def test_live_scoring_limits_batch_and_prioritizes_newest_raw_items(monkeypatch)
 
     def fake_request_live_scoring(request, **_kwargs):
         scoring_requests.append(request)
-        return {"score": 90, "reason": "Selected by live LLM scoring."}, None
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 90,
+            "score": 90,
+            "reason": "Selected by live LLM scoring.",
+        }, None
 
     monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
 
@@ -1116,7 +1218,12 @@ def test_live_pipeline_uses_live_llm_translation_when_enabled(monkeypatch):
 
     def fake_request_live_scoring(request, **kwargs):
         scoring_requests.append({"request": request, "kwargs": kwargs})
-        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 92,
+            "score": 92,
+            "reason": "Live LLM scoring selected this item.",
+        }, None
 
     monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
     monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
@@ -1214,7 +1321,12 @@ def test_live_pipeline_limits_live_llm_translation_batch(monkeypatch):
 
     def fake_request_live_scoring(request, **_kwargs):
         scoring_requests.append(request)
-        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 92,
+            "score": 92,
+            "reason": "Live LLM scoring selected this item.",
+        }, None
 
     monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
     monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
@@ -1525,7 +1637,12 @@ def test_live_pipeline_uses_configured_live_llm_concurrency(monkeypatch):
 
     def fake_request_live_scoring(request, **_kwargs):
         scoring_requests.append(request)
-        return {"score": 92, "reason": "Live LLM scoring selected this item."}, None
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 92,
+            "score": 92,
+            "reason": "Live LLM scoring selected this item.",
+        }, None
 
     monkeypatch.setattr(pipeline, "fetch_url_text", fake_fetch_url_text)
     monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
@@ -1617,9 +1734,9 @@ def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
     assert summary["finished_at"] == "2026-06-28T09:00:00Z"
     assert summary["source_success_count"] == 22
     assert summary["source_failure_count"] == 1
-    assert summary["rss_item_count"] == 15
-    assert summary["new_item_count"] == 14
-    assert summary["scored_item_count"] == 14
+    assert summary["rss_item_count"] == 16
+    assert summary["new_item_count"] == 15
+    assert summary["scored_item_count"] == 15
     assert summary["selected_item_count"] == 13
     assert summary["fetched_item_count"] == 13
     assert summary["translated_item_count"] == 11
@@ -1677,14 +1794,14 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     rows = conn.execute(
         """
         SELECT
-          id, rss_guid, canonical_url, score, pipeline_state, is_selected,
-          content_raw, content_full, title_zh, summary_zh, content_zh,
-          has_translate_failed
+          id, rss_guid, canonical_url, score, is_ai_news,
+          ai_relevance_score, pipeline_state, is_selected, content_raw,
+          content_full, title_zh, summary_zh, content_zh, has_translate_failed
         FROM news_item
         ORDER BY canonical_url ASC
         """
     ).fetchall()
-    assert len(rows) == 14
+    assert len(rows) == 15
 
     by_guid = {row["rss_guid"]: row for row in rows}
     assert set(by_guid) >= {
@@ -1694,6 +1811,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         "fixture-translate-partial",
         "fixture-rank-95",
         "fixture-rank-94",
+        "fixture-non-ai-high-score",
         "fixture-rank-93",
         "fixture-rank-92",
         "fixture-rank-91",
@@ -1705,7 +1823,9 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     }
 
     threshold = by_guid["fixture-threshold-60"]
-    assert threshold["score"] == 60
+    assert threshold["score"] == 75
+    assert threshold["is_ai_news"] == 1
+    assert threshold["ai_relevance_score"] == 70
     assert threshold["is_selected"] == 1
     assert threshold["pipeline_state"] == "fetched"
     assert threshold["content_full"]
@@ -1716,9 +1836,19 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
 
     low_score = by_guid["fixture-low-59"]
     assert low_score["score"] == 59
+    assert low_score["is_ai_news"] == 1
+    assert low_score["ai_relevance_score"] == 82
     assert low_score["is_selected"] == 0
     assert low_score["pipeline_state"] == "scored"
     assert low_score["content_full"] is None
+
+    non_ai_high_score = by_guid["fixture-non-ai-high-score"]
+    assert non_ai_high_score["score"] == 96
+    assert non_ai_high_score["is_ai_news"] == 0
+    assert non_ai_high_score["ai_relevance_score"] == 15
+    assert non_ai_high_score["is_selected"] == 0
+    assert non_ai_high_score["pipeline_state"] == "scored"
+    assert non_ai_high_score["content_full"] is None
 
     translated = by_guid["fixture-translated-96"]
     assert translated["pipeline_state"] == "fetched"
@@ -1745,7 +1875,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
         """
     ).fetchall()
     assert any(row["stage"] == "crawl" and row["success"] == 0 for row in log_rows)
-    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 14
+    assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 15
     assert sum(1 for row in log_rows if row["stage"] == "fetch") == 13
     assert any(
         row["stage"] == "translate"
@@ -1758,7 +1888,7 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     repeated_count = conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()[
         "count"
     ]
-    assert repeated_count == 14
+    assert repeated_count == 15
 
 
 def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_path):
@@ -1784,6 +1914,7 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
         "Introducing LifeSciBench",
     ]
     assert "Low signal AI funding rumor" not in latest_titles
+    assert "Developer conference travel discounts surge" not in latest_titles
     assert ranked_scores == [96, 95, 94, 93, 92, 91, 90, 89, 88, 87]
     assert "Older AI milestone outside ranking window" not in [
         item["original_title"] for item in home["top_ranked_news"]
@@ -1792,6 +1923,8 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     for item in home["latest_news"] + home["top_ranked_news"]:
         assert "pipeline_state" not in item
         assert "is_selected" not in item
+        assert "is_ai_news" not in item
+        assert "ai_relevance_score" not in item
         assert "content_raw" not in item
         assert "content_full" not in item
         assert "has_translate_failed" not in item

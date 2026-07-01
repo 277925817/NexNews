@@ -111,7 +111,7 @@ def get_local_runtime_config(root: Path | None = None) -> LocalRuntimeConfig:
     return LocalRuntimeConfig(
         database_path=repo_root / "rss.sqlite3",
         fixture_set="mvp_acceptance_fixture@v1",
-        mock_set="mvp_mock@v1",
+        mock_set="mvp_mock@v2_ai_value_filter",
         clock_source="fixed_clock_fixture@v1",
         rss_fixture_path=repo_root / "fixtures/rss/feeds.json",
         article_fixture_path=repo_root / "fixtures/articles/article_map.json",

@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS news_item (
   original_title TEXT NOT NULL,
   published_at TEXT NOT NULL,
   score INTEGER CHECK (score IS NULL OR (score >= 0 AND score <= 100)),
+  is_ai_news INTEGER CHECK (is_ai_news IS NULL OR is_ai_news IN (0, 1)),
+  ai_relevance_score INTEGER CHECK (ai_relevance_score IS NULL OR (ai_relevance_score >= 0 AND ai_relevance_score <= 100)),
   pipeline_state TEXT NOT NULL CHECK (pipeline_state IN ('raw', 'scored', 'fetched')),
   is_selected INTEGER NOT NULL DEFAULT 0 CHECK (is_selected IN (0, 1)),
   content_raw TEXT,
@@ -119,6 +121,7 @@ def row_factory(cursor, row):  # pragma: no cover - thin compatibility shim
 
 def initialize_database(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    migrate_news_item_ai_value_fields(conn)
     migrate_news_item_discussion_url(conn)
     migrate_legacy_openai_gpt_4_1_url(conn)
     migrate_news_item_published_at_iso(conn)
@@ -169,6 +172,41 @@ def migrate_news_item_discussion_url(conn: sqlite3.Connection) -> None:
             is_selected = 0
         WHERE discussion_url IS NULL
           AND lower(original_url) LIKE 'https://news.ycombinator.com/item?id=%'
+        """
+    )
+
+
+def migrate_news_item_ai_value_fields(conn: sqlite3.Connection) -> None:
+    columns = sqlite_table_columns(conn, "news_item")
+    if "is_ai_news" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE news_item
+            ADD COLUMN is_ai_news INTEGER
+            CHECK (is_ai_news IS NULL OR is_ai_news IN (0, 1))
+            """
+        )
+    if "ai_relevance_score" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE news_item
+            ADD COLUMN ai_relevance_score INTEGER
+            CHECK (
+              ai_relevance_score IS NULL OR
+              (ai_relevance_score >= 0 AND ai_relevance_score <= 100)
+            )
+            """
+        )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_item_ai_relevance_score
+        ON news_item(ai_relevance_score)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_item_is_ai_news
+        ON news_item(is_ai_news)
         """
     )
 

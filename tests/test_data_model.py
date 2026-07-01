@@ -31,6 +31,16 @@ EXPECTED_DEFAULT_SOURCE_URLS = {
     "https://venturebeat.com/category/ai/feed/",
     "https://techcrunch.com/category/artificial-intelligence/feed/",
     "https://the-decoder.com/feed/",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-news.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-research.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/mistral-news.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/cohere-blog.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/allenai-news.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/aisi-blog.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/the-batch.xml",
+    "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/tldr-ai.xml",
+    "https://www.microsoft.com/en-us/research/feed/",
+    "https://bair.berkeley.edu/blog/feed.xml",
 }
 
 
@@ -394,7 +404,7 @@ def test_seed_default_sources_is_idempotent():
     seed_default_sources(conn)
 
     rows = conn.execute("SELECT rss_url, is_enabled, deleted_at FROM source").fetchall()
-    assert len(rows) == 23
+    assert len(rows) == 33
     assert {row[0] for row in rows} == EXPECTED_DEFAULT_SOURCE_URLS
     assert all(row[1] == 1 for row in rows)
     assert all(row[2] is None for row in rows)

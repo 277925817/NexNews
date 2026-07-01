@@ -158,14 +158,14 @@ def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
     ).fetchall()
 
     assert result["inserted_count"] == 15
-    assert result["source_success_count"] == 22
+    assert result["source_success_count"] == 32
     assert result["source_failure_count"] == 1
     assert len(rows) == 15
     assert {row["pipeline_state"] for row in rows} == {"raw"}
     assert all(row["score"] is None for row in rows)
     assert all(row["content_full"] is None for row in rows)
     assert all(row["title_zh"] is None for row in rows)
-    assert len(crawl_logs) == 23
+    assert len(crawl_logs) == 33
     assert any(log["success"] == 0 and log["error"] == "parsing" for log in crawl_logs)
     assert all(log["stage"] == "crawl" and log["news_item_id"] is None for log in crawl_logs)
 
@@ -1873,7 +1873,7 @@ def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
 
     assert summary["started_at"] == "2026-06-28T09:00:00Z"
     assert summary["finished_at"] == "2026-06-28T09:00:00Z"
-    assert summary["source_success_count"] == 22
+    assert summary["source_success_count"] == 32
     assert summary["source_failure_count"] == 1
     assert summary["rss_item_count"] == 16
     assert summary["new_item_count"] == 15

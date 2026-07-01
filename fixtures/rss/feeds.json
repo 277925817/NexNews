@@ -244,6 +244,56 @@
       "rss_url": "https://the-decoder.com/feed/",
       "status": "success",
       "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-news.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-research.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/mistral-news.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/cohere-blog.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/allenai-news.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/aisi-blog.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/the-batch.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/tldr-ai.xml",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://www.microsoft.com/en-us/research/feed/",
+      "status": "success",
+      "items": []
+    },
+    {
+      "rss_url": "https://bair.berkeley.edu/blog/feed.xml",
+      "status": "success",
+      "items": []
     }
   ]
 }

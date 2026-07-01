@@ -139,6 +139,25 @@ TASK_002A_SCORE_SOURCE_LOG_SQL = (
 )
 DEFAULT_SOURCES_FIXTURE_PATH = Path("fixtures/sources/default_sources.json")
 RSS_FEEDS_FIXTURE_PATH = Path("fixtures/rss/feeds.json")
+EXPECTED_DEFAULT_SOURCE_COUNT = 33
+EXPECTED_SOURCE_COVERAGE_GROUPS = {
+    "primary_lab",
+    "research",
+    "cloud_infra",
+    "community",
+    "editorial",
+    "policy_safety",
+    "newsletter",
+}
+EXPECTED_SOURCE_TIERS = {"primary", "secondary"}
+EXPECTED_SOURCE_INGEST_METHODS = {"official_rss", "relay_rss", "crawler"}
+EXPECTED_RELAY_RSS_SOURCE_NAMES = {
+    "Anthropic News",
+    "Anthropic Research",
+    "Mistral News",
+    "Cohere Blog",
+    "AISI Blog",
+}
 
 
 def normalize_default_source_record(record: object) -> dict[str, str]:
@@ -5656,6 +5675,76 @@ def task_003_live_dependency_issues(config_checks: dict[str, Any]) -> list[str]:
     return live_dependency_issues
 
 
+def task_003_source_fixture_checks(
+    sources: dict[str, Any],
+    rss: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    source_records = sources.get("sources") if isinstance(sources.get("sources"), list) else []
+    feeds = rss.get("feeds") if isinstance(rss.get("feeds"), list) else []
+    source_urls = {record.get("rss_url") for record in source_records if isinstance(record, dict)}
+    feed_urls = {feed.get("rss_url") for feed in feeds if isinstance(feed, dict)}
+    coverage_groups = {record.get("coverage_group") for record in source_records if isinstance(record, dict)}
+    source_tiers = {record.get("source_tier") for record in source_records if isinstance(record, dict)}
+    ingest_methods = {record.get("ingest_method") for record in source_records if isinstance(record, dict)}
+    records_by_name = {
+        record.get("name"): record for record in source_records if isinstance(record, dict)
+    }
+    checks = {
+        "source_count": len(source_records),
+        "feed_count": len(feeds),
+        "all_records_have_coverage_metadata": all(
+            isinstance(record, dict)
+            and set(record)
+            == {
+                "name",
+                "rss_url",
+                "coverage_group",
+                "source_tier",
+                "ingest_method",
+                "origin_url",
+            }
+            for record in source_records
+        ),
+        "coverage_groups": sorted(group for group in coverage_groups if isinstance(group, str)),
+        "source_tiers": sorted(tier for tier in source_tiers if isinstance(tier, str)),
+        "ingest_methods": sorted(method for method in ingest_methods if isinstance(method, str)),
+        "relay_rss_source_names": sorted(
+            name
+            for name in EXPECTED_RELAY_RSS_SOURCE_NAMES
+            if records_by_name.get(name, {}).get("ingest_method") == "relay_rss"
+        ),
+        "all_origin_urls_public_https": all(
+            isinstance(record, dict)
+            and isinstance(record.get("origin_url"), str)
+            and str(record.get("origin_url")).startswith("https://")
+            for record in source_records
+        ),
+        "rss_feed_urls_match_source_urls": feed_urls == source_urls,
+    }
+    issues = []
+    if len(source_records) != EXPECTED_DEFAULT_SOURCE_COUNT:
+        issues.append("source_fixture_count_mismatch")
+    if len(source_urls) != EXPECTED_DEFAULT_SOURCE_COUNT:
+        issues.append("source_fixture_urls_not_unique")
+    if not EXPECTED_SOURCE_COVERAGE_GROUPS.issubset(coverage_groups):
+        issues.append("source_fixture_coverage_groups_incomplete")
+    if not source_tiers <= EXPECTED_SOURCE_TIERS:
+        issues.append("source_fixture_unknown_tier")
+    if not ingest_methods <= EXPECTED_SOURCE_INGEST_METHODS:
+        issues.append("source_fixture_unknown_ingest_method")
+    if checks["relay_rss_source_names"] != sorted(EXPECTED_RELAY_RSS_SOURCE_NAMES):
+        issues.append("source_fixture_relay_rss_gap")
+    if records_by_name.get("Microsoft Research", {}).get("ingest_method") != "official_rss":
+        issues.append("source_fixture_microsoft_research_not_official_rss")
+    if not checks["all_origin_urls_public_https"]:
+        issues.append("source_fixture_origin_url_invalid")
+    if not checks["all_records_have_coverage_metadata"]:
+        issues.append("source_fixture_metadata_shape_invalid")
+    if not checks["rss_feed_urls_match_source_urls"]:
+        issues.append("rss_fixture_sources_mismatch")
+    return checks, issues
+
+
 def task_003_static_assertions(
     missing_paths: list[str],
     config_checks: dict[str, Any],
@@ -5664,6 +5753,8 @@ def task_003_static_assertions(
     actual_versions: dict[str, Any],
     version_issues: list[str],
     live_dependency_issues: list[str],
+    source_checks: dict[str, Any],
+    source_issues: list[str],
 ) -> list[dict[str, Any]]:
     return [
         assertion(
@@ -5690,6 +5781,19 @@ def task_003_static_assertions(
             },
             {"issues": live_dependency_issues},
         ),
+        assertion(
+            "task-003-source-fixture-coverage-groups",
+            "passed" if not source_issues else "failed",
+            {
+                "source_count": EXPECTED_DEFAULT_SOURCE_COUNT,
+                "coverage_groups": sorted(EXPECTED_SOURCE_COVERAGE_GROUPS),
+                "source_tiers": sorted(EXPECTED_SOURCE_TIERS),
+                "ingest_methods": sorted(EXPECTED_SOURCE_INGEST_METHODS),
+                "relay_rss_sources": sorted(EXPECTED_RELAY_RSS_SOURCE_NAMES),
+            },
+            source_checks,
+            {"issues": source_issues},
+        ),
     ]
 
 
@@ -5701,6 +5805,7 @@ def write_task_003_static_report(
     assertions: list[dict[str, Any]],
     config_checks: dict[str, Any],
     actual_versions: dict[str, Any],
+    source_checks: dict[str, Any],
     all_issues: list[str],
 ) -> None:
     report = test_report(
@@ -5709,7 +5814,12 @@ def write_task_003_static_report(
         test_id=f"{task_id.lower()}-local-config-fixtures-mocks",
         assertions=assertions,
         expected={"task_id": task_id, "fixture_set": FIXTURE_VERSION, "mock_set": MOCK_VERSION},
-        actual={"task_id": task_id, "config_checks": config_checks, "versions": actual_versions},
+        actual={
+            "task_id": task_id,
+            "config_checks": config_checks,
+            "versions": actual_versions,
+            "source_checks": source_checks,
+        },
         diff={"issues": all_issues},
         failure_type=None if status == "passed" else "contract",
         error_category=None if status == "passed" else "validation",
@@ -5732,11 +5842,16 @@ def run_task_003_static(report_dir: Path, task_id: str) -> int:
         payload_issues,
     )
     live_dependency_issues = task_003_live_dependency_issues(config_checks)
+    source_checks, source_issues = task_003_source_fixture_checks(
+        payloads.get("sources", {}),
+        payloads.get("rss", {}),
+    )
     all_issues = [
         *missing_paths,
         *config_issues,
         *version_issues,
         *live_dependency_issues,
+        *source_issues,
     ]
     status = "passed" if not all_issues else "failed"
     assertions = task_003_static_assertions(
@@ -5747,6 +5862,8 @@ def run_task_003_static(report_dir: Path, task_id: str) -> int:
         actual_versions,
         version_issues,
         live_dependency_issues,
+        source_checks,
+        source_issues,
     )
     write_task_003_static_report(
         report_dir,
@@ -5756,6 +5873,7 @@ def run_task_003_static(report_dir: Path, task_id: str) -> int:
         assertions,
         config_checks,
         actual_versions,
+        source_checks,
         all_issues,
     )
     return 0 if status == "passed" else 1

@@ -4,6 +4,8 @@
 
 帮助用户及时了解最新、最有价值的 AI 资讯。系统通过 RSS 信息源抓取新闻，使用 LLM 进行新闻价值评分，仅对高价值新闻抓取全文，并尽快生成中文翻译，最终在前端展示新闻卡片、30 天高分榜单和中文全文阅读页。本文中的“新闻发布时间”均指 RSS 信息源给出的原始时间；本站只做抓取、整理和展示。Live RSS 抓取在入库前按新闻发布时间应用最近 30 天窗口，避免归档式 RSS feed 的历史旧文进入当前新闻流；fixture ingest 可以保留窗口外样本，用于验证榜单排除和排序。
 
+MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研究机构、云和硬件平台、社区、编辑媒体、政策安全和 newsletter 类来源降低遗漏重要 AI 资讯的风险；feed-first 不承诺“零遗漏”。默认源优先使用官方 RSS；当高价值一手来源没有稳定官方 RSS 时，可以使用可信中转 RSS，并在 source fixture 中标记 `ingest_method = relay_rss` 和官方 `origin_url`；当官方页面既无 RSS 又无可信中转 RSS 时，可以通过显式 `ingest_method = crawler` 的爬虫适配器接入，但不得把普通网页 URL 伪装成 RSS feed。当前 MVP 数据库和公开 API 仍只持久化并暴露 `rss_url`，`ingest_method` / `origin_url` 是 fixture 级审计元数据，不进入 API。
+
 ## 技术栈
 
 - 前端：React + Vite 单页应用
@@ -52,6 +54,16 @@
   - `https://venturebeat.com/category/ai/feed/`
   - `https://techcrunch.com/category/artificial-intelligence/feed/`
   - `https://the-decoder.com/feed/`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-research.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/mistral-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/cohere-blog.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/allenai-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/aisi-blog.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/the-batch.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/tldr-ai.xml`
+  - `https://www.microsoft.com/en-us/research/feed/`
+  - `https://bair.berkeley.edu/blog/feed.xml`
 
 **输出**
 

@@ -186,11 +186,11 @@ dag:
         - "Default RSS source list from docs/01_prd.md."
       outputs:
         - "DB init hook can initialize an empty SQLite database."
-        - "Exactly 23 default sources are seeded once."
+        - "Exactly 33 default sources are seeded once."
       acceptance_criteria:
         - "Init hook creates the schema from TASK-002A in an empty SQLite database."
-        - "Default source seed count is 23 on first init and unchanged on second init."
-        - "Default source seed URL set exactly matches the 23 URLs listed in docs/01_prd.md."
+        - "Default source seed count is 33 on first init and unchanged on second init."
+        - "Default source seed URL set exactly matches the 33 URLs listed in docs/01_prd.md."
         - "Seed rows satisfy source table constraints."
         - "static stage result = pass for DB init hook and seed."
       failure_criteria:

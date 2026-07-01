@@ -283,8 +283,8 @@ Mandatory catalog:
 | `A-unit-ACC-STOP-001-local-user-acceptance-regression` | unit | ACC-STOP-001 | report_metadata | Failed local user acceptance findings keep STOP_ALLOWED false until converted into regression assertion evidence. |
 | `A-static-ACC-STOP-010-local-acceptance-failure-preservation-docs` | static | ACC-STOP-010 | report_metadata | Workflow, test, acceptance and task documents record that user-reported local acceptance failures must be preserved until mapped regression assertions pass. |
 | `A-unit-ACC-STOP-001-local-acceptance-failure-preservation` | unit | ACC-STOP-001 | report_metadata | Local user acceptance generation preserves unresolved user failed findings even when browser E2E and deployed smoke reports pass, and clears them only after the mapped regression assertion passes. |
-| `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 23 documented default sources once. |
-| `A-api-ACC-STOP-002-default-source-exact-list` | api | ACC-STOP-002 | public_surface | Empty database initialization creates a source URL set exactly equal to the 23 URLs listed in `docs/01_prd.md`. |
+| `A-api-ACC-STOP-002-default-source-seed` | api | ACC-STOP-002 | public_surface | Empty database initialization creates exactly the 33 documented default sources once. |
+| `A-api-ACC-STOP-002-default-source-exact-list` | api | ACC-STOP-002 | public_surface | Empty database initialization creates a source URL set exactly equal to the 33 URLs listed in `docs/01_prd.md`. |
 | `A-api-ACC-STOP-002-source-crud-errors` | api | ACC-STOP-002 | public_surface | Source create, update and delete APIs return documented success and structured error responses for invalid, duplicate, private, deleted and missing source cases. |
 | `A-api-ACC-STOP-002-source-tombstone-history` | api | ACC-STOP-002 | public_surface | Source delete uses soft tombstone behavior, hides the source from configuration API and preserves historical news visibility. |
 | `A-api-ACC-STOP-002-default-source-crud-parity` | api | ACC-STOP-002 | public_surface | Default seeded sources and user-created sources have identical enable, disable, delete, tombstone and no-auto-restore behavior. |
@@ -435,7 +435,7 @@ Rules:
 - RSS 缺少 optional summary：parser 不 crash，后续评分仍可执行。
 - RSS URL 无效：错误归类为 `parsing` 或 `network`，不得 silent fail。
 - 默认 RSS source bootstrap：空库首次启动时写入默认源；已有 source 配置时不得重复写入。
-- 默认 RSS source bootstrap 必须断言 source URL 集合精确等于 `docs/01_prd.md` 列出的 23 个 URL，不得只断言数量。
+- 默认 RSS source bootstrap 必须断言 source URL 集合精确等于 `docs/01_prd.md` 列出的 33 个 URL，不得只断言数量。
 - 预置 source 被删除/禁用后，不得在下一次启动或刷新时自动恢复。
 - 预置 source 与用户新增 source 在 API 中必须拥有相同启用、停用、删除、重复 tombstone 校验和最后启用 source 保护行为。
 - 只抓取 `is_enabled = 1` 的 source。
@@ -650,6 +650,8 @@ Rules:
 }
 ```
 - source fixture 必须覆盖默认源、用户新增源、禁用源、重复 URL、非法 URL、本地地址、私有地址。
+- 默认 source fixture 必须为每个默认源标记 `coverage_group`、`source_tier`、`ingest_method` 和 `origin_url`。`ingest_method` 只允许 `official_rss`、`relay_rss` 或 `crawler`；默认种子逻辑只持久化 `name` / `rss_url`。
+- 高价值一手来源没有稳定官方 RSS 时，不得直接遗漏；可使用可信中转 RSS 并标记 `ingest_method = relay_rss`，或在具备显式爬虫适配器和 deterministic fixture 证据后标记 `ingest_method = crawler`。
 
 ### 4.5 Article HTML Mock
 ```html

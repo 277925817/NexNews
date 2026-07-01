@@ -104,6 +104,7 @@ def test_live_runtime_config_loads_llm_settings_from_env_file(monkeypatch, tmp_p
     assert config.live_llm_retry_count == 1
     assert config.live_llm_max_score_items == 9
     assert config.live_llm_score_concurrency == 4
+    assert config.live_rss_concurrency == 33
 
 
 def test_local_service_defaults_to_live_real_dependency_runtime():
@@ -122,6 +123,7 @@ def test_local_service_defaults_to_live_real_dependency_runtime():
     assert env["RSS_FETCH_LIVE_ARTICLES"] == "1"
     assert env["RSS_HTTP_TIMEOUT_SECONDS"] == "7"
     assert env["RSS_HTTP_RETRY_COUNT"] == "2"
+    assert env["RSS_LIVE_RSS_CONCURRENCY"] == "33"
     assert env["RSS_LIVE_LLM_MAX_ITEMS"] == "5"
     assert env["RSS_LIVE_LLM_CONCURRENCY"] == "3"
     assert env["RSS_LIVE_LLM_TIMEOUT_SECONDS"] == "20"
@@ -148,13 +150,48 @@ def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
     assert articles["version"] == "mvp_acceptance_fixture@v1"
 
     source_records = sources["sources"]
-    assert len(source_records) == 23
-    assert all(set(record) == {"name", "rss_url"} for record in source_records)
-    assert len({record["rss_url"] for record in source_records}) == 23
+    expected_coverage_groups = {
+        "primary_lab",
+        "research",
+        "cloud_infra",
+        "community",
+        "editorial",
+        "policy_safety",
+        "newsletter",
+    }
+    assert len(source_records) == 33
+    assert all(
+        set(record)
+        == {
+            "name",
+            "rss_url",
+            "coverage_group",
+            "source_tier",
+            "ingest_method",
+            "origin_url",
+        }
+        for record in source_records
+    )
+    assert {record["coverage_group"] for record in source_records} >= expected_coverage_groups
+    assert {record["source_tier"] for record in source_records} <= {"primary", "secondary"}
+    assert {record["ingest_method"] for record in source_records} <= {
+        "official_rss",
+        "relay_rss",
+        "crawler",
+    }
+    source_by_name = {record["name"]: record for record in source_records}
+    assert source_by_name["Anthropic News"]["ingest_method"] == "relay_rss"
+    assert source_by_name["Anthropic Research"]["ingest_method"] == "relay_rss"
+    assert source_by_name["Mistral News"]["ingest_method"] == "relay_rss"
+    assert source_by_name["Cohere Blog"]["ingest_method"] == "relay_rss"
+    assert source_by_name["AISI Blog"]["ingest_method"] == "relay_rss"
+    assert source_by_name["Microsoft Research"]["ingest_method"] == "official_rss"
+    assert all(record["origin_url"].startswith("https://") for record in source_records)
+    assert len({record["rss_url"] for record in source_records}) == 33
     assert all(record["name"].strip() for record in source_records)
 
     feeds = rss["feeds"]
-    assert len(feeds) == 23
+    assert len(feeds) == 33
     assert {feed["rss_url"] for feed in feeds} == {
         record["rss_url"] for record in source_records
     }

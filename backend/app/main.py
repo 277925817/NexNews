@@ -4,24 +4,32 @@ from __future__ import annotations
 
 import ipaddress
 import sqlite3
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.app.core.config import get_live_runtime_config
 from backend.app.db import connect, initialize_database, seed_default_sources
-from backend.app.services.pipeline import run_fixture_refresh
+from backend.app.services.trigger import run_manual_refresh
 
 
 FIXED_NOW = "2026-06-28T09:00:00Z"
 TOP_RANKED_WINDOW_START = "2026-05-29T09:00:00Z"
 ROOT_DIR = Path(__file__).resolve().parents[2]
-INDEX_HTML = ROOT_DIR / "index.html"
+RUNTIME_SHELL_INDEX_HTML = ROOT_DIR / "index.html"
+FRONTEND_DIST_DIR = ROOT_DIR / "frontend" / "dist"
+FRONTEND_DIST_INDEX_HTML = FRONTEND_DIST_DIR / "index.html"
+FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 DEFAULT_DB_PATH = ROOT_DIR / "rss.sqlite3"
+TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
 
 
 class CreateSourceRequest(BaseModel):
@@ -48,6 +56,21 @@ def api_not_found() -> JSONResponse:
     return error_response("NOT_FOUND", "Resource not found", 404)
 
 
+def frontend_index_path() -> Path:
+    if FRONTEND_DIST_INDEX_HTML.exists():
+        return FRONTEND_DIST_INDEX_HTML
+    return RUNTIME_SHELL_INDEX_HTML
+
+
+def mount_frontend_static_assets(app: FastAPI) -> None:
+    if FRONTEND_ASSETS_DIR.exists():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=FRONTEND_ASSETS_DIR),
+            name="frontend-assets",
+        )
+
+
 def is_public_http_url(value: str) -> bool:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -60,6 +83,23 @@ def is_public_http_url(value: str) -> bool:
     except ValueError:
         return True
     return not (address.is_private or address.is_loopback or address.is_link_local)
+
+
+def hidden_api_rss_guids(translation_fixture_path: Path = TRANSLATION_FIXTURE_PATH) -> tuple[str, ...]:
+    try:
+        payload = json.loads(translation_fixture_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return tuple()
+
+    translations = payload.get("translations") if isinstance(payload, dict) else None
+    if not isinstance(translations, dict):
+        return tuple()
+
+    hidden = []
+    for guid, record in translations.items():
+        if isinstance(record, dict) and record.get("display_in_api") is False:
+            hidden.append(str(guid))
+    return tuple(hidden)
 
 
 def public_source(source: dict[str, object]) -> dict[str, object]:
@@ -110,13 +150,21 @@ def displayable_news_query(
     extra_where: str = "",
     order_by: str = "news_item.published_at DESC",
     translated_only: bool = False,
-) -> str:
+    excluded_rss_guids: tuple[str, ...] = (),
+) -> tuple[str, list[object]]:
     translated_clause = """
           AND news_item.title_zh IS NOT NULL
           AND news_item.summary_zh IS NOT NULL
           AND news_item.content_zh IS NOT NULL
     """ if translated_only else ""
-    return f"""
+    exclusion_clause = ""
+    params: list[object] = []
+    if excluded_rss_guids:
+        placeholders = ", ".join("?" for _ in excluded_rss_guids)
+        exclusion_clause = f"\n          AND news_item.rss_guid NOT IN ({placeholders})"
+        params.extend(excluded_rss_guids)
+
+    query = f"""
         SELECT
           news_item.id,
           news_item.original_title,
@@ -133,9 +181,11 @@ def displayable_news_query(
         WHERE news_item.is_selected = 1
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
           {translated_clause}
+          {exclusion_clause}
           {extra_where}
         ORDER BY {order_by}
     """
+    return query, params
 
 
 def visible_sources(conn: sqlite3.Connection) -> list[dict[str, object]]:
@@ -191,12 +241,15 @@ def validate_source_request(
 
 def create_app(db_path: str | None = None) -> FastAPI:
     app = FastAPI(title="rss-aggregator")
+    mount_frontend_static_assets(app)
     conn = connect(db_path or str(DEFAULT_DB_PATH))
     initialize_database(conn)
     seed_default_sources(conn)
     app.state.db = conn
     app.state.last_successful_refresh_at = None
     app.state.refresh_running = False
+    app.state.live_runtime = get_live_runtime_config()
+    app.state.hidden_api_rss_guids = hidden_api_rss_guids()
 
     def db() -> sqlite3.Connection:
         return app.state.db
@@ -222,22 +275,28 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/home")
     def get_home(limit: int = 50, cursor: str | None = None) -> JSONResponse:
         bounded_limit = min(max(limit, 1), 100)
+        hidden_guids = app.state.hidden_api_rss_guids
+        latest_query, latest_params = displayable_news_query(
+            order_by="news_item.published_at DESC",
+            translated_only=True,
+            excluded_rss_guids=hidden_guids,
+        )
         latest_rows = db().execute(
-            displayable_news_query(
-                order_by="news_item.published_at DESC",
-                translated_only=True,
-            )
-            + " LIMIT ?",
-            (bounded_limit,),
+            f"{latest_query} LIMIT ?",
+            tuple(latest_params + [bounded_limit]),
         ).fetchall()
+
+        # Keep top list bounded as before; top ranking is already
+        # filtered by translation completeness + 30-day window + hidden samples.
+        top_query, top_params = displayable_news_query(
+            extra_where="AND news_item.published_at >= ?",
+            order_by="news_item.score DESC, news_item.published_at DESC",
+            translated_only=True,
+            excluded_rss_guids=hidden_guids,
+        )
         top_rows = db().execute(
-            displayable_news_query(
-                extra_where="AND news_item.published_at >= ?",
-                order_by="news_item.score DESC, news_item.published_at DESC",
-                translated_only=True,
-            )
-            + " LIMIT 10",
-            (TOP_RANKED_WINDOW_START,),
+            f"{top_query} LIMIT 10",
+            tuple(top_params + [TOP_RANKED_WINDOW_START]),
         ).fetchall()
         return data_response(
             {
@@ -248,12 +307,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/api/news/{id}")
     def get_news(id: str) -> JSONResponse:
+        hidden_guids = app.state.hidden_api_rss_guids
+        query, query_params = displayable_news_query(
+            extra_where="AND news_item.id = ?",
+            order_by="news_item.published_at DESC",
+            excluded_rss_guids=hidden_guids,
+        )
         row = db().execute(
-            displayable_news_query(
-                extra_where="AND news_item.id = ?",
-                order_by="news_item.published_at DESC",
-            ),
-            (id,),
+            query,
+            tuple(query_params + [id]),
         ).fetchone()
         if row is not None:
             return data_response(detail_item(row))
@@ -265,10 +327,26 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return data_response({"refreshed_at": app.state.last_successful_refresh_at})
         app.state.refresh_running = True
         try:
-            run_fixture_refresh(db())
+            runtime = app.state.live_runtime
+            now = (
+                datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                if runtime.mode == "live"
+                else FIXED_NOW
+            )
+            result = run_manual_refresh(
+                db(),
+                now=now,
+                use_live_data=runtime.mode == "live",
+                allow_live_network=runtime.allow_live_network,
+                allow_live_llm=runtime.allow_live_llm,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                request_retry_count=runtime.request_retry_count,
+                request_retry_backoff_seconds=runtime.request_retry_backoff_seconds,
+            )
+            if result["started"]:
+                app.state.last_successful_refresh_at = result["summary"]["finished_at"]
         finally:
             app.state.refresh_running = False
-        app.state.last_successful_refresh_at = FIXED_NOW
         return data_response({"refreshed_at": app.state.last_successful_refresh_at})
 
     @app.get("/api/sources")
@@ -338,23 +416,28 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(INDEX_HTML)
+        return FileResponse(frontend_index_path())
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa_or_api_404(path: str) -> Response:
         if path.startswith("api/"):
             return api_not_found()
-        return FileResponse(INDEX_HTML)
+        return FileResponse(frontend_index_path())
 
     return app
 
 
 def create_runtime_shell_app() -> FastAPI:
     runtime_app = FastAPI(title="rss-aggregator")
+    mount_frontend_static_assets(runtime_app)
 
     @runtime_app.get("/", include_in_schema=False)
     def runtime_index() -> FileResponse:
-        return FileResponse(INDEX_HTML)
+        return FileResponse(frontend_index_path())
+
+    @runtime_app.get("/{path:path}", include_in_schema=False)
+    def runtime_spa(path: str) -> FileResponse:
+        return FileResponse(frontend_index_path())
 
     return runtime_app
 

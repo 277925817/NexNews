@@ -339,6 +339,64 @@ def test_deployed_browser_smoke_script_records_runtime_assertions():
     assert "high_score_card_border_color" in text
 
 
+def test_e2e_deployed_runtime_probe_flags_api_home_proxy_failure(monkeypatch):
+    harness = load_harness_module()
+
+    class FakeResponse:
+        def __init__(self, status: int, body: bytes, content_type: str = "application/json"):
+            self.status = status
+            self._body = body
+            self.headers = {"content-type": content_type}
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if url == "http://127.0.0.1:8010/":
+            return FakeResponse(200, b"<!doctype html>", "text/html")
+        if url == "http://127.0.0.1:8010/api/home":
+            return FakeResponse(500, b"", "text/plain")
+        raise AssertionError(url)
+
+    monkeypatch.setattr(harness.urllib.request, "urlopen", fake_urlopen)
+
+    observed = harness.deployed_runtime_http_probe()
+
+    assert observed["checks"]["index_status"] == 200
+    assert observed["checks"]["api_home_status"] == 500
+    assert "deployed_runtime:api_home_status=500" in observed["issues"]
+
+
+def test_materialized_e2e_stage_includes_deployed_runtime_probe(monkeypatch):
+    harness = load_harness_module()
+
+    monkeypatch.setattr(
+        harness,
+        "task_024_e2e_observations",
+        lambda: {"checks": {"home_news_density": True}, "issues": []},
+    )
+    monkeypatch.setattr(
+        harness,
+        "deployed_runtime_http_probe",
+        lambda: {
+            "checks": {"api_home_status": 500},
+            "issues": ["deployed_runtime:api_home_status=500"],
+        },
+    )
+
+    observed = harness.materialized_stage_behavior("e2e")
+
+    assert observed["checks"]["deployed_runtime_http"]["checks"]["api_home_status"] == 500
+    assert "deployed_runtime:api_home_status=500" in observed["issues"]
+
+
 def test_round_summary_schema_requires_round_end_decision():
     schema = json.loads((ROOT / "schemas/round_summary_report.schema.json").read_text())
     validator = Draft202012Validator(schema)

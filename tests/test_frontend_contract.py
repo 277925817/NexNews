@@ -1,6 +1,25 @@
 from pathlib import Path
 
 
+def test_backend_frontend_index_prefers_vite_build(monkeypatch, tmp_path):
+    from backend.app import main as backend_main
+
+    dist_index = tmp_path / "frontend" / "dist" / "index.html"
+    shell_index = tmp_path / "index.html"
+    dist_index.parent.mkdir(parents=True)
+    dist_index.write_text("built frontend", encoding="utf-8")
+    shell_index.write_text("runtime shell", encoding="utf-8")
+
+    monkeypatch.setattr(backend_main, "FRONTEND_DIST_INDEX_HTML", dist_index)
+    monkeypatch.setattr(backend_main, "RUNTIME_SHELL_INDEX_HTML", shell_index)
+
+    assert backend_main.frontend_index_path() == dist_index
+
+    dist_index.unlink()
+
+    assert backend_main.frontend_index_path() == shell_index
+
+
 def css_rule_body(css: str, selector: str) -> str:
     marker = f"{selector} {{"
     start = css.find(marker)

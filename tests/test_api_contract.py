@@ -1,7 +1,13 @@
+import json
+from pathlib import Path
 from fastapi.testclient import TestClient
 from urllib.parse import urlsplit
 
 from backend.app.main import create_app
+
+
+FIXTURE_ROOT = Path(__file__).resolve().parents[1]
+TRANSLATION_FIXTURE_PATH = FIXTURE_ROOT / "fixtures" / "llm" / "translation.json"
 
 
 def make_client(tmp_path):
@@ -29,6 +35,16 @@ FORBIDDEN_TRANSLATION_TERMS = (
     "这是一条",
     "这是一篇",
 )
+
+
+def hidden_api_guid_rows() -> set[str]:
+    payload = json.loads(TRANSLATION_FIXTURE_PATH.read_text())
+    translations = payload.get("translations", {})
+    return {
+        guid
+        for guid, record in translations.items()
+        if isinstance(record, dict) and record.get("display_in_api") is False
+    }
 
 
 def test_contract_endpoints_return_data_envelopes(tmp_path):
@@ -104,7 +120,6 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
 
     home = assert_json_response(client.get("/api/home"), 200)["data"]
     assert [item["id"] for item in home["latest_news"][:10]] == [
-        "3",
         "5",
         "6",
         "7",
@@ -114,6 +129,7 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
         "11",
         "12",
         "13",
+        "3",
     ]
     assert [item["id"] for item in home["top_ranked_news"]] == [
         "3",
@@ -144,6 +160,42 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert translated_detail["content_zh"]
 
 
+def test_hidden_translation_probes_are_not_retrievable_by_id(tmp_path):
+    client = make_client(tmp_path)
+    assert_json_response(client.post("/api/refresh"), 200)
+
+    conn = client.app.state.db
+    hidden_guids = hidden_api_guid_rows()
+    assert hidden_guids
+    hidden_news_ids = {
+        str(row["id"])
+        for row in conn.execute(
+            f"""
+            SELECT id FROM news_item
+            WHERE rss_guid IN ({', '.join(['?'] * len(hidden_guids))})
+            """,
+            tuple(hidden_guids),
+        ).fetchall()
+    }
+    for guid in hidden_guids:
+        row = conn.execute(
+            "SELECT id FROM news_item WHERE rss_guid = ?",
+            (guid,),
+        ).fetchone()
+        assert row is not None
+        response = assert_json_response(
+            client.get(f"/api/news/{row['id']}"),
+            404,
+        )
+        assert response["error"]["code"] == "NEWS_NOT_FOUND"
+
+    home = assert_json_response(client.get("/api/home"), 200)["data"]
+    visible_home_ids = {
+        item["id"] for item in home["latest_news"] + home["top_ranked_news"]
+    }
+    assert not (hidden_news_ids & visible_home_ids)
+
+
 def test_refresh_preserves_real_rss_original_urls_in_api(tmp_path):
     client = make_client(tmp_path)
     conn = client.app.state.db
@@ -164,6 +216,20 @@ def test_refresh_preserves_real_rss_original_urls_in_api(tmp_path):
     assert urlsplit(detail["original_url"]).scheme in {"http", "https"}
     assert not is_reserved_placeholder_url(detail["original_url"])
 
+    hn_row = conn.execute(
+        """
+        SELECT id, original_url, discussion_url
+        FROM news_item
+        WHERE rss_guid = 'fixture-rank-95'
+        """
+    ).fetchone()
+    hn_detail = assert_json_response(client.get(f"/api/news/{hn_row['id']}"), 200)["data"]
+
+    assert hn_detail["original_url"] == hn_row["original_url"]
+    assert (urlsplit(hn_detail["original_url"]).hostname or "").lower() != "news.ycombinator.com"
+    assert hn_row["discussion_url"].startswith("https://news.ycombinator.com/item?id=")
+    assert "discussion_url" not in hn_detail
+
 
 def test_translated_news_details_return_readable_article_specific_content(tmp_path):
     client = make_client(tmp_path)
@@ -183,7 +249,10 @@ def test_translated_news_details_return_readable_article_specific_content(tmp_pa
     ).fetchall()
 
     assert translated_rows
+    hidden_guids = hidden_api_guid_rows()
     for row in translated_rows:
+        if row["rss_guid"] in hidden_guids:
+            continue
         detail = assert_json_response(client.get(f"/api/news/{row['id']}"), 200)["data"]
         summary = detail["summary_zh"]
         content = detail["content_zh"]

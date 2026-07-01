@@ -61,6 +61,7 @@ acceptance_gate:
       - content_raw
       - content_full
       - has_translate_failed
+      - discussion_url
       - deleted_at
     allowlist_fields:
       safe_tokens:
@@ -269,6 +270,7 @@ Correctness:
 
 - 固定 fixture 下完整执行 `RSS -> ingest -> score -> filter -> fetch -> translate -> API -> UI`。
 - RSS parser 输出标准新闻输入对象。
+- Live RSS 30 天窗口有 fixture/mock/fixed-clock 证据：早于 `now - 30 days` 的归档 RSS 条目不会写入 raw item，也不会进入 score/fetch/translate。
 - canonical URL 去重后，同一新闻只展示一次。
 - fetch 成功写入可翻译内容；fetch 失败时使用 RSS 内容兜底。
 - translation 成功只写入 `title_zh`、`summary_zh`、`content_zh`。
@@ -277,6 +279,7 @@ Correctness:
 - `latest_news` and `top_ranked_news` expose only `translated` items in the primary reading path.
 - The fixture set retains one isolated translation failure and one pending translation item for direct detail-state coverage, but those items do not appear as ordinary Home or Top 30 Days news entries.
 - User-visible fixture `original_url` values come from RSS item links and do not use reserved placeholder domains.
+- Hacker News discussion links are stored internally and do not replace user-visible `original_url`.
 
 Policy validation:
 
@@ -311,6 +314,7 @@ Policy validation:
 - `GET /api/news/{id}` 对 `translated` item 返回的 `content_zh` 是可阅读中文正文，不是占位短句。
 - API 返回的 `original_url` 等于 RSS item link，且本地验收 fixture 不使用 reserved/placeholder host。
 - `POST /api/refresh` 不返回 task、queue、worker、retry、progress 字段。
+- `POST /api/refresh` 触发的 live RSS 处理契约包含 30 天窗口过滤，但响应仍只暴露 `refreshed_at`。
 - 未记录 endpoint 返回 `404` 或 `405`。
 
 ✘ Fail:
@@ -359,7 +363,7 @@ Policy validation:
 
 ✘ Fail:
 
-- UI 读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`。
+- UI 读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`。
 - UI 用缺失字段生成默认文案或自动猜测字段含义。
 - UI 展示 raw English summary/body。
 - Home 或 HighScoreList 点击后 ArticleView 缺少可阅读中文摘要/正文，出现占位短句，或落入 `摘要和正文暂不可用`。
@@ -391,6 +395,7 @@ Policy validation:
 - 验收测试使用 `mvp_mock@v1`。
 - 验收断言使用 `fixed_clock_fixture@v1`。
 - RSS、HTML、LLM 都使用 mock 或 fixture。
+- Live RSS 30 天窗口断言必须使用 fixture/mock feed 和 fixed clock，不得通过真实 RSS 或当前系统日期证明。
 - 测试数据库使用临时 SQLite。
 - Replay test 在相同 fixture、mock、clock 下输出一致。
 
@@ -417,6 +422,7 @@ Policy validation:
   - `content_raw`
   - `content_full`
   - `has_translate_failed`
+  - `discussion_url`
   - `deleted_at`
 - `acceptance_gate.leak_policy.allowlist_fields.safe_tokens` 中的字段名不计为 token 泄漏。
 - `acceptance_gate.leak_policy.forbidden_token_patterns` 命中数为 `0`。

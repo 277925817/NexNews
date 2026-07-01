@@ -13,7 +13,7 @@ API 只暴露 UI 必需能力：
 - 手动刷新 RSS。
 - 添加 / 删除 / 启用 / 停用 RSS 源。
 
-API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`。
+API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`、`deleted_at`。
 
 ## 2. API Conventions（接口约定）
 
@@ -135,6 +135,8 @@ type NewsItem = {
 
 - `original_url` MUST be the public HTTP(S) article URL read from the RSS item link.
 - `original_url` MUST NOT be synthesized by the API, replaced by `canonical_url`, or rewritten to a local fixture path.
+- For sources such as Hacker News, RSS comment/discussion URLs MUST be stored separately as internal data and MUST NOT replace `original_url`.
+- `discussion_url` is internal for this MVP iteration and MUST NOT be returned by News list/detail API responses until `03_ui_spec.md` introduces a UI behavior that consumes it.
 - Product-facing local acceptance fixtures MUST NOT use reserved placeholder hosts such as `example.com`, `example.org`, `example.net`, `.test`, or `.invalid` for displayable news `original_url`.
 - Canonicalization is only an internal dedupe operation; API responses keep the RSS item link as `original_url`.
 
@@ -184,6 +186,7 @@ Field mapping:
 | `content_zh` | `news_item.content_zh`, only on detail response and only when `status = translated` |
 | `source_name` | `source.name` |
 | `original_url` | `news_item.original_url` |
+| `discussion_url` | Internal only; not returned in current News API responses |
 | `published_at` | `news_item.published_at` |
 | `score` | `news_item.score` |
 | `status` | derived API/UI status |
@@ -294,7 +297,7 @@ Response:
         "title": "AI startup raises new funding",
         "original_title": "AI startup raises new funding",
         "source_name": "TechCrunch",
-        "original_url": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
+        "original_url": "https://openai.com/index/introducing-life-sci-bench/",
         "published_at": "2026-06-28T08:00:00Z",
         "score": 82,
         "summary_zh": "这是一条中文摘要。",
@@ -304,10 +307,10 @@ Response:
     "top_ranked_news": [
       {
         "id": "2",
-        "title": "新的 AI 模型发布",
-        "original_title": "New AI model released",
+        "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+        "original_title": "Introducing LifeSciBench",
         "source_name": "OpenAI Blog",
-        "original_url": "https://news.ycombinator.com/item?id=44254968",
+        "original_url": "https://www.anthropic.com/news/claude-sonnet-5",
         "published_at": "2026-06-28T07:00:00Z",
         "score": 96,
         "status": "translated"
@@ -341,12 +344,12 @@ Response:
 {
   "data": {
     "id": "2",
-    "title": "新的 AI 模型发布",
-    "original_title": "New AI model released",
+    "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+    "original_title": "Introducing LifeSciBench",
     "summary_zh": "这是一条中文摘要。",
     "content_zh": "这是一篇中文正文。",
     "source_name": "OpenAI Blog",
-    "original_url": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
+    "original_url": "https://openai.com/index/introducing-life-sci-bench/",
     "published_at": "2026-06-28T07:00:00Z",
     "score": 96,
     "status": "translated"
@@ -366,6 +369,8 @@ Processing rule:
 
 - Runs in the FastAPI backend process.
 - Executes RSS crawl, scoring, filtering, fetching, and translation.
+- In live network mode, RSS crawl applies a 30-day freshness window before raw persistence: items with RSS `published_at` older than `refresh now - 30 days` are ignored and never reach scoring, fetching, or translation.
+- Fixture/mock refresh may retain older records only for deterministic ranking-window and exclusion tests.
 - Refresh is idempotent.
 - If refresh is already running, API must not trigger a second concurrent refresh.
 - If refresh is already running, API must return `200`.

@@ -3,7 +3,25 @@
   max-width: 760px;
 }
 
-.article-view__back,
+.article-view__back {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d8dee6;
+  border-radius: 999px;
+  color: #18202a;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  margin-bottom: 20px;
+  text-decoration: none;
+  width: 36px;
+}
+
+.article-view__back-icon {
+  height: 19px;
+  width: 19px;
+}
+
 .article-view__original-link {
   background: #ffffff;
   border: 1px solid #d8dee6;

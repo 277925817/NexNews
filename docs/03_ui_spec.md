@@ -37,6 +37,7 @@ type NewsDetailItem = NewsItem & {
 - `content_zh`：中文正文，只允许出现在 `NewsDetailItem`，且只在 `translated` 状态下用于详情页。
 - `source_name`：RSS 来源名称。
 - `original_url`：新闻原文链接，用于详情页的原文链接入口。
+- `discussion_url`：来源站内讨论链接，是后端内部字段；当前 UI 不消费、不渲染。
 - `published_at`：RSS 信息源发布时间。
 - `score`：LLM 新闻价值评分，范围为 `0-100`。
 - `status`：UI 可展示状态，只允许 `ready`、`translated`、`translation_failed`。
@@ -283,6 +284,7 @@ UI 只允许以下点击行为，未列出的 UI 元素默认不可点击。
 - NexNews title、Refresh button、Sources button 是 TopBar 仅有的可点击导航/命令。
 - NewsCard 点击和 Title 点击没有不同，二者都进入同一条新闻的 ArticleView。
 - ScoreBadge 只展示评分，不触发排序、筛选或跳转。
+- 当前 UI 不显示 Hacker News 讨论入口；不得把内部 `discussion_url` 当作原文链接或卡片跳转目标。
 - SourceMarker 只展示来源，不跳转来源站点。
 - HighScoreList item 与 NewsCard 使用同一个新闻 `id` 跳转。
 - Article original link button 只在 ArticleView 中出现，不得替代站内新闻详情路由。
@@ -413,6 +415,7 @@ Home News Feed 的 NewsCard 只渲染 `translated` 新闻：
 - 展示原文标题。
 - 展示来源、发布时间、评分。
 - 展示原文链接按钮，按钮 `href` 必须等于 API 返回的 `original_url`。
+- 原文链接按钮不得使用内部 `discussion_url`。
 - 中文正文必须是可阅读正文，不得使用 fixture/mock/模拟/占位类短句充当全文。
 - 中文摘要必须概括同一新闻正文，不得与标题或正文无关。
 
@@ -436,7 +439,7 @@ Home News Feed 的 NewsCard 只渲染 `translated` 新闻：
 404 / 不可用状态：
 
 - 展示明确提示：`新闻不存在或不可展示`
-- 展示返回按钮：`返回新闻列表`
+- 展示仅含返回图标的返回按钮；不得显示 `返回新闻列表` 文字，但必须用 `aria-label="返回新闻列表"` 保留可访问名称。
 
 阅读规则：
 

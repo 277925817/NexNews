@@ -11,6 +11,8 @@ from backend.app.services.pipeline import (
     fetch_selected_content,
     has_valid_translation_record,
     ingest_fixture_rss,
+    ingest_live_rss,
+    parse_rss_feed_text,
     read_json,
     run_fixture_pipeline_summary,
     score_raw_news,
@@ -33,6 +35,34 @@ def assert_readable_translation(summary: str, content: str, *keywords: str) -> N
     assert len(paragraphs) >= 2
     assert any(keyword in summary for keyword in keywords)
     assert any(keyword in content for keyword in keywords)
+
+
+def test_parse_rss_feed_text_separates_article_link_from_discussion_url():
+    payload = """
+    <rss><channel>
+      <item>
+        <title>HN fixture story</title>
+        <link>https://example-news.com/article</link>
+        <guid isPermaLink="false">https://news.ycombinator.com/item?id=123</guid>
+        <comments>https://news.ycombinator.com/item?id=123</comments>
+        <pubDate>Sun, 28 Jun 2026 06:00:00 +0000</pubDate>
+        <description>Article summary</description>
+      </item>
+    </channel></rss>
+    """
+
+    items = parse_rss_feed_text(payload)
+
+    assert items == [
+        {
+            "guid": "https://news.ycombinator.com/item?id=123",
+            "title": "HN fixture story",
+            "link": "https://example-news.com/article",
+            "discussion_url": "https://news.ycombinator.com/item?id=123",
+            "published_at": "Sun, 28 Jun 2026 06:00:00 +0000",
+            "summary": "Article summary",
+        }
+    ]
 
 
 def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
@@ -67,6 +97,81 @@ def test_ingest_fixture_rss_stores_raw_items_and_crawl_logs_only():
     assert len(crawl_logs) == 7
     assert any(log["success"] == 0 and log["error"] == "parsing" for log in crawl_logs)
     assert all(log["stage"] == "crawl" and log["news_item_id"] is None for log in crawl_logs)
+
+
+def test_ingest_fixture_rss_preserves_hn_article_and_discussion_urls():
+    conn = connect(":memory:")
+    initialize_database(conn)
+    seed_default_sources(conn)
+
+    ingest_fixture_rss(conn)
+
+    rows = conn.execute(
+        """
+        SELECT rss_guid, original_url, canonical_url, discussion_url
+        FROM news_item
+        WHERE rss_guid LIKE 'fixture-rank-%'
+           OR rss_guid = 'fixture-old-high-99'
+        ORDER BY rss_guid ASC
+        """
+    ).fetchall()
+
+    assert rows
+    assert all(row["original_url"] == row["canonical_url"] for row in rows)
+    assert all("news.ycombinator.com/item" not in row["original_url"] for row in rows)
+    assert all(row["discussion_url"].startswith("https://news.ycombinator.com/item?id=") for row in rows)
+
+
+def test_live_rss_ingest_filters_archival_items_by_published_at(monkeypatch):
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('OpenAI', 'https://openai.com/news/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    payload = """
+    <rss><channel>
+      <item>
+        <title>Introducing GPT-4.1 in the API</title>
+        <link>https://openai.com/index/gpt-4-1/</link>
+        <guid>https://openai.com/index/gpt-4-1/</guid>
+        <pubDate>Mon, 14 Apr 2025 10:00:00 GMT</pubDate>
+        <description>Historical model release.</description>
+      </item>
+      <item>
+        <title>Introducing GeneBench-Pro</title>
+        <link>https://openai.com/index/introducing-genebench-pro/</link>
+        <guid>https://openai.com/index/introducing-genebench-pro/</guid>
+        <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
+        <description>Current benchmark release.</description>
+      </item>
+    </channel></rss>
+    """
+
+    def fake_fetch_url_text(*_args, **_kwargs):
+        return payload, None
+
+    monkeypatch.setattr("backend.app.services.pipeline.fetch_url_text", fake_fetch_url_text)
+
+    result = ingest_live_rss(conn, now="2026-07-01T00:00:00Z")
+    rows = conn.execute(
+        """
+        SELECT original_title, original_url, published_at
+        FROM news_item
+        ORDER BY id ASC
+        """
+    ).fetchall()
+
+    assert result["inserted_count"] == 1
+    assert rows == [
+        {
+            "original_title": "Introducing GeneBench-Pro",
+            "original_url": "https://openai.com/index/introducing-genebench-pro/",
+            "published_at": "Tue, 30 Jun 2026 00:00:00 GMT",
+        }
+    ]
 
 
 def test_scoring_request_validation_retry_and_missing_summary_penalty():
@@ -302,7 +407,7 @@ def test_translation_request_validation_and_category_contract():
 
     assert set(request) == {"original_title", "original_summary", "original_content", "source", "score"}
     assert request["original_content"] == "RSS fallback text"
-    assert translations["fixture-translated-96"]["category_zh"] == "产品"
+    assert translations["fixture-translated-96"]["category_zh"] == "研究"
     assert has_valid_translation_record(translations["fixture-translated-96"]) is True
     assert has_valid_translation_record(translations["fixture-translate-partial"]) is False
 
@@ -337,7 +442,7 @@ def test_translate_fetched_content_writes_success_failure_and_fallback_translati
     assert result["translated_count"] == 11
     assert result["pending_count"] == 1
     assert result["failed_count"] == 1
-    assert by_guid["fixture-translated-96"]["title_zh"] == "新的 AI 模型发布"
+    assert by_guid["fixture-translated-96"]["title_zh"] == "OpenAI 发布 LifeSciBench 生命科学基准"
     assert by_guid["fixture-translated-96"]["pipeline_state"] == "fetched"
     assert by_guid["fixture-rank-95"]["content_full"] is None
     assert_readable_translation(
@@ -477,8 +582,8 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     translated = by_guid["fixture-translated-96"]
     assert translated["pipeline_state"] == "fetched"
     assert translated["is_selected"] == 1
-    assert translated["title_zh"] == "新的 AI 模型发布"
-    assert_readable_translation(translated["summary_zh"], translated["content_zh"], "模型", "API", "发布")
+    assert translated["title_zh"] == "OpenAI 发布 LifeSciBench 生命科学基准"
+    assert_readable_translation(translated["summary_zh"], translated["content_zh"], "LifeSciBench", "生命科学", "基准")
     assert translated["has_translate_failed"] == 0
 
     failed_translation = by_guid["fixture-translate-partial"]
@@ -526,7 +631,6 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     ranked_scores = [item["score"] for item in home["top_ranked_news"]]
 
     assert latest_titles[:10] == [
-        "New AI model released",
         "AI safety benchmark reaches enterprise pilots",
         "Open model eval suite adds agent tasks",
         "AI chip scheduler cuts inference latency",
@@ -536,6 +640,7 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
         "AI observability tool traces prompt regressions",
         "AI coding assistant checks repository contracts",
         "AI product analytics detects agent drift",
+        "Introducing LifeSciBench",
     ]
     assert "Low signal AI funding rumor" not in latest_titles
     assert ranked_scores == [96, 95, 94, 93, 92, 91, 90, 89, 88, 87]
@@ -561,9 +666,9 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     assert_readable_translation(
         translated_detail["summary_zh"],
         translated_detail["content_zh"],
-        "模型",
-        "API",
-        "发布",
+        "LifeSciBench",
+        "生命科学",
+        "基准",
     )
 
     failed_id = conn.execute(

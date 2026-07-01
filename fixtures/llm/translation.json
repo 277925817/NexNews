@@ -3,10 +3,10 @@
   "pending_guids": ["fixture-threshold-60"],
   "translations": {
     "fixture-translated-96": {
-      "title_zh": "新的 AI 模型发布",
-      "summary_zh": "OpenAI 发布新的 AI 模型，并将重点能力带入 API，开发者可以在产品中更稳定地调用。",
-      "content_zh": "OpenAI 发布新的 AI 模型，并把模型能力开放到 API 中。该发布强调更稳定的指令遵循、更好的代码理解，以及面向开发者工作流的响应质量提升。\n\n对于产品团队来说，API 中的新模型意味着原型、评测和上线链路可以使用同一套能力验证结果。开发者可以围绕模型发布规划迁移测试，并观察成本、延迟和输出质量之间的变化。",
-      "category_zh": "产品"
+      "title_zh": "OpenAI 发布 LifeSciBench 生命科学基准",
+      "summary_zh": "OpenAI 发布 LifeSciBench 生命科学基准，用专家任务评估 AI 系统处理真实科研不确定性的能力。",
+      "content_zh": "OpenAI 发布 LifeSciBench 生命科学基准，重点评估 AI 系统能否处理真实研究中的复杂判断。任务覆盖不完整证据、实验设计、转化风险和下一步决策，而不是只考察单一事实回忆。\n\n这个基准由具有生命科学经验的专家编写和审阅，帮助研究团队观察模型在科研工作流中的可靠性。它也让评测更接近药物发现和生物医学研究场景，便于发现模型在推理、取舍和证据整合上的薄弱环节。",
+      "category_zh": "研究"
     },
     "fixture-rank-95": {
       "title_zh": "AI 安全基准进入企业试点",
@@ -66,6 +66,7 @@
       "title_zh": "旧的 AI 里程碑位于榜单窗口之外",
       "summary_zh": "旧的 AI 里程碑虽然评分很高，但发布时间位于榜单窗口之外，应被 Top 30 Days 排除。",
       "content_zh": "旧的 AI 里程碑用于验证 30 天榜单窗口规则。即使该新闻评分很高并且已经完成翻译，只要发布时间早于窗口边界，就不应进入 Top 30 Days。\n\n这个样本保护排序逻辑不被单纯高分打破。它证明榜单同时依赖时间窗口和分数排序，而不是只选择历史上分数最高的新闻。",
+      "display_in_api": false,
       "category_zh": "研究"
     },
     "fixture-translate-partial": {

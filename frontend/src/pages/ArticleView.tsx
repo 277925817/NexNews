@@ -68,8 +68,21 @@ export function ArticleView({ client, newsId }: ArticleViewProps) {
   return (
     <AppShell isRefreshing={isRefreshing} onRefresh={handleRefresh}>
       <article className="article-view" data-news-id={newsId}>
-        <a className="article-view__back" href="/">
-          返回新闻列表
+        <a className="article-view__back" href="/" aria-label="返回新闻列表">
+          <svg
+            className="article-view__back-icon"
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <path
+              d="M15 18l-6-6 6-6"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </a>
         {loadState === 'loading' ? <LoadingState count={1} /> : null}
         {loadState === 'error' ? <ErrorState /> : null}

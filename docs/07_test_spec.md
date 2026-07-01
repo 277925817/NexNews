@@ -62,6 +62,7 @@ isolation: strict_mock
 - API handler 不得直接返回 DB model；必须返回 DTO。
 - SQL/data access 必须集中在 repository 或 database helper。
 - 不得新增 `05_api_contract.md` 未记录 endpoint；不得新增 `03_ui_spec.md` 未记录 UI 行为或组件。
+- Python 源码必须在 `static` 阶段可编译通过（`py_compile`/AST level）；`backend`、`scripts`、`tests` 中出现语法错误必须阻断开发流程。
 
 ### 2.1 Unit Test（函数级）
 - RSS parser：固定 RSS XML → 标准 item 列表。
@@ -73,6 +74,7 @@ isolation: strict_mock
 - API status projector：`title_zh`、`summary_zh`、`content_zh`、`has_translate_failed` → `ready | translated | translation_failed`。
 - Error classifier：异常 → `network | parsing | llm | validation_llm_error | database | validation | timeout | unknown`，LLM schema validation failure → `validation_llm_error`。
 - Log sanitizer：正文、prompt、token、密钥字段裁剪或移除。
+- Live RSS freshness filter：固定 `now` 下，归档旧条目早于 `now - 30 days` 时被跳过，窗口内条目保留。
 
 ### 2.2 Contract Test（API 契约）
 - Contract Test = structure correctness（schema only），不验证 runtime behavior。
@@ -83,7 +85,7 @@ isolation: strict_mock
 - 所有成功响应必须使用 `{ "data": ... }` envelope；`204` 必须无 body。
 - 所有错误响应必须使用 `{ "error": { "code": "...", "message": "..." } }`。
 - API response 字段必须使用 `snake_case`，ID 必须以 string 返回，timestamp 必须为 ISO 8601 UTC。
-- API response 必须拒绝 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`、旧字段名 `source_url`、完整 prompt 和内部 DB model 字段。
+- API response 必须拒绝 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`、`deleted_at`、旧字段名 `source_url`、完整 prompt 和内部 DB model 字段。
 - DB schema contract 必须校验 `source`、`news_item`、`processing_log` 表、字段、约束和索引。
 - Test report contract 必须通过 JSON Schema 校验。
 
@@ -109,6 +111,7 @@ isolation: strict_mock
 - 使用 API response mock 渲染 UI 关键组件。
 - 不访问真实 RSS、真实网页、真实 LLM。
 - 覆盖完整主链路：default sources → enabled sources → RSS parse → canonical dedupe → score → `is_selected` → fetch/fallback → translate → API projection → UI render。
+- 覆盖 live RSS 30 天窗口：模拟归档式 RSS feed 时，窗口外旧条目不得写入 raw item，也不得进入 score/fetch/translate。
 - 覆盖部分失败：单个 RSS source 失败、单篇 fetch 失败、单篇 translate 失败都不得阻断其他 source/item。
 
 ### 2.5 Golden Snapshot Test
@@ -143,6 +146,7 @@ isolation: strict_mock
 - Browser/DOM E2E 必须通过直接详情路由验证首个 ready 和首个 translation_failed 不会出现无解释空阅读页：非 translated 必须显示 `摘要和正文暂不可用` 以及状态原因。
 - Browser/DOM E2E 必须进入 Sources page，并断言 `GET/POST/PATCH/DELETE /api/sources` 绑定、创建成功、非法 URL 错误、禁用最后一个启用 source 错误和删除视觉移除。
 - Browser/DOM E2E 必须点击 Home `[刷新]`，断言调用 `POST /api/refresh`，完成后重新调用 `GET /api/home`，且不会出现 HTML 被当 JSON 解析的错误。
+- Full `e2e` stage 必须包含 `http://127.0.0.1:8010/` 部署态 HTTP probe，至少验证根页面 `200 text/html`、同端口 `/api/home` 返回 `200 application/json`，且 `latest_news` 与 `top_ranked_news` 均非空；FastAPI `TestClient` 或内存 API 证据不能替代这条部署态代理检查。
 - NewsCard summary fixture 必须包含带 HTML-like 标签的中文摘要字符串，并断言浏览器 DOM 将其作为文本渲染，不生成对应元素节点。
 - 全局 UI 主题必须使用 `docs/03_ui_spec.md#4.2` 的浅灰背景 token：`:root`、`body` 和 `.app-shell` 为 `#F3F4F6`，主要 surface 为 `#FFFFFF` 或 `#F8FAFC`，且不得设置 `color-scheme: dark`。
 - Loading state 必须在 fetch 期间出现。
@@ -287,6 +291,7 @@ Mandatory catalog:
 | `A-api-ACC-STOP-004-home-detail-behavior` | api | ACC-STOP-004 | public_surface | Home and detail endpoints enforce sorting, 30-day ranking, translated detail fields and structured 404 behavior. |
 | `A-api-ACC-STOP-004-home-translated-only` | api | ACC-STOP-004 | public_surface | `GET /api/home` returns only translated news in `latest_news` and `top_ranked_news`; direct detail routes still expose ready and translation_failed states correctly. |
 | `A-api-ACC-STOP-004-original-url-real-link` | api | ACC-STOP-004 | public_surface | Displayable news `original_url` values come from RSS item links, are public HTTP(S), and do not use reserved placeholder domains in acceptance fixtures. |
+| `A-api-ACC-STOP-004-discussion-url-internal` | api | ACC-STOP-004 | internal_evidence | Source discussion URLs are stored separately from `original_url` and are not returned by current News API responses. |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | api | ACC-STOP-004 | public_surface | User, login, search, category, comment, favorite, share, task progress, retry, admin and versioning endpoints are absent. |
 | `A-static-ACC-STOP-005-pipeline-write-boundary` | static | ACC-STOP-005 | internal_evidence | Only backend pipeline services can write `pipeline_state` or compute `is_selected`. |
 | `A-contract-ACC-STOP-005-forbidden-data-fields` | contract | ACC-STOP-005 | internal_evidence | DB schema excludes old/non-goal tables and fields including `translation_status`, `content_source`, `is_ready` and `display_mode`. |
@@ -373,6 +378,7 @@ Rules:
 | `A-api-ACC-STOP-004-home-detail-behavior` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-home-translated-only` | ACC-STOP-004 | TASK-034 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-original-url-real-link` | ACC-STOP-004 | TASK-032 | api | reports/stages/api.json |
+| `A-api-ACC-STOP-004-discussion-url-internal` | ACC-STOP-004 | TASK-032 | api | reports/stages/api.json |
 | `A-api-ACC-STOP-004-non-goal-endpoints-absent` | ACC-STOP-004 | TASK-019 | api | reports/stages/api.json |
 | `A-static-ACC-STOP-005-pipeline-write-boundary` | ACC-STOP-005 | TASK-002A | static | reports/stages/static.json |
 | `A-contract-ACC-STOP-005-forbidden-data-fields` | ACC-STOP-005 | TASK-002A | contract | reports/stages/contract.json |
@@ -412,6 +418,7 @@ Rules:
 - URL canonicalization：`utm_*`、`fbclid` 等跟踪参数必须被移除。
 - 不同 URL 但相同 `canonical_url` 不得重复入库。
 - 不同 `canonical_url` 或不同域名的高分新闻必须保持为不同待抓取候选，不得被标题相似度或过宽去重规则合并。
+- Live RSS ingest 必须跳过 RSS `published_at` 早于本次 refresh/crawl `now - 30 days` 的归档条目；OpenAI 等归档式 RSS 不能把 2025 年旧文当成当前新闻入库。
 - RSS 时间排序正确：`GET /api/home.data.latest_news` 按 `published_at DESC`。
 - RSS 缺少 optional summary：parser 不 crash，后续评分仍可执行。
 - RSS URL 无效：错误归类为 `parsing` 或 `network`，不得 silent fail。
@@ -472,6 +479,7 @@ Rules:
 - `GET /api/home` 中每个 item 必须包含非空 `summary_zh`，且 `status = translated`。
 - `GET /api/home` 不得返回 `ready` 或 `translation_failed` item；这些状态只能通过直接详情路由或测试 fixture 覆盖。
 - API 返回的 `original_url` 必须等于 RSS item link，且本地验收 fixture 中不得是 reserved/placeholder host。
+- Hacker News fixture 的 `link` 必须是外部文章 URL；HN `item?id=...` 必须存为内部 `discussion_url`，不得出现在 API response。
 - `GET /api/news/{id}` 对不存在 ID 返回结构化 `404`。
 - `GET /api/news/{id}` 对不可展示 item 返回结构化 `404`。
 - `GET /api/news/{id}` 对 `translated` item 必须返回非空 `summary_zh` 和 `content_zh`。
@@ -583,7 +591,7 @@ Rules:
     {
       "guid": "mock-1",
       "title": "Mock AI News",
-      "link": "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
+      "link": "https://openai.com/index/introducing-life-sci-bench/",
       "published_at": "2026-06-28T08:00:00Z",
       "summary": "Mock RSS summary"
     }
@@ -817,7 +825,7 @@ Output rules:
 - CI MUST persist the full report collection as JSON.
 - Human-readable logs MAY be generated from the structured report, but MUST NOT be the source of truth.
 - Report fields MUST NOT contain完整 prompt、密钥、token、secret 或超过 `1024` 字符的正文片段。
-- Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed` or `deleted_at`.
+- Report fields with assertion `visibility = public_surface` MUST NOT contain `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url` or `deleted_at`.
 - Report fields with assertion `visibility = internal_evidence` MAY contain internal field names required to prove DB/schema/state facts, but MUST NOT contain raw field values that are full article bodies, full prompts, secrets, or token-like credentials.
 - Failure routing MUST use `stage`、`failure_type`、`error_category`、`node` and `trace_id`, not free-form error text.
 - AI automatic repair MUST consume this report contract before reading raw logs.

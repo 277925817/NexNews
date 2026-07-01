@@ -2,7 +2,7 @@
 
 ## 0. Global Hard Constraints（全局硬规则）
 
-- API 响应不得包含 `content_raw`、`content_full`、`deleted_at`、raw article body、fallback raw text、完整 prompt，否则数据泄漏检查必须失败；`GET /api/news/{id}` 在 `status = translated` 时返回 `content_zh` 是唯一允许的完整正文展示出口。
+- API 响应不得包含 `content_raw`、`content_full`、`discussion_url`、`deleted_at`、raw article body、fallback raw text、完整 prompt，否则数据泄漏检查必须失败；`GET /api/news/{id}` 在 `status = translated` 时返回 `content_zh` 是唯一允许的完整正文展示出口。
 - 日志不得包含超过 `1024` 字符的正文类字段，否则必须在写日志前裁剪。
 - `pipeline_state` 只能由 backend pipeline service 写入，否则 code review 必须拒绝该变更。
 - `status` 只能由 API 层按 `05_api_contract.md` 投影，否则不得写入数据库。
@@ -13,6 +13,13 @@
 - 所有时间必须使用 ISO 8601 UTC 字符串，否则排序测试必须失败。
 - 所有规则冲突必须按本文末尾 Rule Priority Order 处理，否则不得合并。
 - If rules conflict within `06_dev_rules.md`, the more restrictive rule MUST win.
+
+## 0.1 Local Long-Running Service（本地长期服务）
+
+- 本地用户验收入口必须是 `http://127.0.0.1:8010/`。
+- 本地长期服务必须用 `python3 scripts/local_service.py start` 启动；该脚本先构建 `frontend/dist`，再用 FastAPI `create_app` 在同一端口服务 SPA 和 `/api/*`。
+- Vite dev server 只允许用于开发调试，不得作为本地长期验收服务；否则 shell/terminal 结束会导致 8010 失效。
+- 本地长期服务的 PID 和日志必须写入 `.local/rss-service/`，该目录不得进入版本控制。
 
 ## 1. Code Style Rules（代码风格规范）
 
@@ -70,6 +77,8 @@
 - `is_selected` 必须由 configurable threshold 计算，默认值为 `60`。
 - 写入 `score` 后必须立即计算 `is_selected`，否则 fetch 条件会漂移。
 - 去重只能使用 `canonical_url`，否则同一新闻会重复入库。
+- 来源讨论页链接只能保存为 `discussion_url`，不得替代 `original_url`、`canonical_url` 或正文抓取目标。
+- Live RSS ingest 必须按本次 refresh/crawl 的 `now` 对 RSS `published_at` 应用最近 30 天窗口，不得把归档式 feed 中的历史文章全量写入 `news_item`。
 - 翻译触发条件必须是 `pipeline_state = fetched` 且存在可用内容。
 - 翻译成功必须写入 `title_zh`、`summary_zh`、`content_zh`。
 - 翻译失败不得写入部分中文字段，否则 API status 投影会错误。

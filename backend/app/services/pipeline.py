@@ -1,13 +1,17 @@
-"""Deterministic fixture-backed refresh pipeline for local acceptance runs."""
+"""News refresh pipeline with fixture and live network execution paths."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
+import httpx
 
 
 FIXED_NOW = "2026-06-28T09:00:00Z"
@@ -19,6 +23,14 @@ TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
 TRACE_ID = "refresh-fixture-20260628T090000Z"
 SELECTION_THRESHOLD = 60
 SCORING_RETRY_MAX = 2
+LIVE_RSS_MAX_AGE_DAYS = 30
+
+LIVE_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xml,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "User-Agent": "Mozilla/5.0 (compatible; rss-aggregator/1.0; +https://example.com/bot)",
+}
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -42,6 +54,41 @@ def canonicalize_url(url: str) -> str:
             "",
         )
     )
+
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def fetch_url_text(
+    url: str,
+    *,
+    timeout: float = 12,
+    retry_count: int = 3,
+    retry_backoff_seconds: float = 0.5,
+    headers: dict[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    request_headers = dict(LIVE_REQUEST_HEADERS)
+    if headers:
+        request_headers.update(headers)
+    last_error = "network"
+    attempts = max(0, int(retry_count)) + 1
+    for _ in range(attempts):
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                response = client.get(url, headers=request_headers)
+            if 200 <= response.status_code < 300:
+                if response.text:
+                    return response.text, None
+                last_error = "empty_body"
+            else:
+                last_error = f"status_{response.status_code}"
+        except httpx.HTTPError:
+            last_error = "http_error"
+        if _ < attempts - 1:
+            if retry_backoff_seconds > 0:
+                time.sleep(retry_backoff_seconds)
+    return None, last_error
 
 
 def log_processing(
@@ -95,6 +142,103 @@ def is_valid_rss_item(item: object) -> bool:
         and bool(item.get("link"))
         and bool(item.get("title"))
     )
+
+
+def rss_item_discussion_url(item: dict[str, object]) -> str | None:
+    value = item.get("discussion_url") or item.get("comments_url")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def xml_item_text(item: object, tag_name: str) -> str | None:
+    node = item.find(tag_name)
+    if node is None:
+        return None
+    text = node.get_text("", strip=True)
+    return text or None
+
+
+def _rss_published_at(item: dict[str, object]) -> str:
+    return str(
+        item.get("published_at")
+        or item.get("pubDate")
+        or item.get("published")
+        or item.get("updated")
+        or item.get("date")
+        or FIXED_NOW
+    )
+
+
+def parse_rss_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def rss_item_within_live_window(
+    item: dict[str, object],
+    *,
+    now: str,
+    max_age_days: int = LIVE_RSS_MAX_AGE_DAYS,
+) -> bool:
+    published_at = parse_rss_datetime(item.get("published_at"))
+    now_at = parse_rss_datetime(now)
+    if published_at is None or now_at is None:
+        return True
+    return published_at >= now_at - timedelta(days=max_age_days)
+
+
+def filter_live_rss_items_by_window(
+    items: list[dict[str, object]],
+    *,
+    now: str,
+    max_age_days: int = LIVE_RSS_MAX_AGE_DAYS,
+) -> list[dict[str, object]]:
+    return [
+        item
+        for item in items
+        if rss_item_within_live_window(item, now=now, max_age_days=max_age_days)
+    ]
+
+
+def parse_rss_feed_text(payload: str) -> list[dict[str, object]]:
+    soup = BeautifulSoup(payload, "xml")
+    parsed_items: list[dict[str, object]] = []
+    for item in soup.find_all("item"):
+        title = xml_item_text(item, "title")
+        link = xml_item_text(item, "link")
+        guid = xml_item_text(item, "guid") or link
+        if not title or not link:
+            continue
+        parsed_items.append(
+            {
+                "guid": str(guid),
+                "title": str(title),
+                "link": str(link),
+                "discussion_url": xml_item_text(item, "comments"),
+                "published_at": _rss_published_at(
+                    {
+                        "pubDate": xml_item_text(item, "pubDate"),
+                        "published": xml_item_text(item, "published"),
+                        "updated": xml_item_text(item, "updated"),
+                        "date": xml_item_text(item, "date"),
+                    }
+                ),
+                "summary": str(xml_item_text(item, "description") or xml_item_text(item, "content") or ""),
+            }
+        )
+    return parsed_items
 
 
 def news_item_exists(conn: sqlite3.Connection, canonical_url: str) -> bool:
@@ -158,6 +302,64 @@ def ingest_fixture_rss(
     return result
 
 
+def ingest_live_rss(
+    conn: sqlite3.Connection,
+    *,
+    now: str = FIXED_NOW,
+    timeout: float = 12,
+    retry_count: int = 3,
+    retry_backoff_seconds: float = 0.5,
+) -> dict[str, int]:
+    result = {"source_success_count": 0, "source_failure_count": 0, "inserted_count": 0}
+    seen_canonical_urls: set[str] = set()
+    for source in active_sources(conn):
+        source_id = int(source["id"])
+        source_url = str(source["rss_url"])
+        feed_text, error = fetch_url_text(
+            source_url,
+            timeout=timeout,
+            retry_count=retry_count,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
+        if not feed_text:
+            result["source_failure_count"] += 1
+            log_processing(
+                conn,
+                source_id=source_id,
+                stage="crawl",
+                success=0,
+                error=error,
+                now=now,
+            )
+            continue
+        parsed_items = parse_rss_feed_text(feed_text)
+        if not parsed_items:
+            result["source_failure_count"] += 1
+            log_processing(
+                conn,
+                source_id=source_id,
+                stage="crawl",
+                success=0,
+                error="empty_feed",
+                now=now,
+            )
+            continue
+        feed = {"items": filter_live_rss_items_by_window(parsed_items, now=now)}
+        result["source_success_count"] += 1
+        log_processing(
+            conn,
+            source_id=source_id,
+            stage="crawl",
+            success=1,
+            now=now,
+        )
+        result["inserted_count"] += ingest_feed_items(
+            conn, source_id=source_id, feed=feed, seen_canonical_urls=seen_canonical_urls, now=now
+        )
+    conn.commit()
+    return result
+
+
 def insert_raw_item(
     conn: sqlite3.Connection,
     *,
@@ -170,10 +372,10 @@ def insert_raw_item(
         """
         INSERT OR IGNORE INTO news_item (
           source_id, rss_guid, original_url, canonical_url, original_title,
-          published_at, pipeline_state, is_selected, content_raw, created_at,
-          updated_at
+          discussion_url, published_at, pipeline_state, is_selected,
+          content_raw, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'raw', 0, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'raw', 0, ?, ?, ?)
         """,
         (
             source_id,
@@ -181,6 +383,7 @@ def insert_raw_item(
             str(item["link"]),
             canonical_url,
             str(item["title"]),
+            rss_item_discussion_url(item),
             str(item["published_at"]),
             str(item.get("summary") or ""),
             now,
@@ -214,6 +417,17 @@ def validate_scoring_response(response: object) -> tuple[int | None, str | None]
     if not isinstance(reason, str) or not reason.strip():
         return None, "validation_llm_error"
     return score, None
+
+
+def live_score_for_record(record: dict[str, object]) -> int:
+    title = str(record.get("original_title") or "")
+    source_name = str(record.get("source_name") or "")
+    summary = str(record.get("content_raw") or "")
+    score = 55
+    score += min(30, len(title) // 2)
+    score += min(20, len(summary) // 50)
+    score += min(10, len(source_name))
+    return min(100, score)
 
 
 def apply_missing_summary_penalty(score: int, request: dict[str, str]) -> int:
@@ -322,6 +536,32 @@ def score_raw_news(
     return result
 
 
+def score_raw_news_live(
+    conn: sqlite3.Connection,
+    *,
+    now: str = FIXED_NOW,
+) -> dict[str, int]:
+    result = {"scored_count": 0, "failed_count": 0, "selected_count": 0}
+    for row in raw_news_for_scoring(conn):
+        score = live_score_for_record(row)
+        if isinstance(score, int):
+            selected = apply_score(conn, news_item_id=int(row["id"]), score=score, now=now)
+            result["scored_count"] += 1
+            result["selected_count"] += 1 if selected else 0
+            continue
+        result["failed_count"] += 1
+        log_processing(
+            conn,
+            news_item_id=int(row["id"]),
+            stage="score",
+            success=0,
+            error="live_scoring_error",
+            now=now,
+        )
+    conn.commit()
+    return result
+
+
 def apply_score(
     conn: sqlite3.Connection,
     *,
@@ -376,14 +616,17 @@ def article_records(payload: dict[str, object]) -> dict[str, dict[str, object]]:
     }
 
 
-def extract_article_text(path: Path) -> str:
-    soup = BeautifulSoup(path.read_text(), "html.parser")
+def extract_article_text(path_or_html: Path | str) -> str:
+    if isinstance(path_or_html, Path):
+        soup = BeautifulSoup(path_or_html.read_text(), "html.parser")
+    else:
+        soup = BeautifulSoup(str(path_or_html), "html.parser")
     article = soup.find("article") or soup.body
     if article is None:
         return ""
     chunks = [
         node.get_text(" ", strip=True)
-        for node in article.find_all(["h1", "h2", "p"])
+        for node in article.find_all(["h1", "h2", "h3", "p"])
         if node.get_text(" ", strip=True)
     ]
     if chunks:
@@ -399,6 +642,10 @@ def fetch_content(
     article_map: dict[str, dict[str, object]],
     fixture_root: Path,
     now: str,
+    allow_live_network: bool = False,
+    live_timeout_seconds: float = 12,
+    live_retry_count: int = 3,
+    live_retry_backoff_seconds: float = 0.5,
 ) -> bool:
     row = conn.execute(
         "SELECT content_raw FROM news_item WHERE id = ?",
@@ -418,6 +665,22 @@ def fetch_content(
             error = None
         else:
             error = "parsing"
+    elif allow_live_network:
+        content_full_text, fetch_error = fetch_url_text(
+            canonical_url,
+            timeout=live_timeout_seconds,
+            retry_count=live_retry_count,
+            retry_backoff_seconds=live_retry_backoff_seconds,
+        )
+        if content_full_text is not None:
+            content_full = extract_article_text(content_full_text)
+            if content_full:
+                success = 1
+                error = None
+            else:
+                error = "parsing"
+        else:
+            error = fetch_error
     elif record and record.get("error"):
         error = str(record["error"])
 
@@ -458,6 +721,10 @@ def fetch_selected_content(
     *,
     fixture_root: Path = ROOT_DIR,
     now: str = FIXED_NOW,
+    allow_live_network: bool = False,
+    live_timeout_seconds: float = 12,
+    live_retry_count: int = 3,
+    live_retry_backoff_seconds: float = 0.5,
 ) -> dict[str, int]:
     article_payload = read_json(fixture_root / "fixtures" / "articles" / "article_map.json")
     articles_by_url = article_records(article_payload)
@@ -470,6 +737,10 @@ def fetch_selected_content(
             article_map=articles_by_url,
             fixture_root=fixture_root,
             now=now,
+            allow_live_network=allow_live_network,
+            live_timeout_seconds=live_timeout_seconds,
+            live_retry_count=live_retry_count,
+            live_retry_backoff_seconds=live_retry_backoff_seconds,
         )
         if not fetched:
             result["failed_count"] += 1
@@ -545,6 +816,10 @@ def apply_translation(
     guid: str,
     translation_payload: dict[str, object],
     now: str,
+    fallback_to_original: bool = False,
+    fallback_title: str = "",
+    fallback_summary: str = "",
+    fallback_content: str = "",
 ) -> None:
     if guid in pending_translation_guids(translation_payload):
         return
@@ -568,6 +843,28 @@ def apply_translation(
                 now,
                 news_item_id,
             ),
+        )
+        log_processing(
+            conn,
+            news_item_id=news_item_id,
+            stage="translate",
+            success=1,
+            now=now,
+        )
+        return
+
+    if fallback_to_original and fallback_summary and fallback_content:
+        conn.execute(
+            """
+            UPDATE news_item
+            SET title_zh = ?,
+                summary_zh = ?,
+                content_zh = ?,
+                has_translate_failed = 0,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (fallback_title, fallback_summary, fallback_content, now, news_item_id),
         )
         log_processing(
             conn,
@@ -605,6 +902,7 @@ def translate_fetched_content(
     *,
     fixture_root: Path = ROOT_DIR,
     now: str = FIXED_NOW,
+    fallback_to_original: bool = False,
 ) -> dict[str, int]:
     translation_payload = read_json(fixture_root / "fixtures" / "llm" / "translation.json")
     pending_guids = pending_translation_guids(translation_payload)
@@ -615,7 +913,20 @@ def translate_fetched_content(
             result["pending_count"] += 1
             continue
         build_translation_request(row)
-        apply_translation(conn, news_item_id=int(row["id"]), guid=guid, translation_payload=translation_payload, now=now)
+        fallback_title = str(row["original_title"] or "")
+        fallback_summary = str(row["content_raw"] or "")
+        fallback_content = str(row["content_full"] or row["content_raw"] or "")
+        apply_translation(
+            conn,
+            news_item_id=int(row["id"]),
+            guid=guid,
+            translation_payload=translation_payload,
+            now=now,
+            fallback_to_original=fallback_to_original,
+            fallback_title=fallback_title,
+            fallback_summary=fallback_summary,
+            fallback_content=fallback_content,
+        )
         stored = conn.execute(
             "SELECT title_zh, summary_zh, content_zh, has_translate_failed FROM news_item WHERE id = ?",
             (row["id"],),
@@ -676,6 +987,60 @@ def run_fixture_pipeline_summary(
         "fetched_item_count": fetch_result["fetched_count"],
         "translated_item_count": translate_result["translated_count"],
         "failure_details": processing_failure_details(conn),
+    }
+
+
+def run_live_pipeline_summary(
+    conn: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    allow_live_network: bool = True,
+    allow_live_llm: bool = False,
+    request_timeout_seconds: float = 12,
+    request_retry_count: int = 3,
+    request_retry_backoff_seconds: float = 0.5,
+) -> dict[str, object]:
+    now_value = now or utcnow_iso()
+    started_at = now_value
+    if not allow_live_network:
+        return run_fixture_pipeline_summary(
+            conn,
+            now=now_value,
+        )
+    ingest_result = ingest_live_rss(
+        conn,
+        now=now_value,
+        timeout=request_timeout_seconds,
+        retry_count=request_retry_count,
+        retry_backoff_seconds=request_retry_backoff_seconds,
+    )
+    score_result = score_raw_news_live(conn, now=now_value)
+    fetch_result = fetch_selected_content(
+        conn,
+        now=now_value,
+        allow_live_network=True,
+        live_timeout_seconds=request_timeout_seconds,
+        live_retry_count=request_retry_count,
+        live_retry_backoff_seconds=request_retry_backoff_seconds,
+    )
+    translate_result = translate_fetched_content(
+        conn,
+        now=now_value,
+        fallback_to_original=not allow_live_llm,
+    )
+    return {
+        "started_at": started_at,
+        "finished_at": now_value,
+        "source_success_count": ingest_result["source_success_count"],
+        "source_failure_count": ingest_result["source_failure_count"],
+        "rss_item_count": ingest_result["inserted_count"],
+        "new_item_count": ingest_result["inserted_count"],
+        "scored_item_count": score_result["scored_count"],
+        "selected_item_count": score_result["selected_count"],
+        "fetched_item_count": fetch_result["fetched_count"],
+        "translated_item_count": translate_result["translated_count"],
+        "failure_details": processing_failure_details(conn),
+        "runtime_mode": "live",
     }
 
 
@@ -794,3 +1159,24 @@ def run_fixture_refresh(
             now=now,
         )
     conn.commit()
+
+
+def run_live_refresh(
+    conn: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    allow_live_network: bool = True,
+    allow_live_llm: bool = False,
+    request_timeout_seconds: float = 12,
+    request_retry_count: int = 3,
+    request_retry_backoff_seconds: float = 0.5,
+) -> None:
+    run_live_pipeline_summary(
+        conn,
+        now=now,
+        allow_live_network=allow_live_network,
+        allow_live_llm=allow_live_llm,
+        request_timeout_seconds=request_timeout_seconds,
+        request_retry_count=request_retry_count,
+        request_retry_backoff_seconds=request_retry_backoff_seconds,
+    )

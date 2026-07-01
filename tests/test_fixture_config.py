@@ -15,7 +15,7 @@ FORBIDDEN_TRANSLATION_TERMS = (
     "这是一篇",
 )
 TRANSLATED_GUID_KEYWORDS = {
-    "fixture-translated-96": ("模型", "API", "发布"),
+    "fixture-translated-96": ("LifeSciBench", "生命科学", "基准"),
     "fixture-rank-95": ("安全", "基准", "企业"),
     "fixture-rank-94": ("评测", "智能体", "任务"),
     "fixture-rank-93": ("芯片", "调度", "延迟"),
@@ -125,15 +125,34 @@ def test_displayable_rss_fixture_links_are_public_non_placeholder_urls():
     rss = read_fixture("fixtures/rss/feeds.json")
     articles = read_fixture("fixtures/articles/article_map.json")
 
-    item_links = [
-        item["link"]
+    displayable_items = [
+        item
         for feed in rss["feeds"]
         for item in feed.get("items", [])
         if item["guid"] != "fixture-low-59"
     ]
+    item_links = [item["link"] for item in displayable_items]
     assert item_links
     assert all(urlsplit(link).scheme in {"http", "https"} for link in item_links)
     assert not [link for link in item_links if is_reserved_placeholder_url(link)]
+
+    hn_items = [
+        item
+        for item in displayable_items
+        if str(item["guid"]).startswith("fixture-rank-")
+        or item["guid"] == "fixture-old-high-99"
+    ]
+    assert hn_items
+    assert not [
+        item["link"]
+        for item in hn_items
+        if (urlsplit(item["link"]).hostname or "").lower() == "news.ycombinator.com"
+        and urlsplit(item["link"]).path == "/item"
+    ]
+    assert all(
+        str(item.get("comments_url", "")).startswith("https://news.ycombinator.com/item?id=")
+        for item in hn_items
+    )
 
     article_urls = set(articles["articles"])
     case_urls = {item["url"] for item in articles["cases"]}
@@ -142,9 +161,30 @@ def test_displayable_rss_fixture_links_are_public_non_placeholder_urls():
     assert canonical_url(
         "https://developers.openai.com/resources/agentic-app-production/?utm_source=rss"
     ) in article_urls
-    assert canonical_url(
-        "https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss"
-    ) in article_urls
+    assert canonical_url("https://openai.com/index/introducing-life-sci-bench/") in article_urls
+    assert (
+        canonical_url("https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss")
+        not in article_urls
+    )
+
+
+def test_displayable_openai_fixture_does_not_use_archival_gpt_4_1_release():
+    rss = read_fixture("fixtures/rss/feeds.json")
+    archival_urls = {
+        canonical_url("https://openai.com/index/gpt-4-1"),
+        canonical_url("https://openai.com/index/gpt-4-1/"),
+        canonical_url("https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss"),
+    }
+    displayable_openai_urls = {
+        canonical_url(item["link"])
+        for feed in rss["feeds"]
+        if feed.get("rss_url") == "https://openai.com/news/rss.xml"
+        for item in feed.get("items", [])
+        if item["guid"] != "fixture-low-59"
+    }
+
+    assert displayable_openai_urls
+    assert not (displayable_openai_urls & archival_urls)
 
 
 def test_successful_translation_fixtures_are_article_specific_and_readable():

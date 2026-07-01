@@ -11,9 +11,9 @@
 
 ## 2. High-Level Architecture（整体架构）
 
-The MVP runs as a single FastAPI application on one machine. The frontend is a React + Vite single-page app that reads data from the FastAPI backend. The backend owns RSS collection, LLM scoring, content fetching, LLM translation, scheduling, and SQLite persistence.
+The MVP runs as a single FastAPI application on one machine for local deployed use. The frontend is a React + Vite single-page app; in development it may run through Vite, but the long-running local service serves the Vite build output from FastAPI on `http://127.0.0.1:8010/` alongside `/api/*`. The backend owns RSS collection, LLM scoring, content fetching, LLM translation, scheduling, SQLite persistence, and local static SPA serving.
 
-RSS sources provide the initial news entries. FastAPI reads RSS feeds, stores raw entries in SQLite, sends title and summary data to the LLM for scoring, marks high-value items with `is_selected`, fetches content for selected items, translates fetched content, and exposes display-ready API/UI projections to the frontend.
+RSS sources provide the initial news entries. FastAPI reads RSS feeds, applies the live RSS 30-day freshness window before raw persistence, stores eligible raw entries in SQLite, sends title and summary data to the LLM for scoring, marks high-value items with `is_selected`, fetches content for selected items, translates fetched content, and exposes display-ready API/UI projections to the frontend.
 
 Core data flow:
 
@@ -38,7 +38,7 @@ RSS → Crawl → Score → Filter → Fetch → Translate → UI
 ## 4. Module Interaction（模块交互）
 
 1. RSS sources enter the system through the RSS Collector during scheduled crawling or manual refresh.
-2. The RSS Collector parses enabled RSS feeds and writes new items as raw news records.
+2. The RSS Collector parses enabled RSS feeds and, in live runtime, writes only items whose RSS `published_at` is within the last 30 days relative to refresh time as raw news records.
 3. The News Scoring Service calls the LLM after a new raw item is available, using its title, summary, source, published time, and original link.
 4. Items with score greater than or equal to `60` set `is_selected = 1`; this does not change `pipeline_state`.
 5. The Content Fetcher runs only for selected items and stores either extracted article content or RSS summary fallback content.
@@ -51,8 +51,8 @@ RSS → Crawl → Score → Filter → Fetch → Translate → UI
 
 RSS → raw → scored → fetched → API/UI status projection → UI
 
-- RSS: Enabled RSS sources provide news entries.
-- raw: New parsed entries are stored as unscored news.
+- RSS: Enabled RSS sources provide news entries; live runtime filters parsed entries by a 30-day RSS `published_at` window before persistence.
+- raw: New freshness-eligible parsed entries are stored as unscored news.
 - scored: The LLM returns a `0-100` value score for each raw item.
 - fetched: Selected items receive extracted article content or RSS summary fallback content.
 - API/UI status projection: The API derives `ready`, `translated`, or `translation_failed` from `title_zh`, `summary_zh`, `content_zh`, and `has_translate_failed`.
@@ -110,7 +110,7 @@ Existing legacy root files may remain only until their owning bootstrap task rem
 
 - `backend/app/main.py` wires FastAPI routes and startup hooks; it must not contain pipeline business logic.
 - `backend/app/api/` validates request inputs, calls services, and returns DTOs from `docs/05_api_contract.md`; it must not return DB rows directly.
-- `backend/app/services/` owns refresh orchestration and pipeline steps. Only pipeline services may write `news_item.pipeline_state` or compute `is_selected`.
+- `backend/app/services/` owns refresh orchestration, live RSS freshness filtering, and pipeline steps. Only pipeline services may write `news_item.pipeline_state` or compute `is_selected`.
 - `backend/app/repositories/` owns SQL, SQLite schema creation, indexes, constraints, and seed helpers. Other backend modules access SQLite through repositories or database helpers.
 - `backend/app/clients/` owns external-boundary interfaces and local fixture/mock clients. Tests and harness runs must bind fixture/mock clients, never live RSS, live webpages, or live LLM.
 - `backend/app/core/clock` owns business time. Scheduler, ranking windows, timestamps, and tests must use injected clock values.

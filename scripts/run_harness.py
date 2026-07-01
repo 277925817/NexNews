@@ -13,9 +13,12 @@ import ast
 import hashlib
 import ipaddress
 import json
+import py_compile
 import re
 import sqlite3
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -60,6 +63,7 @@ FORBIDDEN_PUBLIC_FIELDS = {
     "content_raw",
     "content_full",
     "has_translate_failed",
+    "discussion_url",
     "deleted_at",
 }
 FORBIDDEN_CONTEXTUAL_FIELDS = {
@@ -163,13 +167,19 @@ FRONTEND_GENERATED_PATH_PARTS = {"node_modules", "dist", ".vite"}
 DEPLOYED_BROWSER_SMOKE_REPORT = "deployed_browser_smoke.json"
 DEPLOYED_BROWSER_SMOKE_URL = "http://127.0.0.1:8010"
 DEPLOYED_BROWSER_SMOKE_PORT = 8010
+DEPLOYED_RUNTIME_TIMEOUT_SECONDS = 3
 RESERVED_PLACEHOLDER_HOSTS = {"example.com", "example.org", "example.net"}
 RESERVED_PLACEHOLDER_SUFFIXES = (".test", ".invalid")
 FIXTURE_THRESHOLD_CANONICAL_URL = "https://developers.openai.com/resources/agentic-app-production/"
-FIXTURE_TRANSLATED_CANONICAL_URL = "https://openai.com/index/introducing-gpt-4-1-in-the-api/"
+FIXTURE_TRANSLATED_CANONICAL_URL = "https://openai.com/index/introducing-life-sci-bench/"
 FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL = "https://openai.com/index/introducing-openai-o3-pro/"
 FIXTURE_EXTRACTION_FAILURE_URL = "https://openai.com/index/extraction-failure-fixture/"
 FIXTURE_EMPTY_SUMMARY_URL = "https://openai.com/index/empty-summary-fixture/"
+ARCHIVAL_OPENAI_FIXTURE_CANONICAL_URLS = {
+    "https://openai.com/index/gpt-4-1",
+    "https://openai.com/index/gpt-4-1/",
+    "https://openai.com/index/introducing-gpt-4-1-in-the-api/",
+}
 FORBIDDEN_TRANSLATION_PLACEHOLDER_TERMS = (
     "fixture",
     "mock",
@@ -179,7 +189,7 @@ FORBIDDEN_TRANSLATION_PLACEHOLDER_TERMS = (
     "这是一篇",
 )
 TRANSLATION_QUALITY_KEYWORDS = {
-    "fixture-translated-96": ("模型", "API", "发布"),
+    "fixture-translated-96": ("LifeSciBench", "生命科学", "基准"),
     "fixture-rank-95": ("安全", "基准", "企业"),
     "fixture-rank-94": ("评测", "智能体", "任务"),
     "fixture-rank-93": ("芯片", "调度", "延迟"),
@@ -332,7 +342,7 @@ LIGHT_SURFACE_TOKENS = {"#ffffff", "#f8fafc"}
 LIGHT_BORDER = "#d8dee6"
 OLD_DARK_BACKGROUND_TOKENS = {"#0b0f14", "#111820", "#151e28"}
 EXPECTED_TRANSLATION_LATEST_STATUS_COUNTS = {
-    "translated": 11,
+    "translated": 10,
 }
 EXPECTED_TRANSLATION_TOP_STATUS_COUNTS = {
     "translated": 10,
@@ -2310,7 +2320,10 @@ def backend_api_response_evidence() -> dict[str, Any]:
                 "detail_original_non_placeholder": not is_reserved_placeholder_url(detail_original_url),
                 "detail_canonical_not_exposed_as_original": bool(
                     translated_row
-                    and detail_original_url != str(translated_row["canonical_url"])
+                    and (
+                        str(translated_row["original_url"]) == str(translated_row["canonical_url"])
+                        or detail_original_url != str(translated_row["canonical_url"])
+                    )
                     and str(translated_row["canonical_url"]) == FIXTURE_TRANSLATED_CANONICAL_URL
                 ),
             }
@@ -3034,7 +3047,7 @@ def task_019_detail_checks(client: Any, latest_items: list[dict[str, Any]]) -> d
     checks: dict[str, Any] = {}
     issues: list[str] = []
     cases = {
-        "translated": ("New AI model released", "translated"),
+        "translated": ("Introducing LifeSciBench", "translated"),
         "ready": ("Threshold AI agent reaches production", "ready"),
         "failed": ("AI translation mock emits partial output", "translation_failed"),
     }
@@ -3161,11 +3174,11 @@ def task_015_mock_home_data() -> dict[str, Any]:
     latest_news: list[dict[str, Any]] = [
         {
             "id": "home-001",
-            "title": "新一代模型发布",
-            "original_title": "New AI model released",
+            "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+            "original_title": "Introducing LifeSciBench",
             "source_name": "OpenAI Blog",
             "original_url": FIXTURE_TRANSLATED_CANONICAL_URL,
-            "published_at": "2026-06-28T08:00:00Z",
+            "published_at": "2026-06-17T00:00:00Z",
             "score": 98,
             "status": "translated",
             "summary_zh": "中文摘要 <b>重点</b> <script>alert(1)</script>",
@@ -3198,7 +3211,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
                 "title": f"AI 新闻 {index}",
                 "original_title": f"AI fixture item {index}",
                 "source_name": ["OpenAI Blog", "HN Newest", "Developer Feed"][index % 3],
-                "original_url": f"https://news.ycombinator.com/item?id=44255{index:03d}",
+                "original_url": f"https://ai.example-news.dev/hacker-news-fixture-{index}",
                 "published_at": f"2026-06-{28 - index % 4:02d}T0{index % 9}:00:00Z",
                 "score": 100 - index,
                 "status": "translated",
@@ -3210,7 +3223,7 @@ def task_015_mock_home_data() -> dict[str, Any]:
         "title": "窗口外高分新闻",
         "original_title": "Older AI milestone outside ranking window",
         "source_name": "OpenAI Blog",
-        "original_url": "https://news.ycombinator.com/item?id=43900099",
+        "original_url": "https://ai.example-news.dev/hacker-news-fixture-old",
         "published_at": "2026-05-01T08:00:00Z",
         "score": 100,
         "status": "translated",
@@ -3328,7 +3341,7 @@ def task_015_ui_observations() -> dict[str, Any]:
     rank_scores = [(item["score"], item["published_at"]) for item in rank_items]
     source_colors = {card["source_name"]: card["source_color"] for card in cards}
     render_checks = {
-        "translated_card_title_and_summary": translated_card["title_text"] == "新一代模型发布" and bool(translated_card["summary_text"]),
+        "translated_card_title_and_summary": translated_card["title_text"] == "OpenAI 发布 LifeSciBench 生命科学基准" and bool(translated_card["summary_text"]),
         "summary_html_like_text_not_nodes": "<script>" in str(translated_card["summary_text"]) and translated_card["created_html_tag_nodes"] is False,
         "ready_card_no_zh_body_nodes": ready_card["summary_node_count"] == 0 and ready_card["content_node_count"] == 0 and ready_card["status_text"] == "翻译中",
         "failed_card_no_zh_body_nodes": failed_card["summary_node_count"] == 0 and failed_card["content_node_count"] == 0 and failed_card["status_text"] == "翻译失败",
@@ -3451,11 +3464,11 @@ def task_016_detail_fixtures() -> dict[str, dict[str, Any]]:
     return {
         "translated": {
             "id": "article-001",
-            "title": "新一代模型发布",
-            "original_title": "New AI model released",
+            "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+            "original_title": "Introducing LifeSciBench",
             "source_name": "OpenAI Blog",
             "original_url": FIXTURE_TRANSLATED_CANONICAL_URL,
-            "published_at": "2026-06-28T08:00:00Z",
+            "published_at": "2026-06-17T00:00:00Z",
             "score": 98,
             "status": "translated",
             "summary_zh": "这是一条中文摘要。",
@@ -3490,7 +3503,8 @@ def task_016_project_article(detail: dict[str, Any] | None, state: str) -> dict[
             "state": state,
             "message": "新闻不存在或不可展示",
             "back_href": "/",
-            "back_text": "返回新闻列表",
+            "back_aria_label": "返回新闻列表",
+            "back_icon": "svg-chevron-left",
             "summary_node_count": 0,
             "content_node_count": 0,
         }
@@ -3530,7 +3544,12 @@ def task_016_source_checks(sources: dict[str, str]) -> dict[str, Any]:
         "article_fetches_detail": "client.fetchNewsDetail(newsId)" in article_source,
         "article_polls_ready_detail": "setInterval" in article_source and "clearInterval" in article_source and "detail?.status !== 'ready'" in article_source,
         "article_not_found_text": "新闻不存在或不可展示" in article_source,
-        "article_back_text": "返回新闻列表" in article_source,
+        "article_back_icon_button": "aria-label=\"返回新闻列表\"" in article_source
+        and "<svg" in article_source
+        and "viewBox=\"0 0 24 24\"" in article_source
+        and "article-view__back-icon" in article_source
+        and "title=\"返回新闻列表\"" not in article_source
+        and ">返回新闻列表<" not in article_source,
         "article_unreadable_reason_text": all(token in article_source for token in [UNREADABLE_DETAIL_TITLE, READY_UNREADABLE_COPY, FAILED_UNREADABLE_COPY]),
         "article_unreadable_state_classes": "article-view__state-title" in article_source and "article-view__state-copy" in article_source,
         "article_original_link_only": "href={detail.original_url}" in article_source and "detail.status !== 'ready'" in article_source,
@@ -3558,14 +3577,14 @@ def task_016_ui_observations() -> dict[str, Any]:
         "not_found": task_016_project_article(None, "not_found"),
     }
     render_checks = {
-        "translated_detail_complete": dom["translated"]["title_text"] == "新一代模型发布" and dom["translated"]["summary_node_count"] == 1 and dom["translated"]["content_node_count"] == 2,
-        "translated_original_metadata": dom["translated"]["original_title_text"] == "New AI model released" and dom["translated"]["source_name"] == "OpenAI Blog" and dom["translated"]["score"] == 98,
+        "translated_detail_complete": dom["translated"]["title_text"] == "OpenAI 发布 LifeSciBench 生命科学基准" and dom["translated"]["summary_node_count"] == 1 and dom["translated"]["content_node_count"] == 2,
+        "translated_original_metadata": dom["translated"]["original_title_text"] == "Introducing LifeSciBench" and dom["translated"]["source_name"] == "OpenAI Blog" and dom["translated"]["score"] == 98,
         "translated_original_link": dom["translated"]["original_link_href"] == FIXTURE_TRANSLATED_CANONICAL_URL,
         "ready_polls_and_omits_zh": dom["ready"]["waiting_text"] == "翻译中" and dom["ready"]["summary_node_count"] == 0 and dom["ready"]["content_node_count"] == 0 and dom["ready"]["original_link_href"] is None,
         "ready_explains_unreadable_content": dom["ready"]["unreadable_title"] == UNREADABLE_DETAIL_TITLE and dom["ready"]["unreadable_copy"] == READY_UNREADABLE_COPY,
         "failed_state_and_original_link": dom["failed"]["failed_text"] == "翻译失败" and dom["failed"]["summary_node_count"] == 0 and dom["failed"]["content_node_count"] == 0 and dom["failed"]["original_link_href"] == FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL,
         "failed_explains_unreadable_content": dom["failed"]["unreadable_title"] == UNREADABLE_DETAIL_TITLE and dom["failed"]["unreadable_copy"] == FAILED_UNREADABLE_COPY,
-        "not_found_state": dom["not_found"]["message"] == "新闻不存在或不可展示" and dom["not_found"]["back_text"] == "返回新闻列表",
+        "not_found_state": dom["not_found"]["message"] == "新闻不存在或不可展示" and dom["not_found"]["back_aria_label"] == "返回新闻列表" and dom["not_found"]["back_icon"] == "svg-chevron-left",
         "article_text_render_safe": all(item.get("created_html_tag_nodes", False) is False for item in dom.values() if isinstance(item, dict)),
     }
     navigation_checks = {
@@ -4760,6 +4779,60 @@ def browser_e2e_evidence() -> dict[str, Any]:
     return e2e_surface_evidence()
 
 
+def deployed_runtime_http_probe(
+    base_url: str = DEPLOYED_BROWSER_SMOKE_URL,
+    timeout_seconds: int = DEPLOYED_RUNTIME_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    base = base_url.rstrip("/")
+    issues: list[str] = []
+    checks: dict[str, Any] = {"local_url": base_url}
+
+    def fetch(path: str, name: str) -> tuple[int | None, str, bytes]:
+        url = f"{base}{path}"
+        request = urllib.request.Request(url, headers={"User-Agent": "rss-harness/1.0"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                return int(response.status), response.headers.get("content-type", ""), response.read()
+        except urllib.error.HTTPError as error:
+            body = error.read()
+            return int(error.code), error.headers.get("content-type", ""), body
+        except Exception as error:
+            issues.append(f"deployed_runtime:{name}_request_failed:{error.__class__.__name__}")
+            return None, "", b""
+
+    index_status, index_type, index_body = fetch("/", "index")
+    checks["index_status"] = index_status
+    checks["index_content_type"] = index_type
+    checks["index_body_length"] = len(index_body)
+    if index_status != 200:
+        issues.append(f"deployed_runtime:index_status={index_status}")
+    if "text/html" not in index_type:
+        issues.append(f"deployed_runtime:index_content_type={index_type}")
+
+    api_status, api_type, api_body = fetch("/api/home", "api_home")
+    checks["api_home_status"] = api_status
+    checks["api_home_content_type"] = api_type
+    checks["api_home_body_length"] = len(api_body)
+    if api_status != 200:
+        issues.append(f"deployed_runtime:api_home_status={api_status}")
+        return {"checks": checks, "issues": issues}
+    try:
+        payload = json.loads(api_body.decode("utf-8"))
+    except Exception as error:
+        issues.append(f"deployed_runtime:api_home_json_failed:{error.__class__.__name__}")
+        return {"checks": checks, "issues": issues}
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    latest = data.get("latest_news") if isinstance(data, dict) else []
+    ranked = data.get("top_ranked_news") if isinstance(data, dict) else []
+    checks["latest_news_count"] = len(latest) if isinstance(latest, list) else 0
+    checks["top_ranked_news_count"] = len(ranked) if isinstance(ranked, list) else 0
+    if checks["latest_news_count"] <= 0:
+        issues.append("deployed_runtime:latest_news_empty")
+    if checks["top_ranked_news_count"] <= 0:
+        issues.append("deployed_runtime:top_ranked_news_empty")
+    return {"checks": checks, "issues": issues}
+
+
 def single_port_evidence() -> dict[str, Any]:
     app, import_issue = import_backend_app()
     if import_issue:
@@ -4896,6 +4969,9 @@ def stage_behavior_evidence(stage: str) -> dict[str, Any]:
         browser_evidence = browser_e2e_evidence()
         evidence["checks"]["browser_e2e"] = browser_evidence
         evidence["issues"].extend(browser_evidence["issues"])
+        runtime_evidence = deployed_runtime_http_probe()
+        evidence["checks"]["deployed_runtime_http"] = runtime_evidence
+        evidence["issues"].extend(runtime_evidence["issues"])
     return evidence
 
 
@@ -5826,6 +5902,24 @@ def task_002a_static_checks() -> dict[str, Any]:
     }
 
 
+def static_python_syntax_checks() -> list[str]:
+    search_roots = [Path("backend"), Path("scripts"), Path("tests")]
+    issues: list[str] = []
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.py"):
+            if ".venv" in path.parts:
+                continue
+            try:
+                py_compile.compile(str(path), doraise=True)
+            except py_compile.PyCompileError as error:
+                issues.append(
+                    f"{path}:{getattr(error, 'lineno', '?')}:{getattr(error, 'offset', '?')}: {error.msg}"
+                )
+    return issues
+
+
 def task_002a_seed_base_rows(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO source (id, name, rss_url, is_enabled, fetch_frequency, created_at) "
@@ -6657,7 +6751,7 @@ def task_008_unit_observations() -> dict[str, Any]:
         "valid_record": has_valid_record(records["fixture-translated-96"]),
         "fallback_record": has_valid_record(records["fixture-rank-95"]),
         "partial_record": has_valid_record(records["fixture-translate-partial"]),
-        "category_present": records["fixture-translated-96"].get("category_zh") == "产品",
+        "category_present": records["fixture-translated-96"].get("category_zh") == "研究",
         "invalid_case_count": len(payload.get("invalid_cases", {})),
         "timeout_case_count": len(payload.get("timeout_cases", {})),
     }
@@ -6737,7 +6831,7 @@ def run_task_008_integration(report_dir: Path, task_id: str) -> int:
         actual["translated_count"] == 11
         and actual["pending_count"] == 1
         and actual["failed_count"] == 1
-        and actual["translated_title"] == "新的 AI 模型发布"
+        and actual["translated_title"] == "OpenAI 发布 LifeSciBench 生命科学基准"
         and actual["fallback_content_full"] is None
         and bool(actual["fallback_summary_zh"])
         and bool(actual["fallback_content_zh"])
@@ -7507,7 +7601,11 @@ def materialized_stage_behavior(stage: str) -> dict[str, Any]:
         return {"checks": {"diff": diff, "diff_empty": not diff}, "issues": list(diff)}
     if stage == "e2e":
         observed = task_024_e2e_observations()
-        return {"checks": observed["checks"], "issues": observed["issues"]}
+        runtime = deployed_runtime_http_probe()
+        return {
+            "checks": {**observed["checks"], "deployed_runtime_http": runtime},
+            "issues": [*observed["issues"], *runtime["issues"]],
+        }
     if stage == "integration":
         return materialized_integration_behavior()
     if stage == "unit":
@@ -7919,6 +8017,7 @@ def run_static_product_stage(report_dir: Path) -> int:
     )
 
     architecture_issues = []
+    python_syntax_issues = static_python_syntax_checks()
     for path in FORBIDDEN_PATH_PATTERNS:
         if path in "\n".join(path.name for path in Path(".").glob("*")):
             architecture_issues.append(f"forbidden_surface_hint:{path}")
@@ -7953,6 +8052,7 @@ def run_static_product_stage(report_dir: Path) -> int:
             and not tasks_schema_issues
             and not task_dag_semantic_issues
             and not traceability_issues
+            and not python_syntax_issues
         ),
         "A-static-ACC-STOP-001-round-evidence-report-schemas": (
             not schema_file_issues and valid_summary_accepted and done_summary_rejected
@@ -7989,6 +8089,7 @@ def run_static_product_stage(report_dir: Path) -> int:
                     "traceability_issues": traceability_issues,
                     "forbidden_public": forbidden_public,
                     "architecture_issues": architecture_issues,
+                    "python_syntax_issues": python_syntax_issues,
                 }},
                 visibility=info["visibility"],
             )
@@ -9712,13 +9813,25 @@ def task_032_rss_link_records(rss: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(item, dict):
                 continue
             link = str(item.get("link") or "")
+            comments_url = str(item.get("comments_url") or item.get("discussion_url") or "")
             records.append(
                 {
                     "guid": str(item.get("guid") or ""),
+                    "rss_url": str(feed.get("rss_url") or ""),
                     "link": link,
+                    "comments_url": comments_url,
                     "canonical_url": canonicalize_fixture_url(link) if link else "",
                     "public_http": is_public_http_url_value(link),
                     "reserved_placeholder": is_reserved_placeholder_url(link),
+                    "is_hn_fixture": str(item.get("guid") or "").startswith("fixture-rank-")
+                    or str(item.get("guid") or "") == "fixture-old-high-99",
+                    "link_is_hn_item": (
+                        (urlsplit(link).hostname or "").lower() == "news.ycombinator.com"
+                        and urlsplit(link).path == "/item"
+                    ),
+                    "comments_is_hn_item": comments_url.startswith(
+                        "https://news.ycombinator.com/item?id="
+                    ),
                 }
             )
     return records
@@ -9737,6 +9850,13 @@ def task_032_fixture_url_observations() -> dict[str, Any]:
     all_urls = {record["link"] for record in link_records} | article_urls | case_urls
     threshold_records = [
         record for record in link_records if record["guid"].startswith("fixture-threshold-60")
+    ]
+    hn_records = [record for record in link_records if record["is_hn_fixture"]]
+    openai_displayable_records = [
+        record
+        for record in link_records
+        if record["rss_url"] == "https://openai.com/news/rss.xml"
+        and record["guid"] != "fixture-low-59"
     ]
     canonical_counts: dict[str, int] = {}
     for record in link_records:
@@ -9758,8 +9878,18 @@ def task_032_fixture_url_observations() -> dict[str, Any]:
         "threshold_canonical_article_present": FIXTURE_THRESHOLD_CANONICAL_URL in article_urls,
         "translated_canonical_article_present": FIXTURE_TRANSLATED_CANONICAL_URL in article_urls,
         "translation_partial_canonical_article_present": FIXTURE_TRANSLATION_PARTIAL_CANONICAL_URL in article_urls,
+        "openai_displayable_fixture_not_archival": bool(openai_displayable_records)
+        and not [
+            record
+            for record in openai_displayable_records
+            if record["canonical_url"] in ARCHIVAL_OPENAI_FIXTURE_CANONICAL_URLS
+        ],
         "threshold_duplicate_canonicalized": len(threshold_records) >= 2
         and canonical_counts.get(FIXTURE_THRESHOLD_CANONICAL_URL) == 2,
+        "hn_links_are_external_articles": bool(hn_records)
+        and not [record for record in hn_records if record["link_is_hn_item"]],
+        "hn_comments_urls_present": bool(hn_records)
+        and all(record["comments_is_hn_item"] for record in hn_records),
     }
     issues.extend(f"fixture_url:{name}=false" for name, passed in checks.items() if not passed)
     return {
@@ -9810,6 +9940,7 @@ def task_032_docs_static_observations(task_id: str) -> dict[str, Any]:
             token in test_doc
             for token in [
                 "A-api-ACC-STOP-004-original-url-real-link",
+                "A-api-ACC-STOP-004-discussion-url-internal",
                 "A-e2e-ACC-STOP-006-article-original-link-button",
             ]
         ),
@@ -9853,7 +9984,7 @@ def task_032_api_original_url_observations() -> dict[str, Any]:
     conn = app.state.db
     rows = conn.execute(
         """
-        SELECT id, rss_guid, original_url, canonical_url, score, is_selected
+        SELECT id, rss_guid, original_url, canonical_url, discussion_url, score, is_selected
         FROM news_item
         ORDER BY id ASC
         """
@@ -9861,7 +9992,9 @@ def task_032_api_original_url_observations() -> dict[str, Any]:
     db_by_id = {str(row["id"]): row for row in rows}
     db_by_guid = {str(row["rss_guid"]): row for row in rows if row.get("rss_guid")}
     translated = db_by_guid.get("fixture-translated-96")
+    hn_rank = db_by_guid.get("fixture-rank-95")
     translated_detail: dict[str, Any] = {}
+    hn_detail: dict[str, Any] = {}
     if translated:
         detail_response = client.get(f"/api/news/{translated['id']}")
         issues.extend(
@@ -9879,6 +10012,14 @@ def task_032_api_original_url_observations() -> dict[str, Any]:
         translated_detail = data if isinstance(data, dict) else {}
     else:
         issues.append("api_original_url:translated_fixture_missing")
+    if hn_rank:
+        hn_detail_response = client.get(f"/api/news/{hn_rank['id']}")
+        payload, parse_issues = _safe_json(hn_detail_response)
+        issues.extend(f"task_032_hn_detail:{issue}" for issue in parse_issues)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        hn_detail = data if isinstance(data, dict) else {}
+    else:
+        issues.append("api_original_url:hn_rank_fixture_missing")
 
     home_response = client.get("/api/home")
     issues.extend(
@@ -9934,6 +10075,18 @@ def task_032_api_original_url_observations() -> dict[str, Any]:
         "detail_original_non_placeholder": not is_reserved_placeholder_url(
             str(translated_detail.get("original_url") or "")
         ),
+        "hn_db_original_is_external_article": bool(
+            hn_rank
+            and (urlsplit(str(hn_rank["original_url"])).hostname or "").lower() != "news.ycombinator.com"
+        ),
+        "hn_db_discussion_url_internal": bool(
+            hn_rank
+            and str(hn_rank.get("discussion_url") or "").startswith(
+                "https://news.ycombinator.com/item?id="
+            )
+        ),
+        "hn_detail_discussion_not_returned": "discussion_url" not in hn_detail,
+        "home_discussion_not_returned": all("discussion_url" not in item for item in home_items),
         "home_translated_items_present": bool(home_translated_items),
         "home_translated_original_urls_match_db": not home_original_url_mismatches,
         "home_original_urls_non_placeholder": not home_reserved_urls,
@@ -9943,7 +10096,9 @@ def task_032_api_original_url_observations() -> dict[str, Any]:
         "checks": checks,
         "issues": issues,
         "translated_detail": translated_detail,
+        "hn_detail": hn_detail,
         "translated_db_row": dict(translated) if translated else None,
+        "hn_db_row": dict(hn_rank) if hn_rank else None,
         "home_translated_count": len(home_translated_items),
         "home_original_url_mismatches": home_original_url_mismatches,
         "home_reserved_urls": home_reserved_urls,
@@ -9962,7 +10117,7 @@ def task_032_integration_original_url_observations() -> dict[str, Any]:
     fetch_selected_content(conn)
     rows = conn.execute(
         """
-        SELECT rss_guid, original_url, canonical_url, is_selected, score, pipeline_state, content_full
+        SELECT rss_guid, original_url, canonical_url, discussion_url, is_selected, score, pipeline_state, content_full
         FROM news_item
         ORDER BY id ASC
         """
@@ -9971,6 +10126,7 @@ def task_032_integration_original_url_observations() -> dict[str, Any]:
     by_guid = {str(row["rss_guid"]): row for row in rows}
     threshold = by_guid.get("fixture-threshold-60")
     translated = by_guid.get("fixture-translated-96")
+    hn_rank = by_guid.get("fixture-rank-95")
     selected_rows = [row for row in rows if row["is_selected"] == 1]
     selected_reserved_urls = [
         row["original_url"] for row in selected_rows if is_reserved_placeholder_url(str(row["original_url"]))
@@ -9990,10 +10146,20 @@ def task_032_integration_original_url_observations() -> dict[str, Any]:
         "threshold_duplicate_not_inserted": "fixture-threshold-60-duplicate" not in by_guid,
         "translated_original_preserved_with_query": bool(
             translated
-            and translated["original_url"] == "https://openai.com/index/introducing-gpt-4-1-in-the-api/?utm_medium=rss"
+            and translated["original_url"] == "https://openai.com/index/introducing-life-sci-bench/"
         ),
         "translated_canonical_used_for_fetch_map": bool(
             translated and translated["canonical_url"] == FIXTURE_TRANSLATED_CANONICAL_URL
+        ),
+        "hn_original_is_external_article": bool(
+            hn_rank
+            and (urlsplit(str(hn_rank["original_url"])).hostname or "").lower() != "news.ycombinator.com"
+        ),
+        "hn_discussion_url_preserved": bool(
+            hn_rank
+            and str(hn_rank.get("discussion_url") or "").startswith(
+                "https://news.ycombinator.com/item?id="
+            )
         ),
         "selected_urls_public_http": not selected_non_public_urls,
         "selected_urls_non_placeholder": not selected_reserved_urls,
@@ -10012,6 +10178,7 @@ def task_032_integration_original_url_observations() -> dict[str, Any]:
             guid: {
                 "original_url": row["original_url"],
                 "canonical_url": row["canonical_url"],
+                "discussion_url": row["discussion_url"],
                 "is_selected": bool(row["is_selected"]),
                 "score": row["score"],
                 "pipeline_state": row["pipeline_state"],
@@ -10609,7 +10776,6 @@ def task_034_home_translated_observations() -> dict[str, Any]:
     latest_titles = [str(item.get("original_title")) for item in latest if isinstance(item, dict)]
     top_scores = [item.get("score") for item in top if isinstance(item, dict)]
     expected_latest_prefix = [
-        "New AI model released",
         "AI safety benchmark reaches enterprise pilots",
         "Open model eval suite adds agent tasks",
         "AI chip scheduler cuts inference latency",
@@ -10619,6 +10785,7 @@ def task_034_home_translated_observations() -> dict[str, Any]:
         "AI observability tool traces prompt regressions",
         "AI coding assistant checks repository contracts",
         "AI product analytics detects agent drift",
+        "Introducing LifeSciBench",
     ]
     if latest_titles[:10] != expected_latest_prefix:
         issues.append(f"task_034:latest_prefix:{latest_titles[:10]}")

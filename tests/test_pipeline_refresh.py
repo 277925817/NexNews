@@ -718,6 +718,108 @@ def test_request_live_scoring_posts_chat_completion_and_parses_score(monkeypatch
     assert "original_link" in post_call["json"]["messages"][1]["content"]
 
 
+def test_request_live_llm_supports_anthropic_messages_format(monkeypatch):
+    from backend.app.services import pipeline
+
+    calls = []
+
+    class FakeTranslationResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "title_zh": "Anthropic 格式中文标题",
+                                "summary_zh": "Anthropic 格式返回中文摘要，证明 DeepSeek 兼容端点可用。",
+                                "content_zh": "Anthropic 格式返回中文正文第一段。\n\nAnthropic 格式返回中文正文第二段。",
+                                "category_zh": "产品",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                ]
+            }
+
+    class FakeScoringResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {"score": 91, "reason": "Anthropic-compatible scoring response."},
+                            ensure_ascii=False,
+                        ),
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append({"init": kwargs})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, headers=None, json=None):
+            calls.append({"url": url, "headers": headers, "json": json})
+            if "original_title" in json["messages"][0]["content"]:
+                return FakeTranslationResponse()
+            return FakeScoringResponse()
+
+    monkeypatch.setattr(pipeline.httpx, "Client", FakeClient)
+
+    translation_record, translation_error = request_live_translation(
+        {
+            "original_title": "Anthropic translation check",
+            "original_summary": "English summary",
+            "original_content": "English content",
+            "source": "Live Source",
+            "score": 92,
+        },
+        base_url="https://api.deepseek.com/anthropic",
+        api_key="secret-token",
+        model="deepseek-v4-flash",
+        timeout_seconds=3,
+    )
+    scoring_record, scoring_error = request_live_scoring(
+        {
+            "title": "Anthropic scoring check",
+            "summary": "English summary",
+            "source": "Live Source",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_link": "https://live.example/scoring",
+        },
+        base_url="https://api.deepseek.com/anthropic",
+        api_key="secret-token",
+        model="deepseek-v4-flash",
+        timeout_seconds=3,
+    )
+
+    translation_call = calls[1]
+    scoring_call = calls[3]
+    assert translation_error is None
+    assert translation_record["title_zh"] == "Anthropic 格式中文标题"
+    assert scoring_error is None
+    assert scoring_record == {"score": 91, "reason": "Anthropic-compatible scoring response."}
+    assert translation_call["url"] == "https://api.deepseek.com/anthropic/messages"
+    assert scoring_call["url"] == "https://api.deepseek.com/anthropic/messages"
+    assert translation_call["headers"]["x-api-key"] == "secret-token"
+    assert "Authorization" not in translation_call["headers"]
+    assert translation_call["json"]["system"].startswith("你是 AI 新闻聚合系统的中文翻译器")
+    assert translation_call["json"]["messages"][0]["role"] == "user"
+    assert translation_call["json"]["max_tokens"] == 4096
+
+
 def test_request_live_translation_uses_direct_network_before_env_proxy(monkeypatch):
     from backend.app.services import pipeline
 

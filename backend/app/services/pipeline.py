@@ -1017,14 +1017,78 @@ def is_terminal_live_llm_response(response: httpx.Response) -> bool:
     return response.status_code in TERMINAL_LIVE_LLM_STATUS_CODES
 
 
-def parse_live_translation_response(response: httpx.Response) -> tuple[dict[str, object] | None, str | None]:
-    try:
-        response_payload = response.json()
-        choices = response_payload.get("choices", [])
-        if not choices:
-            return None, "validation_llm_error"
+def uses_anthropic_llm_format(base_url: str | None) -> bool:
+    return "/anthropic" in str(base_url or "").lower().rstrip("/")
+
+
+def live_llm_endpoint(base_url: str, *, anthropic_format: bool) -> str:
+    suffix = "messages" if anthropic_format else "chat/completions"
+    return f"{base_url.rstrip('/')}/{suffix}"
+
+
+def live_llm_headers(api_key: str, *, anthropic_format: bool) -> dict[str, str]:
+    if anthropic_format:
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+
+def live_llm_payload(
+    *,
+    model: str,
+    system_prompt: str,
+    request: dict[str, object],
+    temperature: float,
+    anthropic_format: bool,
+) -> dict[str, object]:
+    user_content = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
+    if anthropic_format:
+        return {
+            "model": model,
+            "max_tokens": 4096,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+            "temperature": temperature,
+        }
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": temperature,
+    }
+
+
+def live_llm_response_content(response: httpx.Response) -> str | None:
+    response_payload = response.json()
+    choices = response_payload.get("choices")
+    if isinstance(choices, list) and choices:
         message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
         content = message.get("content", "") if isinstance(message, dict) else ""
+        return str(content)
+
+    anthropic_content = response_payload.get("content")
+    if isinstance(anthropic_content, str):
+        return anthropic_content
+    if isinstance(anthropic_content, list):
+        chunks = [
+            str(part.get("text"))
+            for part in anthropic_content
+            if isinstance(part, dict) and part.get("type") == "text" and part.get("text")
+        ]
+        return "\n".join(chunks)
+    return None
+
+
+def parse_live_translation_response(response: httpx.Response) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        content = live_llm_response_content(response)
+        if not content:
+            return None, "validation_llm_error"
         record = json.loads(strip_json_code_fence(str(content)))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None, "validation_llm_error"
@@ -1035,12 +1099,9 @@ def parse_live_translation_response(response: httpx.Response) -> tuple[dict[str,
 
 def parse_live_scoring_response(response: httpx.Response) -> tuple[dict[str, object] | None, str | None]:
     try:
-        response_payload = response.json()
-        choices = response_payload.get("choices", [])
-        if not choices:
+        content = live_llm_response_content(response)
+        if not content:
             return None, "validation_llm_error"
-        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-        content = message.get("content", "") if isinstance(message, dict) else ""
         record = json.loads(strip_json_code_fence(str(content)))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None, "validation_llm_error"
@@ -1062,16 +1123,16 @@ def request_live_scoring(
 ) -> tuple[dict[str, object] | None, str | None]:
     if not base_url or not api_key or not model:
         return None, "llm_config_missing"
-    endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": LIVE_SCORING_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(request, ensure_ascii=False, separators=(",", ":"))},
-        ],
-        "temperature": 0.1,
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    anthropic_format = uses_anthropic_llm_format(base_url)
+    endpoint = live_llm_endpoint(base_url, anthropic_format=anthropic_format)
+    payload = live_llm_payload(
+        model=model,
+        system_prompt=LIVE_SCORING_SYSTEM_PROMPT,
+        request=request,
+        temperature=0.1,
+        anthropic_format=anthropic_format,
+    )
+    headers = live_llm_headers(api_key, anthropic_format=anthropic_format)
     last_request_error = "llm"
     retry_max = max(0, int(retry_count))
     for attempt in range(retry_max + 1):
@@ -1110,22 +1171,16 @@ def request_live_translation(
 ) -> tuple[dict[str, object] | None, str | None]:
     if not base_url or not api_key or not model:
         return None, "llm_config_missing"
-    endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": LIVE_TRANSLATION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": json.dumps(request, ensure_ascii=False, separators=(",", ":")),
-            },
-        ],
-        "temperature": 0.2,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    anthropic_format = uses_anthropic_llm_format(base_url)
+    endpoint = live_llm_endpoint(base_url, anthropic_format=anthropic_format)
+    payload = live_llm_payload(
+        model=model,
+        system_prompt=LIVE_TRANSLATION_SYSTEM_PROMPT,
+        request=request,
+        temperature=0.2,
+        anthropic_format=anthropic_format,
+    )
+    headers = live_llm_headers(api_key, anthropic_format=anthropic_format)
     last_request_error = "llm"
     retry_max = max(0, int(retry_count))
     for attempt in range(retry_max + 1):

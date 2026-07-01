@@ -71,6 +71,8 @@ isolation: strict_mock
 - URL normalizer：链接变体 → 同一 canonical URL。
 - Scoring parser：固定 LLM JSON → `is_ai_news`、`ai_relevance_score`、`0-100` final AI value `score`。
 - Selection rule：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75` → selected / not selected。
+- AI value rubric：live scoring prompt 必须包含影响范围、原创性 / 信息增量、来源权威性与证据可信度、技术 / 产品 / 政策具体性、时效性，以及非 AI、低价值 AI、SEO/广告/传闻/重复转述的分数封顶规则。
+- Local fallback scoring：禁用 live LLM 时必须仍然拒绝非 AI，并让低价值 AI 条目因 `score < 75` 不被选中。
 - Translation mapper：固定翻译 JSON → 中文字段。
 - API projector：内部对象 → `NewsListItem` / `NewsDetailItem`。
 - API status projector：`title_zh`、`summary_zh`、`content_zh`、`content_raw`、`content_full`、`has_translate_failed` → `ready | translated | untranslated | translation_failed`。
@@ -136,6 +138,7 @@ isolation: strict_mock
 - Prompt diff 必须为空，或由同一 task 中的 LLM contract/fixture 变更和结构化 prompt approval evidence 共同批准。
 - Mock LLM response 必须通过 schema validation。
 - 固定 fixture 下 score distribution 必须稳定。
+- AI value prompt regression 必须断言评分 rubric 和 cap 规则存在；缺失任一核心维度或封顶规则时 unit stage 失败。
 
 ### 2.8 UI Test
 - 使用 mock API response 渲染 UI。

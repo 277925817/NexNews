@@ -220,11 +220,11 @@ def test_live_fallback_items_are_labeled_untranslated(monkeypatch, tmp_path):
             return """
             <rss><channel>
               <item>
-                <title>Live AI refresh exposes untranslated fallback</title>
+                <title>OpenAI releases multimodal AI benchmark for production agents</title>
                 <link>https://openai.com/index/live-ai-refresh-untranslated/</link>
                 <guid>live-untranslated-fallback</guid>
                 <pubDate>Tue, 30 Jun 2026 00:00:00 GMT</pubDate>
-                <description>Live refresh stores this English RSS summary until Chinese translation is available.</description>
+                <description>The release includes model evaluations, latency traces, safety results and infrastructure evidence.</description>
               </item>
             </channel></rss>
             """, None
@@ -248,10 +248,10 @@ def test_live_fallback_items_are_labeled_untranslated(monkeypatch, tmp_path):
     detail = assert_json_response(client.get(f"/api/news/{row['id']}"), 200)["data"]
 
     assert home_item["status"] == "untranslated"
-    assert home_item["title"] == "Live AI refresh exposes untranslated fallback"
+    assert home_item["title"] == "OpenAI releases multimodal AI benchmark for production agents"
     assert "summary_zh" not in home_item
     assert detail["status"] == "untranslated"
-    assert detail["title"] == "Live AI refresh exposes untranslated fallback"
+    assert detail["title"] == "OpenAI releases multimodal AI benchmark for production agents"
     assert "summary_zh" not in detail
     assert "content_zh" not in detail
 

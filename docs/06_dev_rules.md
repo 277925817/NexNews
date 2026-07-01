@@ -102,7 +102,9 @@
 - live LLM translation 必须使用环境变量或 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`，并调用统一 client 入口。
 - LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `is_ai_news`、`ai_relevance_score` 或 `score`。
 - LLM scoring 输出必须包含 `is_ai_news`、`ai_relevance_score`、`score`、`reason`；API/UI 不得暴露内部子分或评分理由。
-- live scoring prompt 必须压低或拒绝非 AI 新闻、泛科技但无 AI 信息增量、SEO/软文、广告导流、普通工具、加密/财经噪声、标题党和重复转述。
+- live scoring prompt 必须执行 AI 价值 rubric：影响范围、原创性 / 信息增量、来源权威性与证据可信度、技术 / 产品 / 政策具体性、时效性；不得把标题热度或点击诱惑当作 `score`。
+- live scoring prompt 必须执行分数封顶：非 AI 最高 `20`，AI 相关但无具体新信息最高 `45`，SEO/软文/广告/标题党/普通工具清单/会议折扣招聘/加密财经噪声最高 `50`，融资/合作/营销/传闻且无实质变化最高 `60`，重复转述或缺少清晰来源最高 `70`。
+- live LLM 未启用时的本地 fallback scoring 也必须至少区分高价值 AI、低价值 AI 和非 AI，不得默认把所有 raw 新闻设为 `is_ai_news = true`。
 - LLM translation 输出必须按 JSON schema 校验，否则不得写入中文字段。
 - If LLM output fails JSON schema validation, classify as `validation_llm_error`, not `llm_error`.
 - 无效 LLM response 必须在 `processing_log` 中记录为 `llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。

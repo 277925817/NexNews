@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -44,13 +45,99 @@ LIVE_TRANSLATION_SYSTEM_PROMPT = (
 )
 LIVE_SCORING_SYSTEM_PROMPT = (
     "你是 AI 新闻聚合系统的新闻价值评分器。"
-    "请根据用户提供的 JSON 判断该新闻是否是高价值 AI 新闻。"
-    "非 AI 新闻、泛科技但没有 AI 信息增量、SEO 软文、广告导流、普通编程工具、"
-    "加密或财经噪声、标题党和重复转述必须给低相关性或低价值分。"
+    "请根据用户提供的 JSON 判断该新闻是否是高价值 AI 新闻，score 是最终 AI 价值分，不是热度分。"
+    "先判定 is_ai_news：只有直接涉及 AI 模型、研究、评测、芯片/基础设施、开发者平台、"
+    "安全治理、监管政策或重要产业采用的新信息，才可为 true。"
+    "ai_relevance_score 只衡量 AI 相关性；非 AI 或只是泛科技背景提到 AI 时应低于 70。"
+    "score 按以下维度综合评分：影响范围 30%，原创性/信息增量 20%，来源权威性与证据可信度 20%，"
+    "技术/产品/政策具体性 20%，时效性 10%。"
+    "优先给高分：一手发布、权威研究、重要模型或能力发布、可靠 benchmark/eval、"
+    "关键 AI 基础设施、安全治理或监管变化、明确改变开发者/企业决策的信息。"
+    "必须执行分数上限：非 AI 新闻 score 最高不得超过 20；AI 相关但没有具体新信息最高不得超过 45；"
+    "SEO 软文、广告导流、标题党、普通工具清单、会议/折扣/招聘、加密或财经噪声最高不得超过 50；"
+    "只有融资、合作、营销或传闻而没有实质技术/产品/政策变化最高不得超过 60；"
+    "重复转述、二手汇总或缺少清晰来源最高不得超过 70。"
+    "90-100 只给重大且可信的一手 AI 进展；75-89 给具体且有决策价值的 AI 新闻；"
+    "60-74 是相关但增量有限，不应被选入后续流程。"
     "只返回 JSON 对象，不要 Markdown，不要解释。"
     "必须包含字段：is_ai_news、ai_relevance_score、score、reason。"
     "is_ai_news 必须是布尔值；ai_relevance_score 和 score 必须是 0 到 100 的整数；"
     "reason 必须用一句话说明评分依据。"
+)
+
+AI_KEYWORD_PATTERNS = (
+    r"\bai\b",
+    r"\bartificial intelligence\b",
+    r"\bgenerative ai\b",
+    r"\bgenai\b",
+    r"\bllms?\b",
+    r"\blarge language models?\b",
+    r"\blanguage models?\b",
+    r"\bfoundation models?\b",
+    r"\bmultimodal\b",
+    r"\bmachine learning\b",
+    r"\bdeep learning\b",
+    r"\bneural networks?\b",
+    r"\btransformers?\b",
+    r"\bagents?\b",
+    r"\bagentic\b",
+    r"\binference\b",
+    r"\btraining\b",
+    r"\bbenchmarks?\b",
+    r"\bevals?\b",
+    r"\bevaluations?\b",
+    r"\brag\b",
+    r"\bopenai\b",
+    r"\banthropic\b",
+    r"\bdeepmind\b",
+    r"\bhugging face\b",
+    r"\bnvidia\b",
+    r"\bgpus?\b",
+)
+
+AI_HIGH_VALUE_PATTERNS = (
+    r"\breleases?\b",
+    r"\blaunches?\b",
+    r"\bpublishes?\b",
+    r"\bintroduces?\b",
+    r"\bbenchmarks?\b",
+    r"\bevals?\b",
+    r"\bevaluations?\b",
+    r"\bresearch\b",
+    r"\bmodel\b",
+    r"\bmodels\b",
+    r"\binfrastructure\b",
+    r"\binference\b",
+    r"\blatency\b",
+    r"\bchip\b",
+    r"\bchips\b",
+    r"\bsafety\b",
+    r"\bpolicy\b",
+    r"\bregulation\b",
+    r"\bgovernance\b",
+    r"\bproduction\b",
+    r"\bworkflows?\b",
+    r"\bobservability\b",
+)
+
+AI_LOW_VALUE_PATTERNS = (
+    r"\brumou?rs?\b",
+    r"\bfunding\b",
+    r"\bpartnership\b",
+    r"\bmarketing\b",
+    r"\bseo\b",
+    r"\bsponsored\b",
+    r"\badvertis(e|ing|ement)\b",
+    r"\baffiliate\b",
+    r"\bdiscounts?\b",
+    r"\btickets?\b",
+    r"\btravel\b",
+    r"\bwebinar\b",
+    r"\blisticles?\b",
+    r"\broundups?\b",
+    r"\btop\s+\d+\b",
+    r"\bcrypto\b",
+    r"\bstocks?\b",
 )
 
 LIVE_REQUEST_HEADERS = {
@@ -529,6 +616,59 @@ def live_score_for_record(record: dict[str, object]) -> int:
     return min(100, score)
 
 
+def count_pattern_matches(text: str, patterns: tuple[str, ...]) -> int:
+    return sum(1 for pattern in patterns if re.search(pattern, text, flags=re.IGNORECASE))
+
+
+def clamp_score(value: int) -> int:
+    return max(0, min(100, int(value)))
+
+
+def fallback_ai_value_record(record: dict[str, object]) -> dict[str, object]:
+    request = build_scoring_request(record)
+    if not request["title"].strip() or not request["original_link"].strip():
+        return {
+            "is_ai_news": False,
+            "ai_relevance_score": 0,
+            "score": 0,
+            "reason": "Missing title or original link.",
+        }
+
+    text = " ".join(
+        [
+            request["title"],
+            request["summary"],
+            request["source"],
+            request["original_link"],
+        ]
+    ).lower()
+    ai_hits = count_pattern_matches(text, AI_KEYWORD_PATTERNS)
+    high_value_hits = count_pattern_matches(text, AI_HIGH_VALUE_PATTERNS)
+    low_value_hits = count_pattern_matches(text, AI_LOW_VALUE_PATTERNS)
+    if ai_hits == 0:
+        return {
+            "is_ai_news": False,
+            "ai_relevance_score": 0,
+            "score": min(20, max(1, live_score_for_record(record) // 4)),
+            "reason": "Local fallback rejected non-AI news.",
+        }
+
+    relevance = clamp_score(68 + min(24, ai_hits * 6) + min(8, high_value_hits * 2))
+    score = 50 + min(25, high_value_hits * 5) + min(15, ai_hits * 3)
+    if request["summary"].strip():
+        score += min(10, len(request["summary"]) // 120)
+    if high_value_hits == 0:
+        score = min(score, 65)
+    if low_value_hits and high_value_hits < 2:
+        score = min(score, 55)
+    return {
+        "is_ai_news": relevance >= AI_RELEVANCE_THRESHOLD,
+        "ai_relevance_score": relevance,
+        "score": clamp_score(score),
+        "reason": "Local fallback AI value heuristic.",
+    }
+
+
 def apply_missing_summary_penalty(score: int, request: dict[str, str]) -> int:
     if request["summary"].strip():
         return score
@@ -745,13 +885,8 @@ def score_raw_news_live(
             record = apply_scoring_penalties(record, request) if record else None
             score = int(record["score"]) if record else None
         else:
-            score = live_score_for_record(row)
-            record = {
-                "is_ai_news": True,
-                "ai_relevance_score": 100,
-                "score": score,
-                "reason": "Local fallback scoring heuristic.",
-            }
+            record = apply_scoring_penalties(fallback_ai_value_record(row), request)
+            score = int(record["score"])
             error = None
         if isinstance(score, int):
             selected = apply_score(

@@ -8,9 +8,11 @@ from backend.app.db import connect, initialize_database, seed_default_sources
 from backend.app.main import create_app
 from backend.app.services.trigger import run_manual_refresh, run_scheduled_refresh
 from backend.app.services.pipeline import (
+    LIVE_SCORING_SYSTEM_PROMPT,
     build_scoring_request,
     build_translation_request,
     backfill_top_scored_translations,
+    fallback_ai_value_record,
     fetch_selected_content,
     has_valid_translation_record,
     ingest_fixture_rss,
@@ -455,6 +457,68 @@ def test_score_selection_requires_ai_relevance_and_value_thresholds():
     assert score_is_selected(95, is_ai_news=False, ai_relevance_score=95) is False
 
 
+def test_live_scoring_prompt_encodes_ai_value_rubric_and_caps():
+    prompt = LIVE_SCORING_SYSTEM_PROMPT
+
+    assert "影响范围 30%" in prompt
+    assert "原创性/信息增量 20%" in prompt
+    assert "来源权威性与证据可信度 20%" in prompt
+    assert "技术/产品/政策具体性 20%" in prompt
+    assert "时效性 10%" in prompt
+    assert "非 AI 新闻 score 最高不得超过 20" in prompt
+    assert "AI 相关但没有具体新信息最高不得超过 45" in prompt
+    assert "重复转述、二手汇总或缺少清晰来源最高不得超过 70" in prompt
+
+
+def test_local_fallback_scoring_applies_ai_value_rubric():
+    high_value_ai = fallback_ai_value_record(
+        {
+            "original_title": "OpenAI releases multimodal AI benchmark for production agents",
+            "content_raw": (
+                "The release includes model evaluations, latency traces, safety results "
+                "and infrastructure evidence for enterprise AI agent workflows."
+            ),
+            "source_name": "OpenAI News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://openai.com/index/agent-eval-benchmark/",
+        }
+    )
+    non_ai = fallback_ai_value_record(
+        {
+            "original_title": "Developer conference travel discounts surge",
+            "content_raw": "Organizers announced ticket and hotel discounts for attendees.",
+            "source_name": "Example News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://example.com/conference-discounts",
+        }
+    )
+    low_value_ai = fallback_ai_value_record(
+        {
+            "original_title": "Low signal AI funding rumor spreads online",
+            "content_raw": "A marketing startup may raise money, according to unconfirmed rumors.",
+            "source_name": "Example News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://example.com/ai-funding-rumor",
+        }
+    )
+
+    assert score_is_selected(
+        int(high_value_ai["score"]),
+        is_ai_news=bool(high_value_ai["is_ai_news"]),
+        ai_relevance_score=int(high_value_ai["ai_relevance_score"]),
+    )
+    assert non_ai["is_ai_news"] is False
+    assert int(non_ai["ai_relevance_score"]) == 0
+    assert int(non_ai["score"]) <= 20
+    assert low_value_ai["is_ai_news"] is True
+    assert int(low_value_ai["score"]) <= 55
+    assert score_is_selected(
+        int(low_value_ai["score"]),
+        is_ai_news=bool(low_value_ai["is_ai_news"]),
+        ai_relevance_score=int(low_value_ai["ai_relevance_score"]),
+    ) is False
+
+
 def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
     conn = connect(":memory:")
     initialize_database(conn)
@@ -541,6 +605,83 @@ def test_score_raw_news_logs_invalid_mock_and_keeps_item_raw():
     assert {row["pipeline_state"] for row in rows} == {"raw"}
     assert all(row["score"] is None for row in rows)
     assert errors == ["validation_llm_error", "timeout"]
+
+
+def test_score_raw_news_live_without_llm_uses_ai_value_fallback():
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Fallback Source', 'https://fallback.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    source_id = conn.execute("SELECT id FROM source").fetchone()["id"]
+    rows = [
+        (
+            "fallback-high-ai",
+            "https://fallback.example/high-ai",
+            "OpenAI releases multimodal AI benchmark for production agents",
+            "The release includes model evaluations, latency traces, safety results and infrastructure evidence.",
+        ),
+        (
+            "fallback-low-ai",
+            "https://fallback.example/ai-funding-rumor",
+            "Low signal AI funding rumor spreads online",
+            "A marketing startup may raise money, according to unconfirmed rumors.",
+        ),
+        (
+            "fallback-non-ai",
+            "https://fallback.example/conference-discounts",
+            "Developer conference travel discounts surge",
+            "Organizers announced ticket and hotel discounts for attendees.",
+        ),
+    ]
+    for guid, url, title, summary in rows:
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url, original_title,
+              published_at, pipeline_state, is_selected, content_raw, created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, '2026-07-01T00:00:00Z', 'raw', 0, ?, ?, ?)
+            """,
+            (
+                source_id,
+                guid,
+                url,
+                url,
+                title,
+                summary,
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:00Z",
+            ),
+        )
+
+    result = score_raw_news_live(conn, use_live_llm=False)
+    scored_rows = conn.execute(
+        """
+        SELECT rss_guid, is_ai_news, ai_relevance_score, score, is_selected, pipeline_state
+        FROM news_item
+        ORDER BY rss_guid ASC
+        """
+    ).fetchall()
+    by_guid = {row["rss_guid"]: row for row in scored_rows}
+
+    assert result["scored_count"] == 3
+    assert result["selected_count"] == 1
+    assert by_guid["fallback-high-ai"]["is_ai_news"] == 1
+    assert by_guid["fallback-high-ai"]["ai_relevance_score"] >= 70
+    assert by_guid["fallback-high-ai"]["score"] >= 75
+    assert by_guid["fallback-high-ai"]["is_selected"] == 1
+    assert by_guid["fallback-low-ai"]["is_ai_news"] == 1
+    assert by_guid["fallback-low-ai"]["score"] <= 55
+    assert by_guid["fallback-low-ai"]["is_selected"] == 0
+    assert by_guid["fallback-non-ai"]["is_ai_news"] == 0
+    assert by_guid["fallback-non-ai"]["score"] <= 20
+    assert by_guid["fallback-non-ai"]["is_selected"] == 0
+    assert {row["pipeline_state"] for row in scored_rows} == {"scored"}
 
 
 def test_selected_fetch_candidates_filter_threshold_and_preserve_distinct_items():

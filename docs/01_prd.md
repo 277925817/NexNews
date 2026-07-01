@@ -186,15 +186,18 @@
 1. 系统读取通过 crawl 入库的新 RSS 条目，并写入 `pipeline_state = raw`。
 2. 系统按标准 JSON 格式将标题、摘要、来源、信息源发布时间和原文链接发送给 LLM。
 3. LLM 按标准 JSON 格式返回 `is_ai_news`、`ai_relevance_score`、`score` 和 `reason`。
-4. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
-5. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
-6. 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不抓取全文。
-7. 标题或原文链接缺少任意一个，直接评分为 `0`。
-8. 缺少摘要时，评分扣 `20` 分。
+4. `score` 必须按 AI 新闻价值 rubric 计算，而不是按热度或点击诱惑计算：影响范围占 30%，原创性 / 信息增量占 20%，来源权威性与证据可信度占 20%，技术 / 产品 / 政策具体性占 20%，时效性占 10%。
+5. 评分必须执行封顶规则：非 AI 新闻最高 `20`；AI 相关但没有具体新信息最高 `45`；SEO 软文、广告导流、标题党、普通工具清单、会议 / 折扣 / 招聘、加密或财经噪声最高 `50`；只有融资、合作、营销或传闻且没有实质技术 / 产品 / 政策变化最高 `60`；重复转述、二手汇总或缺少清晰来源最高 `70`。
+6. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
+7. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
+8. 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不抓取全文。
+9. 标题或原文链接缺少任意一个，直接评分为 `0`。
+10. 缺少摘要时，评分扣 `20` 分。
 
 **验收标准**
 
 - 每条新 RSS 条目都有完整 AI 价值筛选结果：`is_ai_news`、`ai_relevance_score`、`score`。
+- `score` 必须可追溯到文档化 AI 价值 rubric 和封顶规则；泛 AI 噪声、广告、传闻、重复转述不得因标题含 AI 关键词而进入高分段。
 - 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目被标记为待抓取全文。
 - 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不会触发全文抓取。
 - 标题或原文链接缺失的条目评分为 `0`，且不会触发全文抓取。

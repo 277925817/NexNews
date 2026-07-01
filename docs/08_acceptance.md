@@ -196,6 +196,7 @@ isolation: strict_mock
 | Assertion record | Assertion id、assertion type、visibility、status、expected、actual、diff。 |
 | API JSON evidence | Response envelope、DTO fields、status code、forbidden field scan result。 |
 | DB state evidence | Table schema、state transition、dedupe、translation field facts。 |
+| AI value scoring evidence | Rubric/cap prompt assertions、mock scoring schema validation、fallback high-value AI / low-value AI / non-AI selection facts, without storing full prompt text in reports。 |
 | UI render evidence | Rendered DTO fields、loading/empty/error/not found state、Top 30 Days overall card style、forbidden DOM field scan result。 |
 | Dependency evidence | 自动 gate/test 中 live RSS、live HTML、live LLM access count 必须为 `0`；local user acceptance 可记录 live dependency access facts。 |
 | Leak evidence | Forbidden field count、forbidden pattern count、allowlisted token field count。 |

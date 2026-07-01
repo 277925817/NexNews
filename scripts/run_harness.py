@@ -617,6 +617,10 @@ TASK_FALLBACK_ASSERTION_MAP = {
         "A-e2e-ACC-STOP-006-home-infinite-scroll",
         "A-static-ACC-STOP-010-contract-doc-sync",
     ],
+    "TASK-037": [
+        "task-037-unit-ai-value-rubric",
+        "task-037-integration-ai-value-fallback",
+    ],
 }
 
 SCHEMA_FILES = {
@@ -8993,6 +8997,10 @@ def run_pipeline_task_stage(report_dir: Path, stage: str, task_id: str) -> int |
         return run_task_036_unit(report_dir, task_id)
     if task_id == "TASK-036" and stage == "integration":
         return run_task_036_integration(report_dir, task_id)
+    if task_id == "TASK-037" and stage == "unit":
+        return run_task_037_unit(report_dir, task_id)
+    if task_id == "TASK-037" and stage == "integration":
+        return run_task_037_integration(report_dir, task_id)
     if task_id == "TASK-009" and stage == "integration":
         return run_task_009_integration(report_dir, task_id)
     if task_id == "TASK-010" and stage == "integration":
@@ -11602,6 +11610,223 @@ def run_task_036_integration(report_dir: Path, task_id: str) -> int:
 
 def run_task_036_api(report_dir: Path, task_id: str) -> int:
     return run_task_036_stage(report_dir, task_id, "api")
+
+
+def task_037_unit_observations() -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.app.services.pipeline import (
+        LIVE_SCORING_SYSTEM_PROMPT,
+        fallback_ai_value_record,
+        score_is_selected,
+    )
+
+    prompt = LIVE_SCORING_SYSTEM_PROMPT
+    high_value_ai = fallback_ai_value_record(
+        {
+            "original_title": "OpenAI releases multimodal AI benchmark for production agents",
+            "content_raw": (
+                "The release includes model evaluations, latency traces, safety results "
+                "and infrastructure evidence for enterprise AI agent workflows."
+            ),
+            "source_name": "OpenAI News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://openai.com/index/agent-eval-benchmark/",
+        }
+    )
+    non_ai = fallback_ai_value_record(
+        {
+            "original_title": "Developer conference travel discounts surge",
+            "content_raw": "Organizers announced ticket and hotel discounts for attendees.",
+            "source_name": "Example News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://example.com/conference-discounts",
+        }
+    )
+    low_value_ai = fallback_ai_value_record(
+        {
+            "original_title": "Low signal AI funding rumor spreads online",
+            "content_raw": "A marketing startup may raise money, according to unconfirmed rumors.",
+            "source_name": "Example News",
+            "published_at": "2026-07-01T00:00:00Z",
+            "original_url": "https://example.com/ai-funding-rumor",
+        }
+    )
+    checks = {
+        "prompt_has_rubric_dimensions": all(
+            text in prompt
+            for text in (
+                "影响范围 30%",
+                "原创性/信息增量 20%",
+                "来源权威性与证据可信度 20%",
+                "技术/产品/政策具体性 20%",
+                "时效性 10%",
+            )
+        ),
+        "prompt_has_score_caps": all(
+            text in prompt
+            for text in (
+                "非 AI 新闻 score 最高不得超过 20",
+                "AI 相关但没有具体新信息最高不得超过 45",
+                "重复转述、二手汇总或缺少清晰来源最高不得超过 70",
+            )
+        ),
+        "fallback_selects_high_value_ai": score_is_selected(
+            int(high_value_ai["score"]),
+            is_ai_news=bool(high_value_ai["is_ai_news"]),
+            ai_relevance_score=int(high_value_ai["ai_relevance_score"]),
+        ),
+        "fallback_rejects_non_ai": non_ai["is_ai_news"] is False and int(non_ai["score"]) <= 20,
+        "fallback_caps_low_value_ai": low_value_ai["is_ai_news"] is True
+        and int(low_value_ai["score"]) <= 55
+        and score_is_selected(
+            int(low_value_ai["score"]),
+            is_ai_news=bool(low_value_ai["is_ai_news"]),
+            ai_relevance_score=int(low_value_ai["ai_relevance_score"]),
+        ) is False,
+    }
+    issues = [f"ai_value_rubric_unit:{name}=false" for name, passed in checks.items() if not passed]
+    return {
+        "checks": checks,
+        "issues": issues,
+        "fallback_scores": {
+            "high_value_ai": high_value_ai["score"],
+            "low_value_ai": low_value_ai["score"],
+            "non_ai": non_ai["score"],
+        },
+    }
+
+
+def task_037_integration_observations() -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.app.db import connect, initialize_database
+    from backend.app.services.pipeline import score_raw_news_live
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Fallback Source', 'https://fallback.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    source_id = conn.execute("SELECT id FROM source").fetchone()["id"]
+    for guid, url, title, summary in (
+        (
+            "fallback-high-ai",
+            "https://fallback.example/high-ai",
+            "OpenAI releases multimodal AI benchmark for production agents",
+            "The release includes model evaluations, latency traces, safety results and infrastructure evidence.",
+        ),
+        (
+            "fallback-low-ai",
+            "https://fallback.example/ai-funding-rumor",
+            "Low signal AI funding rumor spreads online",
+            "A marketing startup may raise money, according to unconfirmed rumors.",
+        ),
+        (
+            "fallback-non-ai",
+            "https://fallback.example/conference-discounts",
+            "Developer conference travel discounts surge",
+            "Organizers announced ticket and hotel discounts for attendees.",
+        ),
+    ):
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url, original_title,
+              published_at, pipeline_state, is_selected, content_raw, created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, '2026-07-01T00:00:00Z', 'raw', 0, ?, ?, ?)
+            """,
+            (
+                source_id,
+                guid,
+                url,
+                url,
+                title,
+                summary,
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:00Z",
+            ),
+        )
+    result = score_raw_news_live(conn, use_live_llm=False)
+    rows = conn.execute(
+        """
+        SELECT rss_guid, is_ai_news, ai_relevance_score, score, is_selected, pipeline_state
+        FROM news_item
+        ORDER BY rss_guid ASC
+        """
+    ).fetchall()
+    conn.close()
+    by_guid = {row["rss_guid"]: row for row in rows}
+    selected_guids = sorted(row["rss_guid"] for row in rows if row["is_selected"] == 1)
+    checks = {
+        "scored_count": result["scored_count"] == 3,
+        "selected_count": result["selected_count"] == 1,
+        "only_high_value_ai_selected": selected_guids == ["fallback-high-ai"],
+        "low_value_ai_not_selected": by_guid["fallback-low-ai"]["is_ai_news"] == 1
+        and by_guid["fallback-low-ai"]["score"] < 75
+        and by_guid["fallback-low-ai"]["is_selected"] == 0,
+        "non_ai_rejected": by_guid["fallback-non-ai"]["is_ai_news"] == 0
+        and by_guid["fallback-non-ai"]["score"] <= 20
+        and by_guid["fallback-non-ai"]["is_selected"] == 0,
+        "pipeline_state_scored": {row["pipeline_state"] for row in rows} == {"scored"},
+    }
+    issues = [f"ai_value_rubric_integration:{name}=false" for name, passed in checks.items() if not passed]
+    return {"checks": checks, "issues": issues, "selected_guids": selected_guids, "rows": rows}
+
+
+def run_task_037_stage(report_dir: Path, task_id: str, stage: str) -> int:
+    if stage == "unit":
+        observed = task_037_unit_observations()
+        assertion_id = "task-037-unit-ai-value-rubric"
+    else:
+        observed = task_037_integration_observations()
+        assertion_id = "task-037-integration-ai-value-fallback"
+    passed = not observed["issues"] and all(observed["checks"].values())
+    report = test_report(
+        stage=stage,
+        status="passed" if passed else "failed",
+        test_id=f"{task_id.lower()}-ai-value-rubric-{stage}",
+        assertions=[
+            assertion(
+                assertion_id,
+                "passed" if passed else "failed",
+                {"ai_value_rubric": "rubric_and_caps_enforced"},
+                {"checks": observed["checks"]},
+                {"issues": observed["issues"]},
+                visibility="internal_evidence",
+            )
+        ],
+        expected={"ai_value_rubric": "rubric_and_caps_enforced"},
+        actual=observed,
+        diff={"issues": observed["issues"]},
+        failure_type=None if passed else "validation",
+        error_category=None if passed else "validation",
+        referenced_files=[
+            "backend/app/services/pipeline.py",
+            "tests/test_pipeline_refresh.py",
+            "docs/01_prd.md",
+            "docs/06_dev_rules.md",
+            "docs/07_test_spec.md",
+        ],
+        commands=[f"python3 scripts/run_harness.py --stage {stage} --task-id {task_id} --report-dir reports"],
+    )
+    write_test_report(report_destination(report_dir, stage, task_id), report)
+    return 0 if passed else 1
+
+
+def run_task_037_unit(report_dir: Path, task_id: str) -> int:
+    return run_task_037_stage(report_dir, task_id, "unit")
+
+
+def run_task_037_integration(report_dir: Path, task_id: str) -> int:
+    return run_task_037_stage(report_dir, task_id, "integration")
 
 
 def prd_coverage_evidence(report_dir: Path) -> dict[str, Any]:

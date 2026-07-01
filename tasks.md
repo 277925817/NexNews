@@ -1567,7 +1567,7 @@ dag:
       status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/04_data_model.md", "docs/05_api_contract.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-005", "ACC-STOP-009"]
-      priority: "content_quality"
+      priority: "prd_core_flow_gaps"
       test_scope: ["unit", "integration", "api"]
       active_state: "none"
       last_updated_state: "SUMMARIZE"
@@ -1601,3 +1601,42 @@ dag:
         - "FAIL if low-value, non-AI or AI-adjacent bait content appears in Home, Top 30 Days or translation candidates."
         - "FAIL if API/UI exposes is_ai_news, ai_relevance_score or LLM reason."
         - "FAIL if strict-mock tests depend on live RSS, live webpages, live LLM, production DB, current system time or prose-only judgment."
+
+    - id: TASK-037
+      name: "AI value scoring rubric optimization"
+      layer: "Pipeline/Harness"
+      type: ["docs", "backend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/02_arch.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-007"]
+      priority: "prd_core_flow_gaps"
+      test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-037/unit.json"
+      test_report: "reports/tasks/TASK-037/integration.json"
+      plan_report: "reports/tasks/TASK-037/plan.json"
+      summary_report: "reports/tasks/TASK-037/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-036"]
+      description: "Optimize the news value evaluator with a documented AI value rubric, hard score caps, and deterministic local fallback scoring."
+      inputs:
+        - "External research on newsworthiness, source authority, freshness, helpfulness, and originality."
+        - "Existing AI value scoring contract with is_ai_news, ai_relevance_score, score and reason."
+      outputs:
+        - "Live scoring prompt encodes impact, originality/information gain, source/evidence quality, specificity and timeliness."
+        - "Live scoring prompt encodes hard caps for non-AI, generic AI-adjacent, SEO/ads, rumor/funding-only and duplicate-summary content."
+        - "Local fallback scoring rejects non-AI and caps low-value AI instead of defaulting every raw item to selected AI."
+        - "Public API remains unchanged and exposes only final score."
+      acceptance_criteria:
+        - "Truth docs record the optimized AI value rubric and cap rules before or with implementation."
+        - "Unit tests prove the live scoring prompt contains the required rubric dimensions and score caps."
+        - "Unit tests prove local fallback selects a high-value AI item, rejects non-AI, and keeps low-value AI below the selection threshold."
+        - "Integration tests prove score_raw_news_live with live LLM disabled writes only the high-value AI fallback item as selected."
+        - "Strict-mock evidence for this task does not access live RSS, live webpages, live LLM, production DB, current system time or full prompt report content."
+      failure_criteria:
+        - "FAIL if the fallback path marks all raw news as is_ai_news = true or selected by default."
+        - "FAIL if prompt regression tests cannot detect removal of rubric dimensions or score caps."
+        - "FAIL if API/UI exposes internal scoring subdimensions or LLM reason."

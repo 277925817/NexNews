@@ -2,7 +2,7 @@
 
 ## 0. Global Hard Constraints（全局硬规则）
 
-- API 响应不得包含 `content_raw`、`content_full`、`deleted_at`、raw article body、fallback raw text、完整 prompt，否则数据泄漏检查必须失败；`GET /api/news/{id}` 在 `status = translated` 时返回 `content_zh` 是唯一允许的完整正文展示出口。
+- API 响应不得包含 `content_raw`、`content_full`、`discussion_url`、`deleted_at`、raw article body、fallback raw text、完整 prompt，否则数据泄漏检查必须失败；`GET /api/news/{id}` 在 `status = translated` 时返回 `content_zh` 是唯一允许的完整正文展示出口。
 - 日志不得包含超过 `1024` 字符的正文类字段，否则必须在写日志前裁剪。
 - `pipeline_state` 只能由 backend pipeline service 写入，否则 code review 必须拒绝该变更。
 - `status` 只能由 API 层按 `05_api_contract.md` 投影，否则不得写入数据库。
@@ -13,6 +13,23 @@
 - 所有时间必须使用 ISO 8601 UTC 字符串，否则排序测试必须失败。
 - 所有规则冲突必须按本文末尾 Rule Priority Order 处理，否则不得合并。
 - If rules conflict within `06_dev_rules.md`, the more restrictive rule MUST win.
+
+## 0.1 Local Long-Running Service（本地长期服务）
+
+- 本地用户验收入口必须是 `http://127.0.0.1:8010/`。
+- 本地长期服务必须用 `python3 scripts/local_service.py start` 启动；该脚本先构建 `frontend/dist`，再用 FastAPI `create_app` 在同一端口服务 SPA 和 `/api/*`。
+- 本地长期服务供人工验收时必须默认注入 live runtime：`RSS_RUNTIME_MODE=live`、`RSS_ALLOW_LIVE_NETWORK=1`、`RSS_FETCH_LIVE_ARTICLES=1`；不得在未显式说明的情况下使用 fixture RSS、article fixture、LLM mock 或 fixed clock。
+- 本地长期服务的 refresh 全流程必须使用真实数据源：真实 RSS 抓取、真实网页正文抓取、`.env` / 环境变量中的真实 LLM scoring、真实 LLM translation 和本地 SQLite 运行库。
+- 本地长期服务为保持人工验收响应性，手动刷新默认只做小批量真实 LLM 工作：`RSS_LIVE_LLM_MAX_ITEMS=3`、`RSS_LIVE_LLM_MAX_SCORE_ITEMS=3`、`RSS_LIVE_LLM_TIMEOUT_SECONDS=20`、`RSS_LIVE_LLM_RETRY_COUNT=0`；raw backlog 由 live worker 默认每 5 分钟最多评分 10 条积压新闻。
+- 本地人工验收前必须运行 `python3 scripts/backfill_top_translations.py --target 100` 或等价命令，使用 `.env` / 环境变量中的真实 LLM，把当前本地 SQLite 中按 `score DESC, published_at DESC, id DESC` 排序的前 100 条已抓取可展示新闻补成真实中文翻译；该命令只属于 live local acceptance 预处理，不得作为 strict-mock gate 证据。
+- Vite dev server 只允许用于开发调试，不得作为本地长期验收服务；否则 shell/terminal 结束会导致 8010 失效。
+- 本地长期服务的 PID 和日志必须写入 `.local/rss-service/`，该目录不得进入版本控制。
+- live 运行时允许从进程环境或仓库根目录 `.env` 读取 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；密钥不得写入日志、报告、API 响应或前端产物。
+- live 运行时每次刷新最多翻译 `RSS_LIVE_LLM_MAX_ITEMS` 条待翻译新闻，默认 `20`；设为 `0` 或负数表示不限制。
+- live 运行时 LLM 翻译请求并发数由 `RSS_LIVE_LLM_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
+- live 运行时每次手动刷新最多评分 `RSS_LIVE_LLM_MAX_SCORE_ITEMS` 条 raw 新闻，默认 `20`；后台 raw backlog worker 由 `RSS_BACKLOG_WORKER_ENABLED` 控制，默认 live+LLM 可用时启用，`RSS_BACKLOG_WORKER_INTERVAL_SECONDS=300`，`RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS=10`。评分候选必须按 `published_at DESC, id DESC` 选择，超出上限的 raw 新闻保留到后续刷新或后台轮次。
+- live 运行时 LLM 评分请求并发数由 `RSS_LIVE_LLM_SCORE_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
+- live 运行时 LLM 重试次数由 `RSS_LIVE_LLM_RETRY_COUNT` 控制，通用默认 `2`；本地长期服务默认 `0`，避免真实限流或配置错误把单次刷新拖成长时间阻塞。
 
 ## 1. Code Style Rules（代码风格规范）
 
@@ -36,7 +53,7 @@
 - 每个组件必须对应 `03_ui_spec.md` 的最终实现单元，否则必须删除。
 - 页面组件只负责组合组件和加载数据，否则业务逻辑必须下沉到 API client 或 service。
 - `NewsCard`、`ArticleView`、`HighScoreList` 只能消费 API DTO 字段，否则字段泄漏检查必须失败。
-- 前端不得读取 `pipeline_state`、`is_selected`、`content_raw`、`content_full`。
+- 前端不得读取 `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、`content_raw`、`content_full`。
 - 前端只能根据 API `status` 渲染新闻状态，否则状态逻辑会重复实现。
 - 全局状态只能保存跨页面必需数据，否则必须改成本地 state。
 - 禁止用 `useEffect` 保存可由 props 计算出的状态，否则会产生双状态。
@@ -67,10 +84,12 @@
 
 - `pipeline_state` 只允许 `raw`、`scored`、`fetched`，否则数据库写入必须失败。
 - `pipeline_state` transition independent of `is_selected`，否则流程状态会被业务判断污染。
-- `is_selected` 必须由 configurable threshold 计算，默认值为 `60`。
+- `is_selected` 必须由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 81`。
 - 写入 `score` 后必须立即计算 `is_selected`，否则 fetch 条件会漂移。
 - 去重只能使用 `canonical_url`，否则同一新闻会重复入库。
-- 翻译触发条件必须是 `pipeline_state = fetched` 且存在可用内容。
+- 来源讨论页链接只能保存为 `discussion_url`，不得替代 `original_url`、`canonical_url` 或正文抓取目标。
+- Live RSS ingest 必须按本次 refresh/crawl 的 `now` 对 RSS `published_at` 应用最近 30 天窗口，不得把归档式 feed 中的历史文章全量写入 `news_item`。
+- 翻译触发条件必须是 `pipeline_state = fetched AND is_selected = 1 AND is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 81` 且存在可用内容。
 - 翻译成功必须写入 `title_zh`、`summary_zh`、`content_zh`。
 - 翻译失败不得写入部分中文字段，否则 API status 投影会错误。
 - Source 禁用只能停止未来抓取，不得删除历史新闻。
@@ -80,20 +99,27 @@
 ## 5. LLM Interaction Rules（LLM 调用规范）
 
 - LLM 请求必须通过统一 client 入口，否则 mock 和限流无法集中处理。
-- LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `score`。
+- live LLM translation 必须使用环境变量或 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`，并调用统一 client 入口。
+- LLM scoring 输出必须按 JSON schema 校验，否则不得写入 `is_ai_news`、`ai_relevance_score` 或 `score`。
+- LLM scoring 输出必须包含 `is_ai_news`、`ai_relevance_score`、`score`、`reason`；API/UI 不得暴露内部子分或评分理由。
+- live scoring prompt 必须执行 AI 价值 rubric：影响范围、原创性 / 信息增量、来源权威性与证据可信度、技术 / 产品 / 政策具体性、时效性；不得把标题热度或点击诱惑当作 `score`。
+- live scoring prompt 必须执行分数封顶：非 AI 最高 `20`，AI 相关但无具体新信息最高 `45`，SEO/软文/广告/标题党/普通工具清单/会议折扣招聘/加密财经噪声最高 `50`，融资/合作/营销/传闻且无实质变化最高 `60`，重复转述或缺少清晰来源最高 `70`。
+- live LLM 未启用时的本地 fallback scoring 也必须至少区分高价值 AI、低价值 AI 和非 AI，不得默认把所有 raw 新闻设为 `is_ai_news = true`。
 - LLM translation 输出必须按 JSON schema 校验，否则不得写入中文字段。
 - If LLM output fails JSON schema validation, classify as `validation_llm_error`, not `llm_error`.
-- 无效 LLM response 必须在 `processing_log` 中记录为 `llm` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
-- LLM retry max = `2`，超过后必须写入失败 `processing_log`。
+- 无效 LLM response 必须在 `processing_log` 中记录为 `llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server` 或 `validation_llm_error` 错误，否则不得写入业务成功字段。
+- LLM retry max = `2`，超过后必须写入失败 `processing_log`；HTTP 400/401/403/404/429 是终止性错误，必须 fail fast，不得通过重试放大限流或配置错误。
 - If LLM scoring or translation fails after retry max, `pipeline_state` must remain unchanged; scoring failure must not advance the item, and translation failure must set `has_translate_failed = 1` without writing partial Chinese fields.
 - Missing title or original URL is deterministic input validation and may assign `score = 0` without an LLM call; invalid, timeout, or schema-invalid LLM output must not be converted into a successful `score = 0`.
 - LLM prompt 变更必须有测试 fixture 更新，否则输出契约无法验证。
 - LLM prompt 不得包含完整 `content_full` 之外的敏感配置，否则日志和错误处理会泄漏。
 - LLM mock 必须覆盖 scoring 和 translation，否则 pipeline 测试会依赖外部服务。
+- live LLM 未启用或配置缺失时，原文兜底只能投影为 `untranslated`，不得计入 translation success。
+- 本地人工验收前可运行 `python3 scripts/reclassify_ai_value.py --limit 0` 用 `.env` 中的真实 LLM 对既有库执行 AI 价值重评估；测试阶段不得使用该命令作为 strict-mock 证据。
 
 ## 6. Error Handling Rules（错误处理规范）
 
-- 所有异常必须归类为 `network`、`parsing`、`llm`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
+- 所有异常必须归类为 `network`、`parsing`、`llm`、`llm_bad_request`、`llm_auth`、`llm_endpoint`、`llm_rate_limited`、`llm_server`、`validation_llm_error`、`database`、`validation`、`timeout`、`unknown`。
 - 禁止 silent fail，任何失败必须写入 `processing_log` 或应用日志。
 - API validation error 必须返回结构化 error，否则前端无法稳定处理。
 - RSS 解析失败必须归类为 `parsing`，否则源质量无法判断。
@@ -111,7 +137,7 @@
 - 失败日志必须包含错误分类，否则无法统计失败来源。
 - 成功日志不得包含超过 `1KB` 的字段，否则必须裁剪。
 - 禁止打印 `content_raw`、`content_full`、raw article body、fallback raw text 或完整 prompt。
-- In debug mode only, full prompt logging is allowed but must not persist to production storage.
+- Debug mode may log prompt schema metadata, prompt length and prompt hash only. Full prompt text must not be written to logs, reports, stdout/stderr captures or persistent storage in any environment.
 - 日志可以记录 URL 和标题，但标题长度必须裁剪到 `300` 字符以内。
 - 刷新开始和结束必须记录日志，否则手动刷新无法回放。
 - 并发 refresh 被拒绝时必须记录日志，否则重复点击无法定位。

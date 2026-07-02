@@ -1,53 +1,129 @@
 {
-  "version": "mvp_mock@v1",
+  "version": "mvp_mock@v2_ai_value_filter",
   "scores": {
     "fixture-threshold-60": {
-      "score": 60,
-      "reason": "Exactly reaches the selection threshold."
+      "is_ai_news": true,
+      "ai_relevance_score": 70,
+      "score": 75,
+      "reason": "Exactly reaches the AI value selection threshold."
     },
     "fixture-low-59": {
+      "is_ai_news": true,
+      "ai_relevance_score": 82,
       "score": 59,
-      "reason": "Just below the selection threshold."
+      "reason": "AI-adjacent rumor without enough verifiable information value."
+    },
+    "fixture-non-ai-high-score": {
+      "is_ai_news": false,
+      "ai_relevance_score": 15,
+      "score": 96,
+      "reason": "High engagement bait but not an AI news item."
     },
     "fixture-translated-96": {
+      "is_ai_news": true,
+      "ai_relevance_score": 96,
       "score": 96,
-      "reason": "High-signal model release."
+      "reason": "High-signal AI benchmark release."
     },
     "fixture-translate-partial": {
+      "is_ai_news": true,
+      "ai_relevance_score": 88,
       "score": 75,
-      "reason": "Selected item with translation failure fixture."
+      "reason": "Selected AI item with translation failure fixture."
     },
     "fixture-rank-95": {
+      "is_ai_news": true,
+      "ai_relevance_score": 95,
       "score": 95,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-94": {
+      "is_ai_news": true,
+      "ai_relevance_score": 94,
       "score": 94,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-93": {
+      "is_ai_news": true,
+      "ai_relevance_score": 93,
       "score": 93,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-92": {
+      "is_ai_news": true,
+      "ai_relevance_score": 92,
       "score": 92,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-91": {
+      "is_ai_news": true,
+      "ai_relevance_score": 91,
       "score": 91,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-90": {
+      "is_ai_news": true,
+      "ai_relevance_score": 90,
       "score": 90,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-rank-89": {
+      "is_ai_news": true,
+      "ai_relevance_score": 89,
       "score": 89,
-      "reason": "Dense high-score list fixture item."
+      "reason": "Dense high-score AI list fixture item."
+    },
+    "fixture-rank-88": {
+      "is_ai_news": true,
+      "ai_relevance_score": 88,
+      "score": 88,
+      "reason": "Dense high-score AI list fixture item."
+    },
+    "fixture-rank-87": {
+      "is_ai_news": true,
+      "ai_relevance_score": 87,
+      "score": 87,
+      "reason": "Dense high-score AI list fixture item."
     },
     "fixture-old-high-99": {
+      "is_ai_news": true,
+      "ai_relevance_score": 99,
       "score": 99,
-      "reason": "High-score item outside the 30-day ranking window."
+      "reason": "High-score AI item outside the 30-day ranking window."
+    }
+  },
+  "invalid_cases": {
+    "missing_score": {
+      "response": {
+        "is_ai_news": true,
+        "ai_relevance_score": 86,
+        "reason": "Score field is absent."
+      },
+      "expected_error": "validation_llm_error"
+    },
+    "wrong_type": {
+      "response": {
+        "is_ai_news": true,
+        "ai_relevance_score": 86,
+        "score": "high",
+        "reason": "Score must be numeric."
+      },
+      "expected_error": "validation_llm_error"
+    },
+    "out_of_range": {
+      "response": {
+        "is_ai_news": true,
+        "ai_relevance_score": 86,
+        "score": 101,
+        "reason": "Score must be within 0-100."
+      },
+      "expected_error": "validation_llm_error"
+    }
+  },
+  "timeout_cases": {
+    "score_timeout": {
+      "error": "timeout",
+      "retry_max": 2
     }
   }
 }

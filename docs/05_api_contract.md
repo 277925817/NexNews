@@ -13,7 +13,7 @@ API 只暴露 UI 必需能力：
 - 手动刷新 RSS。
 - 添加 / 删除 / 启用 / 停用 RSS 源。
 
-API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`content_raw`、`content_full`、`has_translate_failed`、`deleted_at`。
+API 不暴露数据库内部字段，不暴露 `pipeline_state`、`is_selected`、`is_ai_news`、`ai_relevance_score`、LLM `reason`、`content_raw`、`content_full`、`has_translate_failed`、`discussion_url`、`deleted_at`。
 
 ## 2. API Conventions（接口约定）
 
@@ -83,12 +83,13 @@ API stability rules:
 ### 3.1 NewsStatus
 
 ```ts
-type NewsStatus = "ready" | "translated" | "translation_failed";
+type NewsStatus = "ready" | "translated" | "untranslated" | "translation_failed";
 ```
 
 Status mapping:
 
-- `translated`: `title_zh`、`summary_zh`、`content_zh` all exist.
+- `translated`: `title_zh`、`summary_zh`、`content_zh` all exist and represent Chinese translated content.
+- `untranslated`: live RSS fallback content exists, but it is the original untranslated title/summary/content because live LLM translation is disabled or unavailable.
 - `translation_failed`: not `translated` and `has_translate_failed = 1`.
 - `ready`: not `translated` and not `translation_failed`.
 
@@ -96,9 +97,10 @@ Status is an API/UI projection. It is not stored as a database column.
 
 Status derivation priority:
 
-1. If all translated fields exist, return `translated`.
-2. Else if `has_translate_failed = 1`, return `translation_failed`.
-3. Otherwise return `ready`.
+1. If all translated fields exist but exactly match the live original-title/RSS-summary fallback, return `untranslated`.
+2. Else if all translated fields exist, return `translated`.
+3. Else if `has_translate_failed = 1`, return `translation_failed`.
+4. Otherwise return `ready`.
 
 Partial translated fields must not change `status` by themselves and must not be returned by the API.
 
@@ -106,6 +108,7 @@ Status consistency rules:
 
 - `status = "translated"` requires `title_zh`、`summary_zh`、`content_zh` to exist.
 - `status = "translated"` must never be returned if any translated field is missing.
+- `status = "untranslated"` must not include `summary_zh` or `content_zh` in API responses; UI labels it as `未翻译`.
 - `status = "ready"` must not include `summary_zh` or `content_zh`.
 - `status = "translation_failed"` must not include `summary_zh` or `content_zh`.
 
@@ -130,6 +133,15 @@ type NewsItem = {
 ```
 
 `NewsItem` is the base type. List and detail responses must use the more specific types below.
+
+`original_url` rules:
+
+- `original_url` MUST be the public HTTP(S) article URL read from the RSS item link.
+- `original_url` MUST NOT be synthesized by the API, replaced by `canonical_url`, or rewritten to a local fixture path.
+- For sources such as Hacker News, RSS comment/discussion URLs MUST be stored separately as internal data and MUST NOT replace `original_url`.
+- `discussion_url` is internal for this MVP iteration and MUST NOT be returned by News list/detail API responses until `03_ui_spec.md` introduces a UI behavior that consumes it.
+- Product-facing local acceptance fixtures MUST NOT use reserved placeholder hosts such as `example.com`, `example.org`, `example.net`, `.test`, or `.invalid` for displayable news `original_url`.
+- Canonicalization is only an internal dedupe operation; API responses keep the RSS item link as `original_url`.
 
 ### 3.3 NewsListItem
 
@@ -164,6 +176,7 @@ Detail field rules:
   - When `status = "translated"`, `summary_zh` and `content_zh` MUST be non-empty strings.
   - When `status != "translated"`, `summary_zh` and `content_zh` MUST be omitted.
   - They MUST NOT appear in the JSON response as `null`, empty string, or placeholder value.
+  - For translated local acceptance fixtures, `summary_zh` and `content_zh` MUST be article-specific Chinese content, not generic fixture/mock/placeholder text.
 
 Field mapping:
 
@@ -176,8 +189,9 @@ Field mapping:
 | `content_zh` | `news_item.content_zh`, only on detail response and only when `status = translated` |
 | `source_name` | `source.name` |
 | `original_url` | `news_item.original_url` |
+| `discussion_url` | Internal only; not returned in current News API responses |
 | `published_at` | `news_item.published_at` |
-| `score` | `news_item.score` |
+| `score` | `news_item.score`，公开含义为最终 AI 价值分 |
 | `status` | derived API/UI status |
 
 Display field language rules:
@@ -186,7 +200,7 @@ Display field language rules:
 - `original_title`: original source title and may be non-Chinese.
 - `summary_zh`: required for translated detail responses, returned only for translated list/detail responses, must be Chinese, and must never contain raw RSS summary.
 - `content_zh`: only returned in translated detail responses, must be Chinese, and must never contain raw article content.
-- API must never return `content_raw` or `content_full`.
+- API must never return `content_raw`、`content_full`、`is_ai_news`、`ai_relevance_score` or LLM scoring `reason`.
 
 Allowed API content fields:
 
@@ -201,7 +215,7 @@ Forbidden API content exposure:
 - Raw ingestion sources must be sanitized before persistence.
 - Raw RSS content, raw scraped HTML, raw extracted article text, and fallback raw text must not appear in API responses.
 
-Do not return `summary_zh` or `content_zh` for `ready` or `translation_failed` items.
+Do not return `summary_zh` or `content_zh` for `ready`, `untranslated`, or `translation_failed` items.
 
 ### 3.5 FetchFrequency
 
@@ -258,20 +272,26 @@ Query:
 
 | Name | Type | Required | Rule |
 | --- | --- | --- | --- |
-| `cursor` | string | No | Cursor for `latest_news`; optional in MVP. |
+| `cursor` | string | No | Opaque cursor returned by the previous `next_cursor`; applies only to `latest_news`. |
 | `limit` | number | No | Default `50`, max `100`; applies to `latest_news`. |
 
 Data rule:
 
-- `latest_news` returns displayable news sorted by `published_at DESC`.
+- `latest_news` returns displayable news sorted by `published_at DESC`; fixture/mock acceptance items are `translated`, while live RSS fallback items may be `untranslated`.
 - Only `latest_news` is cursor paginated in MVP.
-- `top_ranked_news` returns displayable news from the last 30 days.
+- `limit` controls the `latest_news` page size; default is `50`, minimum effective value is `1`, max is `100`.
+- When another `latest_news` page exists, response MUST include `next_cursor`.
+- When no further `latest_news` page exists, response MUST omit `next_cursor`.
+- A request using a returned `cursor` MUST return the next page after the previous page and MUST NOT repeat items from earlier pages for the same sort order.
+- `top_ranked_news` returns displayable news from the last 30 days; fixture/mock acceptance items are `translated`, while live RSS fallback items may be `untranslated`.
 - `top_ranked_news` sorts by `score DESC, published_at DESC`.
 - `top_ranked_news` returns at most 10 items.
 - `top_ranked_news` is a fixed-size window query and does not use cursor pagination.
 - Both lists share `NewsListItem` shape and are independent semantic groups.
 - Response type is `HomeData`.
-- Do not return raw English summary or raw English content.
+- Do not return raw English summary or raw English content as `summary_zh` / `content_zh`.
+- Every fixture/mock item in `latest_news` and `top_ranked_news` MUST have `status = "translated"` and include non-empty `summary_zh`; live fallback items MUST have `status = "untranslated"` and omit `summary_zh` / `content_zh`.
+- `ready` and `translation_failed` remain valid detail statuses for direct/stale routes and regression tests, but they MUST NOT appear in the primary Home lists.
 
 Response:
 
@@ -284,19 +304,20 @@ Response:
         "title": "AI startup raises new funding",
         "original_title": "AI startup raises new funding",
         "source_name": "TechCrunch",
-        "original_url": "https://example.com/news/1",
+        "original_url": "https://openai.com/index/introducing-life-sci-bench/",
         "published_at": "2026-06-28T08:00:00Z",
         "score": 82,
-        "status": "ready"
+        "summary_zh": "这是一条中文摘要。",
+        "status": "translated"
       }
     ],
     "top_ranked_news": [
       {
         "id": "2",
-        "title": "新的 AI 模型发布",
-        "original_title": "New AI model released",
+        "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+        "original_title": "Introducing LifeSciBench",
         "source_name": "OpenAI Blog",
-        "original_url": "https://example.com/news/2",
+        "original_url": "https://www.anthropic.com/news/claude-sonnet-5",
         "published_at": "2026-06-28T07:00:00Z",
         "score": 96,
         "status": "translated"
@@ -330,12 +351,12 @@ Response:
 {
   "data": {
     "id": "2",
-    "title": "新的 AI 模型发布",
-    "original_title": "New AI model released",
+    "title": "OpenAI 发布 LifeSciBench 生命科学基准",
+    "original_title": "Introducing LifeSciBench",
     "summary_zh": "这是一条中文摘要。",
     "content_zh": "这是一篇中文正文。",
     "source_name": "OpenAI Blog",
-    "original_url": "https://example.com/news/2",
+    "original_url": "https://openai.com/index/introducing-life-sci-bench/",
     "published_at": "2026-06-28T07:00:00Z",
     "score": 96,
     "status": "translated"
@@ -355,6 +376,8 @@ Processing rule:
 
 - Runs in the FastAPI backend process.
 - Executes RSS crawl, scoring, filtering, fetching, and translation.
+- In live network mode, RSS crawl applies a 30-day freshness window before raw persistence: items with RSS `published_at` older than `refresh now - 30 days` are ignored and never reach scoring, fetching, or translation.
+- Fixture/mock refresh may retain older records only for deterministic ranking-window and exclusion tests.
 - Refresh is idempotent.
 - If refresh is already running, API must not trigger a second concurrent refresh.
 - If refresh is already running, API must return `200`.

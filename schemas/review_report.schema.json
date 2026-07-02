@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/review_report.schema.json",
+  "title": "Codex ReviewReport v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ref",
+    "schema_version",
+    "task_id",
+    "status",
+    "method",
+    "dimensions",
+    "blocking_findings",
+    "referenced_files",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_ref": {
+      "const": "workflows.md#ReviewReport"
+    },
+    "schema_version": {
+      "const": "v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^TASK-[0-9]{3}[A-Z]?$"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "method": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "static_diff",
+          "schema_comparison",
+          "dependency_graph_check"
+        ]
+      }
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirements_fit",
+        "logic_correctness",
+        "test_sufficiency",
+        "architecture",
+        "maintainability",
+        "performance",
+        "security",
+        "compatibility"
+      ],
+      "properties": {
+        "requirements_fit": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "logic_correctness": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "test_sufficiency": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "architecture": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "maintainability": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "performance": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "security": {
+          "$ref": "#/$defs/dimension_status"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/dimension_status"
+        }
+      }
+    },
+    "blocking_findings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "referenced_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "blocking_findings": {
+            "maxItems": 0
+          },
+          "dimensions": {
+            "properties": {
+              "requirements_fit": {
+                "const": "passed"
+              },
+              "logic_correctness": {
+                "const": "passed"
+              },
+              "test_sufficiency": {
+                "const": "passed"
+              },
+              "architecture": {
+                "const": "passed"
+              },
+              "maintainability": {
+                "const": "passed"
+              },
+              "performance": {
+                "const": "passed"
+              },
+              "security": {
+                "const": "passed"
+              },
+              "compatibility": {
+                "const": "passed"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "dimension_status": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    }
+  }
+}

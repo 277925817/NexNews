@@ -103,7 +103,7 @@
             "minItems": 1,
             "items": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^(reports/)?(stages/(static|unit|contract|api|integration|replay|snapshot|e2e)\\.json|acceptance/ACC-STOP-00[1-9]\\.json|acceptance/ACC-STOP-010\\.json)$"
             }
           },
           "status": {
@@ -133,5 +133,35 @@
       "type": "string",
       "minLength": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "coverage_items": {
+            "items": {
+              "properties": {
+                "status": {
+                  "const": "passed"
+                }
+              }
+            }
+          },
+          "uncovered_acceptance_items": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
 }

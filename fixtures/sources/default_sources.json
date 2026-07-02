@@ -1,11 +1,269 @@
 {
+  "version": "mvp_acceptance_fixture@v1",
   "sources": [
-    "https://developers.openai.com/rss.xml",
-    "https://openai.com/news/rss.xml",
-    "https://dreyx.com/digest/rss",
-    "https://news.ycombinator.com/rss",
-    "https://hnrss.org/frontpage",
-    "https://hnrss.org/newest",
-    "https://hnrss.org/bestcomments"
+    {
+      "name": "OpenAI Developers",
+      "rss_url": "https://developers.openai.com/rss.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://developers.openai.com/"
+    },
+    {
+      "name": "OpenAI News",
+      "rss_url": "https://openai.com/news/rss.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://openai.com/news/"
+    },
+    {
+      "name": "DreyX Digest",
+      "rss_url": "https://dreyx.com/digest/rss",
+      "coverage_group": "newsletter",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://dreyx.com/digest/"
+    },
+    {
+      "name": "Hacker News RSS",
+      "rss_url": "https://news.ycombinator.com/rss",
+      "coverage_group": "community",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://news.ycombinator.com/"
+    },
+    {
+      "name": "Hacker News Front Page",
+      "rss_url": "https://hnrss.org/frontpage",
+      "coverage_group": "community",
+      "source_tier": "secondary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://news.ycombinator.com/"
+    },
+    {
+      "name": "Hacker News Newest",
+      "rss_url": "https://hnrss.org/newest",
+      "coverage_group": "community",
+      "source_tier": "secondary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://news.ycombinator.com/newest"
+    },
+    {
+      "name": "Hacker News Best Comments",
+      "rss_url": "https://hnrss.org/bestcomments",
+      "coverage_group": "community",
+      "source_tier": "secondary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://news.ycombinator.com/bestcomments"
+    },
+    {
+      "name": "Google DeepMind News",
+      "rss_url": "https://deepmind.google/blog/rss.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://deepmind.google/blog/"
+    },
+    {
+      "name": "Google AI Blog",
+      "rss_url": "https://blog.google/innovation-and-ai/technology/ai/rss/",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://blog.google/technology/ai/"
+    },
+    {
+      "name": "Google Research Blog",
+      "rss_url": "https://research.google/blog/rss/",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://research.google/blog/"
+    },
+    {
+      "name": "Hugging Face Blog",
+      "rss_url": "https://huggingface.co/blog/feed.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://huggingface.co/blog"
+    },
+    {
+      "name": "AWS Machine Learning Blog",
+      "rss_url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+      "coverage_group": "cloud_infra",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://aws.amazon.com/blogs/machine-learning/"
+    },
+    {
+      "name": "NVIDIA Deep Learning Blog",
+      "rss_url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/",
+      "coverage_group": "cloud_infra",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://blogs.nvidia.com/blog/category/deep-learning/"
+    },
+    {
+      "name": "InfoQ AI ML Data Engineering",
+      "rss_url": "https://feed.infoq.com/ai-ml-data-eng",
+      "coverage_group": "editorial",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://www.infoq.com/ai-ml-data-eng/"
+    },
+    {
+      "name": "arXiv Artificial Intelligence",
+      "rss_url": "https://rss.arxiv.org/rss/cs.AI",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://arxiv.org/list/cs.AI/recent"
+    },
+    {
+      "name": "arXiv Machine Learning",
+      "rss_url": "https://rss.arxiv.org/rss/cs.LG",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://arxiv.org/list/cs.LG/recent"
+    },
+    {
+      "name": "arXiv Computation and Language",
+      "rss_url": "https://rss.arxiv.org/rss/cs.CL",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://arxiv.org/list/cs.CL/recent"
+    },
+    {
+      "name": "arXiv Computer Vision",
+      "rss_url": "https://rss.arxiv.org/rss/cs.CV",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://arxiv.org/list/cs.CV/recent"
+    },
+    {
+      "name": "arXiv Statistics Machine Learning",
+      "rss_url": "https://rss.arxiv.org/rss/stat.ML",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://arxiv.org/list/stat.ML/recent"
+    },
+    {
+      "name": "MIT Technology Review AI",
+      "rss_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+      "coverage_group": "editorial",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://www.technologyreview.com/topic/artificial-intelligence/"
+    },
+    {
+      "name": "VentureBeat AI",
+      "rss_url": "https://venturebeat.com/category/ai/feed/",
+      "coverage_group": "editorial",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://venturebeat.com/category/ai/"
+    },
+    {
+      "name": "TechCrunch AI",
+      "rss_url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "coverage_group": "editorial",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://techcrunch.com/category/artificial-intelligence/"
+    },
+    {
+      "name": "The Decoder",
+      "rss_url": "https://the-decoder.com/feed/",
+      "coverage_group": "editorial",
+      "source_tier": "secondary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://the-decoder.com/"
+    },
+    {
+      "name": "Anthropic News",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-news.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://www.anthropic.com/news"
+    },
+    {
+      "name": "Anthropic Research",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-research.xml",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://www.anthropic.com/research"
+    },
+    {
+      "name": "Mistral News",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/mistral-news.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://mistral.ai/news"
+    },
+    {
+      "name": "Cohere Blog",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/cohere-blog.xml",
+      "coverage_group": "primary_lab",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://cohere.com/blog"
+    },
+    {
+      "name": "Allen AI News",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/allenai-news.xml",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://allenai.org/news"
+    },
+    {
+      "name": "AISI Blog",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/aisi-blog.xml",
+      "coverage_group": "policy_safety",
+      "source_tier": "primary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://www.aisi.gov.uk/work"
+    },
+    {
+      "name": "The Batch",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/the-batch.xml",
+      "coverage_group": "newsletter",
+      "source_tier": "secondary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://www.deeplearning.ai/the-batch/"
+    },
+    {
+      "name": "TLDR AI",
+      "rss_url": "https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/tldr-ai.xml",
+      "coverage_group": "newsletter",
+      "source_tier": "secondary",
+      "ingest_method": "relay_rss",
+      "origin_url": "https://tldr.tech/ai"
+    },
+    {
+      "name": "Microsoft Research",
+      "rss_url": "https://www.microsoft.com/en-us/research/feed/",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://www.microsoft.com/en-us/research/blog/"
+    },
+    {
+      "name": "BAIR Blog",
+      "rss_url": "https://bair.berkeley.edu/blog/feed.xml",
+      "coverage_group": "research",
+      "source_tier": "primary",
+      "ingest_method": "official_rss",
+      "origin_url": "https://bair.berkeley.edu/blog/"
+    }
   ]
 }

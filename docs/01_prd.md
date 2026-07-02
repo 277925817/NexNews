@@ -2,7 +2,9 @@
 
 ## 产品目标
 
-帮助用户及时了解最新、最有价值的 AI 资讯。系统通过 RSS 信息源抓取新闻，使用 LLM 进行新闻价值评分，仅对高价值新闻抓取全文，并尽快生成中文翻译，最终在前端展示新闻卡片、30 天高分榜单和中文全文阅读页。本文中的“新闻发布时间”均指 RSS 信息源给出的原始时间；本站只做抓取、整理和展示。
+帮助用户及时了解最新、最有价值的 AI 资讯。系统通过 RSS 信息源抓取新闻，使用 LLM 进行新闻价值评分，仅对高价值新闻抓取全文，并尽快生成中文翻译，最终在前端展示新闻卡片、30 天高分榜单和中文全文阅读页。本文中的“新闻发布时间”均指 RSS 信息源给出的原始时间；本站只做抓取、整理和展示。Live RSS 抓取在入库前按新闻发布时间应用最近 30 天窗口，避免归档式 RSS feed 的历史旧文进入当前新闻流；fixture ingest 可以保留窗口外样本，用于验证榜单排除和排序。
+
+MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研究机构、云和硬件平台、社区、编辑媒体、政策安全和 newsletter 类来源降低遗漏重要 AI 资讯的风险；feed-first 不承诺“零遗漏”。默认源优先使用官方 RSS；当高价值一手来源没有稳定官方 RSS 时，可以使用可信中转 RSS，并在 source fixture 中标记 `ingest_method = relay_rss` 和官方 `origin_url`；当官方页面既无 RSS 又无可信中转 RSS 时，可以通过显式 `ingest_method = crawler` 的爬虫适配器接入，但不得把普通网页 URL 伪装成 RSS feed。当前 MVP 数据库和公开 API 仍只持久化并暴露 `rss_url`，`ingest_method` / `origin_url` 是 fixture 级审计元数据，不进入 API。
 
 ## 技术栈
 
@@ -12,6 +14,13 @@
 - 定时任务：后端定时调度器
 - 内容抓取：RSS/XML 解析器、HTML 正文抽取器
 - LLM：用于新闻价值评分、中文翻译，所有调用必须使用结构化 JSON 输入输出
+
+## 运行模式边界
+
+- 测试阶段只允许运行 fixture/mock/fixed-clock 流程；单元、API、集成、replay、snapshot、E2E 和 stop gate 证据不得访问真实 RSS、真实网页、真实 LLM、生产数据或当前网络时间。
+- 本地长期服务 `http://127.0.0.1:8010/` 是人工验收入口，必须默认运行 live/production-like 流程：抓取真实 RSS、按真实页面抓取正文、调用 `.env` 或进程环境里的 LLM 进行评分和翻译，并写入本地 SQLite 运行库。
+- 本地人工验收不得使用 fixture RSS、article fixture、LLM mock 或 fixed clock 作为运行时数据来源；只有自动测试和 harness 报告可以使用这些 deterministic 输入。
+- 如果本地长期服务缺少 LLM 配置或无法访问真实依赖，该次人工验收应判定为环境未就绪或验收失败，而不是退回 fixture/mock 流程冒充真实数据。
 
 ## 功能 1：RSS 信息源管理
 
@@ -29,6 +38,32 @@
   - `https://hnrss.org/frontpage`
   - `https://hnrss.org/newest`
   - `https://hnrss.org/bestcomments`
+  - `https://deepmind.google/blog/rss.xml`
+  - `https://blog.google/innovation-and-ai/technology/ai/rss/`
+  - `https://research.google/blog/rss/`
+  - `https://huggingface.co/blog/feed.xml`
+  - `https://aws.amazon.com/blogs/machine-learning/feed/`
+  - `https://blogs.nvidia.com/blog/category/deep-learning/feed/`
+  - `https://feed.infoq.com/ai-ml-data-eng`
+  - `https://rss.arxiv.org/rss/cs.AI`
+  - `https://rss.arxiv.org/rss/cs.LG`
+  - `https://rss.arxiv.org/rss/cs.CL`
+  - `https://rss.arxiv.org/rss/cs.CV`
+  - `https://rss.arxiv.org/rss/stat.ML`
+  - `https://www.technologyreview.com/topic/artificial-intelligence/feed/`
+  - `https://venturebeat.com/category/ai/feed/`
+  - `https://techcrunch.com/category/artificial-intelligence/feed/`
+  - `https://the-decoder.com/feed/`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/anthropic-research.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/mistral-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/cohere-blog.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/allenai-news.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/aisi-blog.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/the-batch.xml`
+  - `https://raw.githubusercontent.com/alan-turing-institute/ai-rss-feeds/main/feeds/tldr-ai.xml`
+  - `https://www.microsoft.com/en-us/research/feed/`
+  - `https://bair.berkeley.edu/blog/feed.xml`
 
 **输出**
 
@@ -89,6 +124,7 @@
 
 - 所有启用状态的信息源
 - 系统配置的 `09:00` 和 `18:00` 抓取时间
+- Live RSS 新鲜度窗口：相对本次抓取时间最近 30 天
 
 **输出**
 
@@ -101,12 +137,14 @@
 2. 后端调度器每天 `18:00` 触发一次抓取任务。
 3. 系统逐个请求启用的信息源 RSS。
 4. 系统解析 RSS 条目的标题、摘要、链接、信息源发布时间和来源。
-5. 系统记录每个信息源的抓取成功或失败状态。
+5. 在 live RSS 抓取路径中，系统在写入 `news_item` 前跳过信息源发布时间早于本次抓取时间 30 天窗口的条目。
+6. 系统记录每个信息源的抓取成功或失败状态。
 
 **验收标准**
 
 - 每天 `09:00` 和 `18:00` 各执行一次抓取任务。
 - 单个信息源抓取失败时，不影响其他信息源抓取。
+- 归档式 RSS 中早于本次抓取时间 30 天窗口的旧条目不得创建或更新 `news_item`，也不得进入评分、全文抓取或翻译。
 - 抓取完成后，内部结构化报告或 `processing_log` 可通过 `trace_id` 证明本次流程的开始时间、结束时间、成功数和失败信息；MVP API 不暴露 run summary、processing log、task progress 或 retry 控件。
 
 ### 闭环流程 2.2：手动刷新抓取 RSS
@@ -126,7 +164,7 @@
 1. 用户点击主页面 `[刷新]` 按钮。
 2. 前端调用后端手动抓取接口。
 3. 后端立即执行一次完整刷新流程。
-4. 后端完成 RSS 抓取、评分、过滤、去重、全文抓取和翻译。
+4. 后端完成 RSS 抓取、live RSS 30 天窗口过滤、评分、过滤、去重、全文抓取和翻译。
 5. 后端返回本次刷新完成时间。
 6. 前端重新请求主页面新闻列表并刷新页面内容。
 
@@ -135,6 +173,7 @@
 - 点击 `[刷新]` 后，后端立即执行完整刷新流程。
 - 抓取任务完成后，前端新闻列表重新加载。
 - 刷新过程中按钮进入加载态，任务完成后恢复可点击。
+- 手动刷新与定时抓取使用相同的 live RSS 30 天窗口过滤规则。
 - 单个信息源抓取失败时，页面仍展示其他信息源的最新内容。
 
 ### 闭环流程 2.3：基于标题和摘要进行 LLM 新闻价值评分
@@ -149,25 +188,30 @@
 
 **输出**
 
-- 新闻价值评分，范围为 `0-100`
+- 是否为 AI 新闻：`is_ai_news`
+- AI 相关性评分：`ai_relevance_score`，范围为 `0-100`
+- 最终 AI 价值评分：`score`，范围为 `0-100`
 - 是否进入全文抓取队列
 
 **运行流程**
 
-1. 系统读取新抓取的 RSS 条目，并写入 `pipeline_state = raw`。
+1. 系统读取通过 crawl 入库的新 RSS 条目，并写入 `pipeline_state = raw`。
 2. 系统按标准 JSON 格式将标题、摘要、来源、信息源发布时间和原文链接发送给 LLM。
-3. LLM 按标准 JSON 格式返回 `0-100` 的新闻价值评分。
-4. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
-5. 评分大于或等于 `60` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
-6. 评分小于 `60` 的条目不抓取全文。
-7. 标题或原文链接缺少任意一个，直接评分为 `0`。
-8. 缺少摘要时，评分扣 `20` 分。
+3. LLM 按标准 JSON 格式返回 `is_ai_news`、`ai_relevance_score`、`score` 和 `reason`。
+4. `score` 必须按 AI 新闻价值 rubric 计算，而不是按热度或点击诱惑计算：影响范围占 30%，原创性 / 信息增量占 20%，来源权威性与证据可信度占 20%，技术 / 产品 / 政策具体性占 20%，时效性占 10%。
+5. 评分必须执行封顶规则：非 AI 新闻最高 `20`；AI 相关但没有具体新信息最高 `45`；SEO 软文、广告导流、标题党、普通工具清单、会议 / 折扣 / 招聘、加密或财经噪声最高 `50`；只有融资、合作、营销或传闻且没有实质技术 / 产品 / 政策变化最高 `60`；重复转述、二手汇总或缺少清晰来源最高 `70`。
+6. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
+7. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
+8. 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不抓取全文。
+9. 标题或原文链接缺少任意一个，直接评分为 `0`。
+10. 缺少摘要时，评分扣 `20` 分。
 
 **验收标准**
 
-- 每条新 RSS 条目都有一个数值评分。
-- 评分大于或等于 `60` 的条目被标记为待抓取全文。
-- 评分小于 `60` 的条目不会触发全文抓取。
+- 每条新 RSS 条目都有完整 AI 价值筛选结果：`is_ai_news`、`ai_relevance_score`、`score`。
+- `score` 必须可追溯到文档化 AI 价值 rubric 和封顶规则；泛 AI 噪声、广告、传闻、重复转述不得因标题含 AI 关键词而进入高分段。
+- 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的条目被标记为待抓取全文。
+- 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不会触发全文抓取。
 - 标题或原文链接缺失的条目评分为 `0`，且不会触发全文抓取。
 - 评分成功后，`pipeline_state` 必须从 `raw` 更新为 `scored`；高价值新闻必须写入 `is_selected = 1`。
 
@@ -177,7 +221,7 @@
 
 **输入**
 
-- 评分大于或等于 `60` 的 RSS 条目
+- 通过 AI 价值筛选的 RSS 条目：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 81`
 
 **输出**
 
@@ -187,10 +231,11 @@
 
 1. 系统读取评分大于或等于 `60` 的条目。
 2. 系统根据原文链接生成规范化后的 `canonical_url`，并优先使用 `canonical_url` 作为去重键。
-3. 如果没有原文链接，删除当前条目。
-4. 系统检查数据库是否已存在相同 `canonical_url`。
-5. 已存在的条目不重复抓取全文。
-6. 不存在的条目进入全文抓取队列。
+3. 如果 RSS 条目同时提供评论页或讨论页链接，系统必须将其与原文链接分开保存，不得用讨论页替代原文链接。
+4. 如果没有原文链接，删除当前条目。
+5. 系统检查数据库是否已存在相同 `canonical_url`。
+6. 已存在的条目不重复抓取全文。
+7. 不存在的条目进入全文抓取队列。
 
 **验收标准**
 
@@ -198,6 +243,7 @@
 - `canonical_url` 必须去除 `utm_*`、`fbclid` 等常见跟踪参数。
 - 重复新闻不会重复触发全文抓取。
 - 不同标题或不同域名的新闻可以正常进入全文抓取队列。
+- Hacker News 类来源的 `item?id=...` 讨论页不得替代外部文章 URL。
 
 ### 闭环流程 3.2：抓取新闻全文
 
@@ -227,6 +273,7 @@
 - 每条进入翻译流程的新闻都有可用的原文内容或摘要内容。
 - 内容降级优先级必须为：原文全文、RSS 摘要、不可展示。
 - 内容抓取或摘要兜底成功后，`pipeline_state` 必须更新为 `fetched`。
+- 本地验收 fixture 中面向用户展示的新闻 `original_url` 必须来自 RSS 条目的真实原文链接，不得使用 `example.com`、`example.org`、`example.net`、`.test`、`.invalid` 或类似占位域名冒充原文。
 
 ## 功能 4：展示就绪与 LLM 中文翻译
 
@@ -255,7 +302,7 @@
 
 **验收标准**
 
-- 评分大于或等于 `60` 且内容可用的新闻会进入 API 可展示查询结果。
+- 通过 AI 价值筛选且内容可用的新闻会进入 API 可展示查询结果。
 - 展示就绪新闻保留原文标题字段。
 - 展示就绪新闻可以出现在主页面列表和 30 天高分榜单中。
 - 翻译未完成不影响新闻展示。
@@ -282,12 +329,13 @@
 **运行流程**
 
 1. 系统读取 `pipeline_state = fetched` 且存在可用内容的新闻。
-2. 系统按标准 JSON 格式将原文标题、摘要、正文、来源和评分发送给 LLM。
+2. 系统按标准 JSON 格式将原文标题、摘要、正文、来源和评分发送给 LLM；本地 live 运行时从环境变量或 `.env` 读取 LLM 配置。
 3. LLM 按标准 JSON 格式返回中文标题、中文摘要、中文正文和中文分类校验字段。
 4. 系统校验返回字段不能为空。
 5. 系统只保存中文标题、中文摘要和中文正文字段；中文分类校验字段不得保存到数据库、API 或 UI。
 6. API 由中文字段事实投影为 `translated`。
 7. 如果翻译失败，系统不写入部分中文字段，设置 `has_translate_failed = 1` 并在 `processing_log` 记录失败原因。
+8. 如果 live LLM 未启用或配置缺失，系统可以使用原文兜底展示，但不得把该兜底记录为中文翻译成功；API/UI 必须投影为 `untranslated`。
 
 **验收标准**
 
@@ -297,6 +345,8 @@
 - 翻译失败时，API/UI status 必须投影为 `translation_failed`。
 - 前端中文字段不得把未翻译英文内容伪装为中文返回。
 - 翻译成功后，API/UI status 必须投影为 `translated`。
+- 中文摘要必须概括同一条新闻的原文摘要或原文正文，不得使用与新闻无关的通用占位摘要。
+- 中文正文必须是可阅读的中文正文内容，不得只是“fixture/mock/模拟/占位”类短句或单纯为了通过非空校验的文本。
 
 
 
@@ -306,7 +356,7 @@
 
 **输入**
 
-- 可展示、已翻译或翻译失败的新闻记录
+- 已翻译且可阅读中文全文的新闻记录
 
 **输出**
 
@@ -316,20 +366,50 @@
 
 1. 用户打开主页面。
 2. 前端请求新闻列表接口。
-3. 后端按信息源发布时间倒序返回 API/UI status 为 `ready`、`translated` 或 `translation_failed` 的新闻。
+3. 后端按信息源发布时间倒序返回可展示新闻；fixture/mock 验收数据必须为 API/UI status `translated`，live RSS 兜底数据可为 `untranslated`。
 4. 前端渲染新闻卡片。
-5. API/UI status 为 `translated` 的卡片显示中文标题、中文摘要、来源、信息源发布时间和评分。
-6. API/UI status 为 `ready` 的卡片显示原文标题、来源、信息源发布时间、评分和“翻译中”状态，不显示英文摘要。
-7. API/UI status 为 `translation_failed` 的卡片显示原文标题、来源、信息源发布时间、评分和“翻译失败”状态，不显示英文摘要。
-8. 系统自动为每个来源配置不同的卡片颜色。
+5. `translated` 卡片显示中文标题、中文摘要、来源、信息源发布时间和评分；`untranslated` 卡片显示原文标题、`未翻译`、来源、信息源发布时间和评分，不展示英文摘要或英文正文。
+6. `ready` 和 `translation_failed` 新闻不得作为首页普通新闻条目进入用户主要点击路径；它们只允许通过详情页异常状态、测试 fixture 或后续专门状态区证明。
+7. 系统自动为每个来源配置不同的卡片颜色。
 
 **验收标准**
 
 - 主页面能展示新闻卡片列表。
 - 已完成翻译的卡片必须显示中文标题、中文摘要、来源、信息源发布时间和评分。
-- 未完成翻译的卡片不得显示英文摘要，必须显示“翻译中”状态。
-- 翻译失败的卡片不得显示英文摘要，必须显示“翻译失败”状态。
+- live RSS 兜底未翻译卡片必须显示 `未翻译`，不得把英文摘要或英文正文伪装成中文字段。
+- fixture/mock 验收中的首页普通新闻条目必须都是 `translated`，点击后可进入中文全文阅读页。
 - 卡片摘要必须显示文本内容，不得显示原始 HTML 标签。
+- 卡片摘要必须对应同一条新闻正文，不得出现通用占位摘要或与正文无关的摘要。
+
+### 闭环流程 5.1.1：向下滚动加载更多新闻
+
+**输入**
+
+- 首页首屏新闻列表
+- 后端返回的 `next_cursor`
+
+**输出**
+
+- 追加后的新闻卡片列表
+
+**运行流程**
+
+1. 用户在主页面向下滚动并接近新闻列表底部。
+2. 如果当前 HomeData 包含 `next_cursor`，前端使用该 cursor 请求下一页 `latest_news`。
+3. 后端按信息源发布时间倒序返回下一页 API/UI status 为 `translated` 的新闻。
+4. 前端把下一页新闻追加到现有 News Feed，保留已显示卡片和当前页面滚动位置。
+5. 追加后的 News Feed 继续保持 `published_at DESC` 顺序，不重复显示同一新闻。
+6. 如果下一页请求失败，前端保留已加载新闻并显示可恢复的加载失败状态。
+7. 如果响应不再包含 `next_cursor`，前端停止继续自动请求下一页。
+8. `top_ranked_news` 不参与滚动分页，不因 News Feed 加载更多而变成独立分页列表。
+
+**验收标准**
+
+- 主页面向下滚动接近 News Feed 底部时，可以自动加载并追加更多新闻卡片。
+- 加载更多只请求 `latest_news` 的下一页，不改变 HighScoreList 的固定 30 天榜单语义。
+- 追加后的新闻卡片不得重复，且整体排序仍为 `published_at DESC`。
+- 加载更多失败时不得清空已加载新闻，用户必须能恢复加载。
+- 没有 `next_cursor` 后继续滚动不得触发无意义的分页请求。
 
 ### 闭环流程 5.2：点击新闻卡片进入浏览页
 
@@ -358,6 +438,7 @@
 - 浏览页不直接跳转原文站点。
 - 浏览页显示中文内容。
 - 浏览页显示的内容包含新闻标题，全文，来源，信息源发布时间。
+- 对首页普通新闻条目，浏览页必须显示可阅读的中文摘要和中文全文，不能只显示占位短句。
 - 翻译未完成时，浏览页显示等待动画，不显示英文全文。
 - 翻译失败时，浏览页显示失败提示，不显示英文全文。
 
@@ -367,7 +448,7 @@
 
 **输入**
 
-- 最近 30 天可展示、已翻译或翻译失败的新闻
+- 最近 30 天已翻译且可阅读中文全文的新闻
 - 新闻价值评分
 
 **输出**
@@ -376,22 +457,20 @@
 
 **运行流程**
 
-1. 后端查询最近 30 天 API/UI status 为 `ready`、`translated` 或 `translation_failed` 的可展示新闻。
+1. 后端查询最近 30 天 API/UI status 为 `translated` 的可展示新闻。
 2. 后端按评分从高到低排序。
 3. 如果评分相同，按信息源发布时间从新到旧排序。
 4. 后端返回前 10 条新闻标题、ID、来源和评分。
 5. 前端在主页面侧边栏展示榜单。
-6. API/UI status 为 `translated` 的新闻展示中文标题。
-7. API/UI status 为 `ready` 的新闻展示原文标题和“翻译中”标记。
-8. API/UI status 为 `translation_failed` 的新闻展示原文标题和“翻译失败”标记。
+6. 榜单新闻展示中文标题，并且点击后能进入中文全文阅读页。
 
 **验收标准**
 
 - 榜单最多显示 10 条新闻。
-- 榜单只包含最近 30 天内 API/UI status 为 `ready`、`translated` 或 `translation_failed` 的新闻。
+- 榜单只包含最近 30 天内 API/UI status 为 `translated` 的新闻。
 - 榜单按评分从高到低排序。
 - 榜单中的每条新闻都保留原文标题字段。
-- 榜单中的未完成或失败翻译新闻不得显示英文摘要或英文正文。
+- 榜单中的每条新闻点击后必须能显示中文摘要和中文全文。
 
 ### 闭环流程 6.2：点击榜单标题进入浏览页
 
@@ -419,6 +498,7 @@
 - 点击榜单标题后进入站内浏览页。
 - 浏览页显示的新闻 ID 与榜单项一致。
 - 浏览页显示的内容包含新闻标题，全文，来源，信息源发布时间。
+- 对榜单新闻，浏览页必须显示可阅读的中文摘要和中文全文，不能只显示占位短句。
 - 翻译未完成时，浏览页显示等待动画，不显示英文全文。
 - 翻译失败时，浏览页显示失败提示，不显示英文全文。
 
@@ -447,10 +527,13 @@
 **验收标准**
 
 - 从卡片或榜单点击标题后进入站内新闻浏览页。
-- 浏览页必须显示中文标题、中文正文。
+- 浏览页必须显示中文标题、中文摘要和中文正文。
 - 浏览页必须保留并可展示原文标题字段。
 - 浏览页必须显示来源、信息源发布时间和评分。
 - 浏览页必须提供原文链接按钮。
+- 对 `translated` 新闻，中文正文必须是可阅读正文，不能是占位短句；中文摘要必须与同一条新闻正文相符。
+- 原文链接按钮必须使用该新闻 RSS 条目的真实 `original_url`，不得使用占位、保留或测试域名冒充原文。
+- 如果来源提供讨论页链接，讨论页不得替代原文链接按钮。
 - 翻译未完成时，浏览页必须显示等待动画，不得展示未翻译英文全文。
 - 翻译失败时，浏览页必须显示失败提示，不得展示未翻译英文全文。
 
@@ -495,9 +578,9 @@
 
 1. RSS 条目首次入库时，`pipeline_state = raw`。
 2. 评分完成后，`pipeline_state` 从 `raw` 更新为 `scored`。
-3. 评分大于或等于 `60` 时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
+3. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
 4. 全文抓取或 RSS 摘要兜底内容可用后，`pipeline_state` 从 `scored` 更新为 `fetched`。
-5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`translation_failed`。
+5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`untranslated`、`translation_failed`。
 6. 翻译成功由 `title_zh`、`summary_zh`、`content_zh` 全部存在表达。
 7. 翻译失败由 `has_translate_failed = 1` 作为展示缓存表达，最终事实以 `processing_log` 为准。
 8. 系统只允许通过明确状态流转更新 `pipeline_state`，不允许依赖隐式字段组合判断数据采集阶段。
@@ -507,7 +590,7 @@
 
 - `pipeline_state` 只允许取值：`raw`、`scored`、`fetched`。
 - 新闻不得跳过中间状态直接从 `raw` 变为 `fetched`。
-- 评分小于 `60` 的新闻停留在 `scored`，不会进入全文抓取。
+- 未通过 AI 价值筛选的新闻停留在 `scored`，不会进入全文抓取。
 - 翻译失败的新闻 API/UI status 必须为 `translation_failed`。
 - 主列表和榜单只展示 API/UI status 为 `ready`、`translated` 或 `translation_failed` 的新闻。
 - 数据库和 API 不得返回独立翻译状态字段。
@@ -534,18 +617,20 @@
 2. 系统使用 `news_item` 保存新闻原文字段、中文字段、评分、去重键和 `pipeline_state`。
 3. 系统使用 `processing_log` 记录 crawl、score、fetch、translate 的最小处理结果。
 4. 每次定时抓取或手动刷新都为每个处理阶段写入可追踪的 `processing_log`。
-5. crawl 处理读取所有启用信息源、请求 RSS XML、解析 RSS 条目、创建或更新 `raw` 状态的 `news_item`。
-6. score 处理对新条目执行标题和摘要评分，并为评分大于或等于 `60` 的非重复新闻写入 `is_selected = 1`。
+5. crawl 处理读取所有启用信息源、请求 RSS XML、解析 RSS 条目；live RSS 路径只为信息源发布时间位于本次抓取最近 30 天窗口内的条目创建或更新 `raw` 状态的 `news_item`，fixture 路径可保留窗口外样本。
+6. score 处理对新条目执行 AI 新闻判定、AI 相关性评分和最终 AI 价值评分，并为同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的非重复新闻写入 `is_selected = 1`。
 7. fetch 处理只读取 `is_selected = 1` 的新闻并抓取正文。
-8. translate 处理只读取 `pipeline_state = fetched` 且存在可用内容的新闻。
-9. 每个处理阶段都不得绕过 `raw -> scored -> fetched` 状态机。
-10. 处理失败后，系统记录阶段、对象 ID、trace_id、时间和错误信息。
+8. translate 处理只读取 `pipeline_state = fetched`、`is_selected = 1`、`is_ai_news = 1`、`ai_relevance_score >= 70`、`score >= 81` 且存在可用内容的新闻。
+9. live runtime 中 raw backlog worker 启用时，启动后延迟 5 分钟首次运行，之后每 5 分钟处理最多 10 条 `pipeline_state = raw` 的积压新闻；该 worker 不重新抓 RSS，只执行 `score raw -> fetch selected -> translate eligible fetched`。
+10. 每个处理阶段都不得绕过 `raw -> scored -> fetched` 状态机。
+11. 处理失败后，系统记录阶段、对象 ID、trace_id、时间和错误信息。
 
 **验收标准**
 
 - 数据库只包含 `source`、`news_item`、`processing_log` 三类 MVP 核心表。
 - 删除或停用 `source` 后，关联历史 `news_item` 仍保留。
 - 每次手动刷新或定时抓取都能通过 `processing_log(stage = crawl)` 查询处理结果。
+- live RSS 抓取不会把归档式 feed 中早于 30 天窗口的历史文章写入 `news_item`。
 - `processing_log` 必须包含阶段、对象 ID、trace_id、成功状态、时间和错误信息。
 - crawl 处理不得直接保存原文全文内容。
 - 处理阶段不得绕过状态机直接写入最终 API/UI status。
@@ -567,7 +652,7 @@
 **运行流程**
 
 1. 评分请求 JSON 必须包含 `title`、`summary`、`source`、`published_at` 和 `original_link`，其中 `published_at` 表示信息源发布时间。
-2. 评分响应 JSON 必须包含 `score` 和 `reason`，其中 `score` 必须是 `0-100` 的数字。
+2. 评分响应 JSON 必须包含 `is_ai_news`、`ai_relevance_score`、`score` 和 `reason`，其中 `is_ai_news` 必须是布尔值，`ai_relevance_score` 和 `score` 必须是 `0-100` 的整数，`reason` 必须非空。
 3. 评分调用超时、返回非 JSON 或字段不合法时，系统最多重试 2 次。
 4. 评分调用超时、返回非 JSON 或字段不合法并在重试后仍失败时，系统不得写入 `score`，不得推进 `pipeline_state`，必须写入失败 `processing_log`，且该新闻不进入全文抓取。
 5. 翻译请求 JSON 必须包含 `original_title`、`original_summary`、`original_content`、`source` 和 `score`。

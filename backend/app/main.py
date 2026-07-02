@@ -2,26 +2,41 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import sqlite3
+import json
+import logging
+import threading
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.app.core.config import get_live_runtime_config
 from backend.app.db import connect, initialize_database, seed_default_sources
-from backend.app.services.pipeline import run_fixture_refresh
+from backend.app.services.pipeline import run_live_backlog_pipeline_summary
+from backend.app.services.trigger import run_manual_refresh
 
 
 FIXED_NOW = "2026-06-28T09:00:00Z"
 TOP_RANKED_WINDOW_START = "2026-05-29T09:00:00Z"
 ROOT_DIR = Path(__file__).resolve().parents[2]
-INDEX_HTML = ROOT_DIR / "index.html"
+RUNTIME_SHELL_INDEX_HTML = ROOT_DIR / "index.html"
+FRONTEND_DIST_DIR = ROOT_DIR / "frontend" / "dist"
+FRONTEND_DIST_INDEX_HTML = FRONTEND_DIST_DIR / "index.html"
+FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 DEFAULT_DB_PATH = ROOT_DIR / "rss.sqlite3"
+TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
+LOGGER = logging.getLogger(__name__)
 
 
 class CreateSourceRequest(BaseModel):
@@ -48,6 +63,21 @@ def api_not_found() -> JSONResponse:
     return error_response("NOT_FOUND", "Resource not found", 404)
 
 
+def frontend_index_path() -> Path:
+    if FRONTEND_DIST_INDEX_HTML.exists():
+        return FRONTEND_DIST_INDEX_HTML
+    return RUNTIME_SHELL_INDEX_HTML
+
+
+def mount_frontend_static_assets(app: FastAPI) -> None:
+    if FRONTEND_ASSETS_DIR.exists():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=FRONTEND_ASSETS_DIR),
+            name="frontend-assets",
+        )
+
+
 def is_public_http_url(value: str) -> bool:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -60,6 +90,23 @@ def is_public_http_url(value: str) -> bool:
     except ValueError:
         return True
     return not (address.is_private or address.is_loopback or address.is_link_local)
+
+
+def hidden_api_rss_guids(translation_fixture_path: Path = TRANSLATION_FIXTURE_PATH) -> tuple[str, ...]:
+    try:
+        payload = json.loads(translation_fixture_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return tuple()
+
+    translations = payload.get("translations") if isinstance(payload, dict) else None
+    if not isinstance(translations, dict):
+        return tuple()
+
+    hidden = []
+    for guid, record in translations.items():
+        if isinstance(record, dict) and record.get("display_in_api") is False:
+            hidden.append(str(guid))
+    return tuple(hidden)
 
 
 def public_source(source: dict[str, object]) -> dict[str, object]:
@@ -75,6 +122,13 @@ def public_source(source: dict[str, object]) -> dict[str, object]:
 
 def display_status(row: dict[str, object]) -> str:
     if row["title_zh"] and row["summary_zh"] and row["content_zh"]:
+        fallback_content = row["content_full"] or row["content_raw"]
+        if (
+            row["title_zh"] == row["original_title"]
+            and row["summary_zh"] == row["content_raw"]
+            and row["content_zh"] == fallback_content
+        ):
+            return "untranslated"
         return "translated"
     if bool(row["has_translate_failed"]):
         return "translation_failed"
@@ -82,7 +136,8 @@ def display_status(row: dict[str, object]) -> str:
 
 
 def list_item(row: dict[str, object]) -> dict[str, object]:
-    return {
+    status = display_status(row)
+    item = {
         "id": str(row["id"]),
         "title": row["title_zh"] or row["original_title"],
         "original_title": row["original_title"],
@@ -90,8 +145,11 @@ def list_item(row: dict[str, object]) -> dict[str, object]:
         "original_url": row["original_url"],
         "published_at": row["published_at"],
         "score": row["score"],
-        "status": display_status(row),
+        "status": status,
     }
+    if status == "translated" and row["summary_zh"]:
+        item["summary_zh"] = row["summary_zh"]
+    return item
 
 
 def detail_item(row: dict[str, object]) -> dict[str, object]:
@@ -102,11 +160,47 @@ def detail_item(row: dict[str, object]) -> dict[str, object]:
     return item
 
 
+def encode_home_cursor(row: dict[str, object]) -> str:
+    payload = json.dumps(
+        {"published_at": row["published_at"], "id": int(row["id"])},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_home_cursor(value: str) -> tuple[str, int] | None:
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(raw)
+        published_at = str(payload["published_at"])
+        item_id = int(payload["id"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error):
+        return None
+    if not published_at or item_id < 1:
+        return None
+    return published_at, item_id
+
+
 def displayable_news_query(
     extra_where: str = "",
     order_by: str = "news_item.published_at DESC",
-) -> str:
-    return f"""
+    translated_only: bool = False,
+    excluded_rss_guids: tuple[str, ...] = (),
+) -> tuple[str, list[object]]:
+    translated_clause = """
+          AND news_item.title_zh IS NOT NULL
+          AND news_item.summary_zh IS NOT NULL
+          AND news_item.content_zh IS NOT NULL
+    """ if translated_only else ""
+    exclusion_clause = ""
+    params: list[object] = []
+    if excluded_rss_guids:
+        placeholders = ", ".join("?" for _ in excluded_rss_guids)
+        exclusion_clause = f"\n          AND news_item.rss_guid NOT IN ({placeholders})"
+        params.extend(excluded_rss_guids)
+
+    query = f"""
         SELECT
           news_item.id,
           news_item.original_title,
@@ -116,15 +210,20 @@ def displayable_news_query(
           news_item.title_zh,
           news_item.summary_zh,
           news_item.content_zh,
+          news_item.content_raw,
+          news_item.content_full,
           news_item.has_translate_failed,
           source.name AS source_name
         FROM news_item
         JOIN source ON source.id = news_item.source_id
         WHERE news_item.is_selected = 1
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
+          {translated_clause}
+          {exclusion_clause}
           {extra_where}
         ORDER BY {order_by}
     """
+    return query, params
 
 
 def visible_sources(conn: sqlite3.Connection) -> list[dict[str, object]]:
@@ -179,16 +278,101 @@ def validate_source_request(
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
-    app = FastAPI(title="rss-aggregator")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        start_backlog_worker()
+        try:
+            yield
+        finally:
+            stop_backlog_worker()
+
+    app = FastAPI(title="rss-aggregator", lifespan=lifespan)
+    mount_frontend_static_assets(app)
     conn = connect(db_path or str(DEFAULT_DB_PATH))
     initialize_database(conn)
     seed_default_sources(conn)
     app.state.db = conn
-    app.state.last_successful_refresh_at = FIXED_NOW
+    app.state.last_successful_refresh_at = None
     app.state.refresh_running = False
+    app.state.refresh_lock = threading.Lock()
+    app.state.backlog_worker_stop = threading.Event()
+    app.state.backlog_worker_thread = None
+    app.state.live_runtime = get_live_runtime_config()
+    app.state.hidden_api_rss_guids = hidden_api_rss_guids()
 
     def db() -> sqlite3.Connection:
         return app.state.db
+
+    def utc_now() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def run_backlog_worker_once() -> dict[str, object] | None:
+        runtime = app.state.live_runtime
+        if not runtime.backlog_worker_enabled:
+            return None
+        if not app.state.refresh_lock.acquire(blocking=False):
+            return None
+        app.state.refresh_running = True
+        try:
+            return run_live_backlog_pipeline_summary(
+                db(),
+                now=utc_now(),
+                allow_live_llm=runtime.allow_live_llm,
+                allow_live_article_fetch=runtime.allow_live_article_fetch,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                request_retry_count=runtime.request_retry_count,
+                request_retry_backoff_seconds=runtime.request_retry_backoff_seconds,
+                live_llm_base_url=runtime.llm_base_url,
+                live_llm_api_key=runtime.llm_api_key,
+                live_llm_model=runtime.llm_model,
+                live_llm_timeout_seconds=runtime.llm_request_timeout_seconds,
+                live_llm_retry_count=runtime.live_llm_retry_count,
+                live_llm_max_items=runtime.live_llm_max_items,
+                live_llm_concurrency=runtime.live_llm_concurrency,
+                live_llm_max_score_items=runtime.backlog_worker_max_score_items,
+                live_llm_score_concurrency=runtime.live_llm_score_concurrency,
+            )
+        finally:
+            app.state.refresh_running = False
+            app.state.refresh_lock.release()
+
+    def backlog_worker_loop() -> None:
+        runtime = app.state.live_runtime
+        interval = runtime.backlog_worker_interval_seconds
+        stop_event = app.state.backlog_worker_stop
+        if stop_event.wait(interval):
+            return
+        while not stop_event.is_set():
+            try:
+                run_backlog_worker_once()
+            except Exception:
+                LOGGER.exception("raw backlog worker failed")
+            if stop_event.wait(interval):
+                return
+
+    app.state.run_backlog_worker_once = run_backlog_worker_once
+
+    def start_backlog_worker() -> None:
+        runtime = app.state.live_runtime
+        if not runtime.backlog_worker_enabled:
+            return
+        existing_thread = app.state.backlog_worker_thread
+        if existing_thread is not None and existing_thread.is_alive():
+            return
+        app.state.backlog_worker_stop.clear()
+        thread = threading.Thread(
+            target=backlog_worker_loop,
+            name="rss-raw-backlog-worker",
+            daemon=True,
+        )
+        app.state.backlog_worker_thread = thread
+        thread.start()
+
+    def stop_backlog_worker() -> None:
+        app.state.backlog_worker_stop.set()
+        thread = app.state.backlog_worker_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -211,33 +395,65 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/home")
     def get_home(limit: int = 50, cursor: str | None = None) -> JSONResponse:
         bounded_limit = min(max(limit, 1), 100)
-        latest_rows = db().execute(
-            displayable_news_query(order_by="news_item.published_at DESC") + " LIMIT ?",
-            (bounded_limit,),
-        ).fetchall()
-        top_rows = db().execute(
-            displayable_news_query(
-                extra_where="AND news_item.published_at >= ?",
-                order_by="news_item.score DESC, news_item.published_at DESC"
-            )
-            + " LIMIT 10",
-            (TOP_RANKED_WINDOW_START,),
-        ).fetchall()
-        return data_response(
-            {
-                "latest_news": [list_item(row) for row in latest_rows],
-                "top_ranked_news": [list_item(row) for row in top_rows],
-            }
+        hidden_guids = app.state.hidden_api_rss_guids
+        cursor_where = ""
+        cursor_params: list[object] = []
+        if cursor:
+            decoded_cursor = decode_home_cursor(cursor)
+            if decoded_cursor is None:
+                return error_response("VALIDATION_ERROR", "Invalid cursor", 400)
+            published_at, item_id = decoded_cursor
+            cursor_where = """
+          AND (
+            news_item.published_at < ?
+            OR (news_item.published_at = ? AND news_item.id < ?)
+          )
+            """
+            cursor_params = [published_at, published_at, item_id]
+
+        latest_query, latest_params = displayable_news_query(
+            extra_where=cursor_where,
+            order_by="news_item.published_at DESC, news_item.id DESC",
+            translated_only=True,
+            excluded_rss_guids=hidden_guids,
         )
+        latest_rows = db().execute(
+            f"{latest_query} LIMIT ?",
+            tuple(latest_params + cursor_params + [bounded_limit + 1]),
+        ).fetchall()
+        latest_page = latest_rows[:bounded_limit]
+
+        # Keep top list bounded as before; top ranking is already
+        # filtered by translation completeness + 30-day window + hidden samples.
+        top_query, top_params = displayable_news_query(
+            extra_where="AND news_item.published_at >= ?",
+            order_by="news_item.score DESC, news_item.published_at DESC",
+            translated_only=True,
+            excluded_rss_guids=hidden_guids,
+        )
+        top_rows = db().execute(
+            f"{top_query} LIMIT 10",
+            tuple(top_params + [TOP_RANKED_WINDOW_START]),
+        ).fetchall()
+        home_data = {
+            "latest_news": [list_item(row) for row in latest_page],
+            "top_ranked_news": [list_item(row) for row in top_rows],
+        }
+        if len(latest_rows) > bounded_limit and latest_page:
+            home_data["next_cursor"] = encode_home_cursor(latest_page[-1])
+        return data_response(home_data)
 
     @app.get("/api/news/{id}")
     def get_news(id: str) -> JSONResponse:
+        hidden_guids = app.state.hidden_api_rss_guids
+        query, query_params = displayable_news_query(
+            extra_where="AND news_item.id = ?",
+            order_by="news_item.published_at DESC",
+            excluded_rss_guids=hidden_guids,
+        )
         row = db().execute(
-            displayable_news_query(
-                extra_where="AND news_item.id = ?",
-                order_by="news_item.published_at DESC",
-            ),
-            (id,),
+            query,
+            tuple(query_params + [id]),
         ).fetchone()
         if row is not None:
             return data_response(detail_item(row))
@@ -247,12 +463,42 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def refresh() -> JSONResponse:
         if app.state.refresh_running:
             return data_response({"refreshed_at": app.state.last_successful_refresh_at})
+        if not app.state.refresh_lock.acquire(blocking=False):
+            return data_response({"refreshed_at": app.state.last_successful_refresh_at})
         app.state.refresh_running = True
         try:
-            run_fixture_refresh(db())
+            runtime = app.state.live_runtime
+            now = (
+                utc_now()
+                if runtime.mode == "live"
+                else FIXED_NOW
+            )
+            result = run_manual_refresh(
+                db(),
+                now=now,
+                use_live_data=runtime.mode == "live",
+                allow_live_network=runtime.allow_live_network,
+                allow_live_llm=runtime.allow_live_llm,
+                allow_live_article_fetch=runtime.allow_live_article_fetch,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                request_retry_count=runtime.request_retry_count,
+                request_retry_backoff_seconds=runtime.request_retry_backoff_seconds,
+                live_rss_concurrency=runtime.live_rss_concurrency,
+                live_llm_base_url=runtime.llm_base_url,
+                live_llm_api_key=runtime.llm_api_key,
+                live_llm_model=runtime.llm_model,
+                live_llm_timeout_seconds=runtime.llm_request_timeout_seconds,
+                live_llm_retry_count=runtime.live_llm_retry_count,
+                live_llm_max_items=runtime.live_llm_max_items,
+                live_llm_concurrency=runtime.live_llm_concurrency,
+                live_llm_max_score_items=runtime.live_llm_max_score_items,
+                live_llm_score_concurrency=runtime.live_llm_score_concurrency,
+            )
+            if result["started"]:
+                app.state.last_successful_refresh_at = result["summary"]["finished_at"]
         finally:
             app.state.refresh_running = False
-        app.state.last_successful_refresh_at = FIXED_NOW
+            app.state.refresh_lock.release()
         return data_response({"refreshed_at": app.state.last_successful_refresh_at})
 
     @app.get("/api/sources")
@@ -322,15 +568,30 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(INDEX_HTML)
+        return FileResponse(frontend_index_path())
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa_or_api_404(path: str) -> Response:
         if path.startswith("api/"):
             return api_not_found()
-        return FileResponse(INDEX_HTML)
+        return FileResponse(frontend_index_path())
 
     return app
 
 
-app = create_app()
+def create_runtime_shell_app() -> FastAPI:
+    runtime_app = FastAPI(title="rss-aggregator")
+    mount_frontend_static_assets(runtime_app)
+
+    @runtime_app.get("/", include_in_schema=False)
+    def runtime_index() -> FileResponse:
+        return FileResponse(frontend_index_path())
+
+    @runtime_app.get("/{path:path}", include_in_schema=False)
+    def runtime_spa(path: str) -> FileResponse:
+        return FileResponse(frontend_index_path())
+
+    return runtime_app
+
+
+app = create_runtime_shell_app()

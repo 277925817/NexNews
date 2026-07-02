@@ -1,5 +1,5 @@
 meta:
-  version: tasks_mvp@v8
+  version: tasks_mvp@v10
   mode: dag_execution
   purpose: "stable executable MVP product task system"
   architecture: "single FastAPI app + React/Vite SPA + SQLite"
@@ -25,6 +25,17 @@ meta:
       - snapshot
       - e2e
       - acceptance
+    product_stages:
+      - static
+      - unit
+      - contract
+      - api
+      - integration
+      - replay
+      - snapshot
+      - e2e
+    gate_stage: "acceptance"
+    acceptance_report_policy: "acceptance writes reports/acceptance/ACC-STOP-*.json, coverage reports, and STOP_ALLOWED.json; it is not a product-stage report and cannot replace reports/stages/<stage>.json evidence"
   gates:
     - "ACC-STOP-001"
     - "ACC-STOP-002"
@@ -67,7 +78,7 @@ dag:
       outputs:
         - "scripts/run_harness.py accepts every workflow stage command."
         - "Stage and gate reports have deterministic structured failure output before product tests exist."
-        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, schemas/tasks.schema.json, schemas/prd_coverage.schema.json, schemas/task_acceptance_coverage.schema.json, and schemas/local_user_acceptance.schema.json exist."
+        - "schemas/test_report.schema.json, schemas/stop_decision.schema.json, schemas/task_plan_report.schema.json, schemas/review_report.schema.json, schemas/fix_optimize_report.schema.json, schemas/round_summary_report.schema.json, schemas/tasks.schema.json, schemas/prd_coverage.schema.json, schemas/task_acceptance_coverage.schema.json, and schemas/local_user_acceptance.schema.json exist."
         - "STOP_ALLOWED report has a documented stop-decision shape."
       acceptance_criteria:
         - "Every workflow stage command writes a machine-readable report to the documented report paths."
@@ -82,11 +93,20 @@ dag:
       name: "Repo runtime skeleton"
       layer: "L0: Bootstrap"
       type: ["setup"]
-      status: "pending"
+      status: "passed"
       source: ["docs/02_arch.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-008", "ACC-STOP-010"]
       priority: "refactor_tasks"
       test_scope: ["static"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-001/static.json"
+      test_report: "reports/tasks/TASK-001/static.json"
+      plan_report: "reports/tasks/TASK-001/plan.json"
+      summary_report: "reports/tasks/TASK-001/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-000"]
       description: "Replace legacy Flask/static-page traction with only the minimal repository structure and runnable app shells for FastAPI backend and React/Vite frontend."
       inputs:
@@ -108,11 +128,20 @@ dag:
       name: "DB schema constraints"
       layer: "Data Layer"
       type: ["data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-005"]
       priority: "data_model_violations"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-002A/static.json"
+      test_report: "reports/tasks/TASK-002A/unit.json"
+      plan_report: "reports/tasks/TASK-002A/plan.json"
+      summary_report: "reports/tasks/TASK-002A/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-021"]
       description: "Create only the SQLite MVP schema, constraints, and indexes."
       inputs:
@@ -136,11 +165,20 @@ dag:
       name: "DB init hook and seed"
       layer: "Data Layer"
       type: ["data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-005"]
       priority: "data_model_violations"
       test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-002B/unit.json"
+      test_report: "reports/tasks/TASK-002B/unit.json"
+      plan_report: "reports/tasks/TASK-002B/plan.json"
+      summary_report: "reports/tasks/TASK-002B/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002A"]
       description: "Create the SQLite init hook and idempotent default RSS source seed only."
       inputs:
@@ -148,11 +186,11 @@ dag:
         - "Default RSS source list from docs/01_prd.md."
       outputs:
         - "DB init hook can initialize an empty SQLite database."
-        - "Exactly 7 default sources are seeded once."
+        - "Exactly 33 default sources are seeded once."
       acceptance_criteria:
         - "Init hook creates the schema from TASK-002A in an empty SQLite database."
-        - "Default source seed count is 7 on first init and unchanged on second init."
-        - "Default source seed URL set exactly matches the 7 URLs listed in docs/01_prd.md."
+        - "Default source seed count is 33 on first init and unchanged on second init."
+        - "Default source seed URL set exactly matches the 33 URLs listed in docs/01_prd.md."
         - "Seed rows satisfy source table constraints."
         - "static stage result = pass for DB init hook and seed."
       failure_criteria:
@@ -162,11 +200,20 @@ dag:
       name: "Local config fixtures mocks"
       layer: "Data Layer"
       type: ["setup", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-003/static.json"
+      test_report: "reports/tasks/TASK-003/unit.json"
+      plan_report: "reports/tasks/TASK-003/plan.json"
+      summary_report: "reports/tasks/TASK-003/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-001"]
       description: "Create local development config and fixture/mock inputs without adding product behavior."
       inputs:
@@ -190,11 +237,20 @@ dag:
       name: "RSS ingest"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-004/unit.json"
+      test_report: "reports/tasks/TASK-004/integration.json"
+      plan_report: "reports/tasks/TASK-004/plan.json"
+      summary_report: "reports/tasks/TASK-004/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002B", "TASK-003"]
       description: "Read enabled RSS sources from fixture-backed clients, parse items, normalize links, and store new raw news items."
       inputs:
@@ -216,11 +272,20 @@ dag:
       name: "Score news"
       layer: "Pipeline Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-005/unit.json"
+      test_report: "reports/tasks/TASK-005/integration.json"
+      plan_report: "reports/tasks/TASK-005/plan.json"
+      summary_report: "reports/tasks/TASK-005/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-004"]
       description: "Score raw news with mock LLM JSON, validate score output, and transition raw items to scored."
       inputs:
@@ -244,23 +309,33 @@ dag:
       name: "Filter and dedupe"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-006/unit.json"
+      test_report: "reports/tasks/TASK-006/integration.json"
+      plan_report: "reports/tasks/TASK-006/plan.json"
+      summary_report: "reports/tasks/TASK-006/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-005"]
-      description: "Apply score threshold filtering and canonical_url dedupe, producing the selected set for content fetch."
+      description: "Apply AI value filtering and canonical_url dedupe, producing the selected set for content fetch."
       inputs:
         - "scored news_item rows."
-        - "Threshold config with default value 60."
+        - "AI value thresholds: is_ai_news = true, ai_relevance_score >= 70, score >= 75."
       outputs:
-        - "is_selected is computed from score immediately after scoring."
-        - "Selected query returns score >= 60 items only."
+        - "is_selected is computed from is_ai_news, ai_relevance_score and score immediately after scoring."
+        - "Selected query returns high-value AI items only."
         - "Duplicate canonical_url appears once."
       acceptance_criteria:
-        - "score = 60 sets is_selected = 1."
+        - "is_ai_news = true, ai_relevance_score = 70 and score = 75 sets is_selected = 1."
         - "score = 59 sets is_selected = 0."
+        - "is_ai_news = false sets is_selected = 0 even when score is high."
         - "is_selected does not change pipeline_state."
         - "Duplicate canonical_url count in news_item/displayable output <= 1."
         - "Distinct high-score items with different canonical_url or different domains remain separate fetch candidates."
@@ -272,11 +347,20 @@ dag:
       name: "Fetch content"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-007/unit.json"
+      test_report: "reports/tasks/TASK-007/integration.json"
+      plan_report: "reports/tasks/TASK-007/plan.json"
+      summary_report: "reports/tasks/TASK-007/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-006"]
       description: "Fetch article content for selected items using article HTML fixtures, with RSS content fallback."
       inputs:
@@ -299,11 +383,20 @@ dag:
       name: "Translate content"
       layer: "Pipeline Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/06_dev_rules.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-007", "ACC-STOP-009"]
       priority: "acceptance_gate_failures"
       test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-008/unit.json"
+      test_report: "reports/tasks/TASK-008/integration.json"
+      plan_report: "reports/tasks/TASK-008/plan.json"
+      summary_report: "reports/tasks/TASK-008/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-007"]
       description: "Translate fetched content with mock LLM JSON and persist Chinese fields or translation failure facts."
       inputs:
@@ -327,11 +420,20 @@ dag:
       name: "Pipeline run record"
       layer: "Pipeline Layer"
       type: ["backend", "data"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/04_data_model.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-009/integration.json"
+      test_report: "reports/tasks/TASK-009/integration.json"
+      plan_report: "reports/tasks/TASK-009/plan.json"
+      summary_report: "reports/tasks/TASK-009/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-004", "TASK-005", "TASK-006", "TASK-007", "TASK-008"]
       description: "Record pipeline run metadata from pipeline step results; this task does not expose triggers, scheduler, API, or UI."
       inputs:
@@ -350,11 +452,20 @@ dag:
       name: "Refresh trigger signal"
       layer: "Trigger Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-008"]
       priority: "acceptance_gate_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-010/integration.json"
+      test_report: "reports/tasks/TASK-010/integration.json"
+      plan_report: "reports/tasks/TASK-010/plan.json"
+      summary_report: "reports/tasks/TASK-010/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-009"]
       description: "Coordinate manual and scheduled refresh execution using fixed-clock triggers and concurrency guards; the refresh path runs the complete MVP pipeline through existing pipeline services."
       inputs:
@@ -378,11 +489,20 @@ dag:
       name: "API home"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-011/contract.json"
+      test_report: "reports/tasks/TASK-011/api.json"
+      plan_report: "reports/tasks/TASK-011/plan.json"
+      summary_report: "reports/tasks/TASK-011/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Implement GET /api/home with latest news and 30-day high-score list."
       inputs:
@@ -404,11 +524,20 @@ dag:
       name: "API news detail"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/04_data_model.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-012/api.json"
+      test_report: "reports/tasks/TASK-012/api.json"
+      plan_report: "reports/tasks/TASK-012/plan.json"
+      summary_report: "reports/tasks/TASK-012/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Implement GET /api/news/{id} with translated detail and safe non-translated states."
       inputs:
@@ -428,11 +557,20 @@ dag:
       name: "API sources"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-004"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-013/contract.json"
+      test_report: "reports/tasks/TASK-013/api.json"
+      plan_report: "reports/tasks/TASK-013/plan.json"
+      summary_report: "reports/tasks/TASK-013/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-002B", "TASK-003"]
       description: "Implement GET/POST/PATCH/DELETE /api/sources for RSS source management."
       inputs:
@@ -455,11 +593,20 @@ dag:
       name: "API refresh"
       layer: "API Layer"
       type: ["backend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-004", "ACC-STOP-009"]
       priority: "api_contract_failures"
       test_scope: ["contract", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-014/contract.json"
+      test_report: "reports/tasks/TASK-014/api.json"
+      plan_report: "reports/tasks/TASK-014/plan.json"
+      summary_report: "reports/tasks/TASK-014/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-010"]
       description: "Implement POST /api/refresh as the API boundary for the complete manual refresh flow."
       inputs:
@@ -479,11 +626,20 @@ dag:
       name: "UI home"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-006", "ACC-STOP-009"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      status: "passed"
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-015/integration.json"
+      test_report: "reports/tasks/TASK-015/integration.json"
+      plan_report: "reports/tasks/TASK-015/plan.json"
+      summary_report: "reports/tasks/TASK-015/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-011", "TASK-014"]
       description: "Implement Home page news feed, high-score list, refresh button, loading, empty, and error states using mocked API client responses."
       inputs:
@@ -507,11 +663,20 @@ dag:
       name: "UI article"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-006", "ACC-STOP-009"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      status: "passed"
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-016/integration.json"
+      test_report: "reports/tasks/TASK-016/integration.json"
+      plan_report: "reports/tasks/TASK-016/plan.json"
+      summary_report: "reports/tasks/TASK-016/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-012", "TASK-015"]
       description: "Implement ArticleView for translated reading, ready polling, translation_failed state, original_url link, and 404."
       inputs:
@@ -533,11 +698,20 @@ dag:
       name: "UI sources"
       layer: "UI Layer"
       type: ["frontend"]
-      status: "pending"
+      status: "passed"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-002", "ACC-STOP-006"]
       priority: "ui_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-017/integration.json"
+      test_report: "reports/tasks/TASK-017/integration.json"
+      plan_report: "reports/tasks/TASK-017/plan.json"
+      summary_report: "reports/tasks/TASK-017/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-013", "TASK-015"]
       description: "Implement RSS source configuration page using mocked source API responses."
       inputs:
@@ -560,11 +734,20 @@ dag:
       name: "Integration pipeline only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/01_prd.md", "docs/02_arch.md", "docs/07_test_spec.md"]
       acceptance_gate: ["ACC-STOP-003", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-018/integration.json"
+      test_report: "reports/tasks/TASK-018/integration.json"
+      plan_report: "reports/tasks/TASK-018/plan.json"
+      summary_report: "reports/tasks/TASK-018/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-008"]
       description: "Run the pipeline-only integration path directly with fixture data; verify DB facts only and do not call trigger layer, API routes, or render UI."
       inputs:
@@ -575,7 +758,7 @@ dag:
         - "Partial source/fetch/translation failures remain isolated in DB facts."
       acceptance_criteria:
         - "Full pipeline creates at least 1 displayable DB item."
-        - "score = 60 item reaches fetched/translation path; score = 59 item does not."
+        - "AI threshold item reaches fetched/translation path; score = 59 and non-AI high-score items do not."
         - "Duplicate canonical_url appears once in DB displayable query."
         - "processing_log contains DB facts for crawl, score, fetch, and translate success/failure."
         - "No live RSS, live webpage, live LLM, production DB, or current system time is used."
@@ -587,11 +770,20 @@ dag:
       name: "Integration API only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-019/integration.json"
+      test_report: "reports/tasks/TASK-019/integration.json"
+      plan_report: "reports/tasks/TASK-019/plan.json"
+      summary_report: "reports/tasks/TASK-019/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-011", "TASK-012", "TASK-013", "TASK-014", "TASK-018"]
       description: "Run API integration against pipeline-produced fixture data; verify API responses only and do not render UI."
       inputs:
@@ -603,7 +795,7 @@ dag:
         - "Source and refresh endpoints preserve contract behavior."
       acceptance_criteria:
         - "GET /api/home returns the PRD fixture density after pipeline integration; a 1-3 item smoke sample is not sufficient when fixture data contains at least 10 displayable items."
-        - "score = 60 item appears through API; score = 59 item does not."
+        - "Only translated high-value AI items appear through API; score = 59 and non-AI high-score items do not."
         - "top_ranked_news returns 10 items when the latest-30-day fixture has at least 10 eligible items, excludes 30-day-window-outside items, and applies score DESC plus published_at DESC tie-break ordering."
         - "Duplicate canonical_url appears once through API."
         - "Detail API returns content_zh only for translated item."
@@ -616,11 +808,20 @@ dag:
       name: "Integration UI only"
       layer: "Integration Layer"
       type: ["integration", "test"]
-      status: "pending"
+      status: "passed"
       source: ["docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-020/integration.json"
+      test_report: "reports/tasks/TASK-020/integration.json"
+      plan_report: "reports/tasks/TASK-020/plan.json"
+      summary_report: "reports/tasks/TASK-020/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-015", "TASK-016", "TASK-017", "TASK-019"]
       description: "Run UI integration against API fixture responses; verify rendered DOM only and do not re-run pipeline internals."
       inputs:
@@ -646,11 +847,20 @@ dag:
       name: "Acceptance evaluator implementation"
       layer: "Acceptance Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-021/static.json"
+      test_report: "reports/tasks/TASK-021/unit.json"
+      plan_report: "reports/tasks/TASK-021/plan.json"
+      summary_report: "reports/tasks/TASK-021/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-000", "TASK-003"]
       description: "Implement and test the local acceptance evaluator without making it the final stop gate task."
       inputs:
@@ -680,11 +890,20 @@ dag:
       name: "Replay deterministic stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008"]
       priority: "test_failures"
       test_scope: ["replay"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-022/replay.json"
+      test_report: "reports/tasks/TASK-022/replay.json"
+      plan_report: "reports/tasks/TASK-022/plan.json"
+      summary_report: "reports/tasks/TASK-022/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-018"]
       description: "Implement the replay stage owner that proves fixture, mock, seed, and fixed-clock pipeline outputs are deterministic across repeated runs."
       inputs:
@@ -706,11 +925,20 @@ dag:
       name: "Snapshot regression stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["snapshot"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-023/snapshot.json"
+      test_report: "reports/tasks/TASK-023/snapshot.json"
+      plan_report: "reports/tasks/TASK-023/plan.json"
+      summary_report: "reports/tasks/TASK-023/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-019", "TASK-020"]
       description: "Implement the snapshot stage owner for API JSON, DB schema, public schema, and React DOM regression artifacts."
       inputs:
@@ -733,11 +961,20 @@ dag:
       name: "E2E deterministic stage"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-009"]
       priority: "test_failures"
       test_scope: ["e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-024/e2e.json"
+      test_report: "reports/tasks/TASK-024/e2e.json"
+      plan_report: "reports/tasks/TASK-024/plan.json"
+      summary_report: "reports/tasks/TASK-024/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-022", "TASK-023"]
       description: "Implement the deterministic end-to-end stage from clean SQLite database through refresh, API projection, and UI render."
       inputs:
@@ -750,7 +987,7 @@ dag:
       acceptance_criteria:
         - "E2E run loads fixtures, executes full pipeline, verifies API output, and verifies UI render from clean isolated state."
         - "E2E run uses a real browser or equivalent DOM-capable runner to verify homepage news feed, 30-day high-score list, news detail, and sources management."
-        - "Browser E2E proves Home News Feed fixture density, HighScoreList 30-day ranking, NewsCard summary text-only rendering, NewsCard click-through, HighScoreList click-through, ArticleView translated/ready/translation_failed/404 states, ArticleView original_url button, no direct original-site navigation from cards or rank items, Sources create/disable/delete flows, default source CRUD parity, and refresh POST /api/refresh then GET /api/home behavior."
+        - "Browser E2E proves Home News Feed fixture density, HighScoreList 30-day ranking, NewsCard summary text-only rendering, NewsCard click-through, HighScoreList click-through, ArticleView translated/ready/translation_failed/404 states, click-to-read readability without unexplained empty ArticleView states, ArticleView original_url button, no direct original-site navigation from cards or rank items, Sources create/disable/delete flows, default source CRUD parity, and refresh POST /api/refresh then GET /api/home behavior."
         - "E2E run emits no live dependency access and no forbidden public-surface fields."
         - "E2E report contains referenced_files, data_hash, artifact_paths, and assertion visibility."
         - "e2e stage result = pass for deterministic full run."
@@ -761,11 +998,20 @@ dag:
       name: "Full stage report materialization"
       layer: "Verification Layer"
       type: ["test"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "test_failures"
       test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-025/unit.json"
+      test_report: "reports/tasks/TASK-025/unit.json"
+      plan_report: "reports/tasks/TASK-025/plan.json"
+      summary_report: "reports/tasks/TASK-025/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
       depends_on: ["TASK-018", "TASK-019", "TASK-020", "TASK-021", "TASK-022", "TASK-023", "TASK-024"]
       description: "Implement the full-regression materialization path that runs every required product stage without --task-id before final workflow acceptance."
       inputs:
@@ -788,16 +1034,133 @@ dag:
         - "FAIL if any task-scoped report is used as a substitute for reports/stages/<stage>.json."
         - "FAIL if full-regression materialization runs acceptance or writes ACC-STOP reports."
 
+    - id: TASK-026A
+      name: "Round evidence schema hardening"
+      layer: "Acceptance Layer"
+      type: ["test", "docs", "schema"]
+      status: "passed"
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026A/static.json"
+      test_report: "reports/tasks/TASK-026A/static.json"
+      plan_report: "reports/tasks/TASK-026A/plan.json"
+      summary_report: "reports/tasks/TASK-026A/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-021"]
+      description: "Add explicit ReviewReport and FixOptimizeReport contracts and ensure RoundSummaryReport cannot count a completed round without parseable review and fix/optimize evidence."
+      inputs:
+        - "Round lifecycle rules from workflows.md."
+        - "Report schema rules from docs/07_test_spec.md."
+      outputs:
+        - "schemas/review_report.schema.json and schemas/fix_optimize_report.schema.json exist and are validated by static harness checks."
+        - "RoundSummaryReport schema requires round_index, completed_round_count, review, fix_optimize and round_end_decision."
+        - "RoundSummaryReport schema forbids selected_next_state = DONE."
+      acceptance_criteria:
+        - "ReviewReport schema requires all eight review dimensions and forbids passed review reports with blocking findings."
+        - "FixOptimizeReport schema requires resolved blocking findings, at least one retest report and no regression when status = passed."
+        - "RoundSummaryReport schema rejects selected_next_state = DONE."
+        - "static stage result = pass for round evidence schema hardening."
+      failure_criteria:
+        - "FAIL if completed rounds can be counted without parseable review and fix/optimize evidence."
+
+    - id: TASK-026B
+      name: "Stop decision and coverage schema hardening"
+      layer: "Acceptance Layer"
+      type: ["test", "docs", "schema"]
+      status: "passed"
+      source: ["docs/07_test_spec.md", "docs/08_acceptance.md", "schemas/stop_decision.schema.json"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026B/unit.json"
+      test_report: "reports/tasks/TASK-026B/unit.json"
+      plan_report: "reports/tasks/TASK-026B/plan.json"
+      summary_report: "reports/tasks/TASK-026B/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-026A"]
+      description: "Make STOP_ALLOWED depend on valid round evidence and tighten PRD/task acceptance coverage schemas so prose-only or task-scoped-only evidence cannot pass."
+      inputs:
+        - "StopDecisionReport rules from docs/08_acceptance.md."
+        - "Coverage report rules from docs/07_test_spec.md."
+      outputs:
+        - "round_count_policy includes round_evidence with summary, review and fix/optimize report paths."
+        - "completed_round_count is derived from valid round_evidence entries."
+        - "PRD and task acceptance coverage schemas reject passed reports with uncovered items or non-full-stage evidence paths."
+      acceptance_criteria:
+        - "STOP_ALLOWED schema requires round_count_policy.round_evidence."
+        - "round_count_policy.status = PASS requires either 10 valid round evidence entries or a valid early_done_allowed case."
+        - "PRD coverage schema rejects status = passed when uncovered_acceptance_items is non-empty."
+        - "Task acceptance coverage schema rejects status = passed when uncovered_task_acceptance_items is non-empty."
+        - "unit stage result = pass for stop decision and coverage schema hardening."
+      failure_criteria:
+        - "FAIL if STOP_ALLOWED can become true while round_count_policy.status is not PASS."
+        - "FAIL if coverage can pass with prose-only evidence or coverage file self-reference."
+
+    - id: TASK-026C
+      name: "Acceptance evaluator enforcement"
+      layer: "Acceptance Layer"
+      type: ["test"]
+      status: "passed"
+      source: ["scripts/run_harness.py", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-008", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026C/unit.json"
+      test_report: "reports/tasks/TASK-026C/unit.json"
+      plan_report: "reports/tasks/TASK-026C/plan.json"
+      summary_report: "reports/tasks/TASK-026C/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-026B", "TASK-025"]
+      description: "Teach the acceptance evaluator to compute valid completed rounds from parseable summary/review/fix evidence and to reject stale or failed local user acceptance."
+      inputs:
+        - "Report paths from workflows.md."
+        - "Stop decision schema and local user acceptance schema."
+      outputs:
+        - "Acceptance evaluator validates round_evidence and computes completed_round_count from valid entries."
+        - "Acceptance evaluator rejects early_done_allowed when unfinished work, failed gates, failed stop inputs or malformed round evidence exists."
+        - "Acceptance evaluator preserves failed local user acceptance findings and keeps STOP_ALLOWED false."
+      acceptance_criteria:
+        - "Unit tests prove fewer than 10 valid rounds with unfinished work keeps round_count_policy = FAIL."
+        - "Unit tests prove early_done_allowed is true only when all gates, stop inputs and round evidence preconditions are satisfied."
+        - "Unit tests prove local user acceptance failed findings keep local_user_acceptance_status and STOP_ALLOWED failed."
+        - "Task-scoped acceptance remains invalid and full acceptance with missing stop input writes STOP_ALLOWED = false."
+        - "unit stage result = pass for acceptance evaluator enforcement."
+      failure_criteria:
+        - "FAIL if acceptance trusts RoundSummaryReport.completed_round_count without validating linked review and fix/optimize reports."
+
     - id: TASK-026
       name: "PRD, workflow stop-rule, and test-spec audit"
       layer: "Acceptance Layer"
       type: ["test", "docs", "review"]
-      status: "pending"
+      status: "passed"
       source: ["workflows.md", "tasks.md", "docs/01_prd.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
       acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-008", "ACC-STOP-010"]
       priority: "acceptance_gate_failures"
       test_scope: ["static", "e2e"]
-      depends_on: ["TASK-021", "TASK-024", "TASK-025"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-026/e2e.json"
+      test_report: "reports/tasks/TASK-026/e2e.json"
+      plan_report: "reports/tasks/TASK-026/plan.json"
+      summary_report: "reports/tasks/TASK-026/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-026A", "TASK-026B", "TASK-026C"]
       description: "Audit whether tasks.md covers every PRD requirement, whether workflows.md plus docs/08_acceptance.md can prevent premature long-running stop, and whether docs/07_test_spec.md has rigorous executable test plans for all PRD, acceptance, and task-level acceptance standards."
       inputs:
         - "Checklist-style acceptance statements from docs/01_prd.md."
@@ -813,6 +1176,7 @@ dag:
         - "A PRD-to-task coverage audit listing each PRD requirement, source line, mapped task_id, acceptance gate, and missing-task finding when coverage is absent."
         - "A task acceptance coverage audit listing each tasks.md acceptance criterion, task_id, criterion source line, mapped assertion ids, report paths, and pass/fail status."
         - "A stop-rule audit proving workflows.md, docs/08_acceptance.md, and tasks.md all require every DAG node to be passed plus all gates and stop inputs to pass before DONE."
+        - "A round-lifecycle audit proving every completed round has plan, test, review, fix/optimize, and summary evidence, plus machine-readable round count policy evidence."
         - "A test-spec audit proving docs/07_test_spec.md has deterministic executable verification for every acceptance standard mentioned by docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
         - "reports/acceptance/local_user_acceptance.json conforming to schemas/local_user_acceptance.schema.json."
         - "STOP_ALLOWED.json lists unfinished tasks, uncovered PRD items, failed stop inputs, and user acceptance failures."
@@ -823,9 +1187,10 @@ dag:
         - "Task acceptance coverage audit FAILS if any task acceptance criterion is unmapped, mapped only to prose, mapped only to task-scoped evidence when full-stage evidence is required, unexecuted, failed, flaky, skipped, or missing a report path."
         - "Stop-rule audit PASS only when workflows.md, docs/08_acceptance.md, and tasks.md all agree that DONE requires all dag.nodes[*].status == passed, ACC-STOP-001 through ACC-STOP-010 PASS, task_completion_status PASS, prd_coverage_status PASS, task_acceptance_coverage_status PASS, browser_e2e_status PASS, local_user_acceptance_status PASS, and STOP_ALLOWED = true."
         - "Stop-rule audit FAILS if task_blocked, pending, in_progress, missing browser E2E, incomplete PRD coverage, incomplete task acceptance coverage, missing local user acceptance, or failed local user acceptance can reach DONE."
+        - "Round-lifecycle audit PASS only when every passed task has a parseable RoundSummaryReport with round_index, completed_round_count, review evidence, fix_optimize evidence, and DONE before 10 rounds is allowed only by round_count_policy.early_done_allowed = true."
         - "Test-spec audit PASS only when docs/07_test_spec.md gives a deterministic, executable test method for every验收标准 mentioned in docs/01_prd.md, docs/08_acceptance.md, and tasks.md."
-        - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
-        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
+        - "Test-spec audit specifically covers homepage news density, 30-day high-score list, NewsCard summary HTML escaping, article detail, click-to-read readability, sources management, default source CRUD parity, refresh action, API envelope, leak checks, task completion, PRD coverage, task acceptance coverage, browser E2E, and local user acceptance regression."
+        - "Mandatory assertion catalog includes task completion, PRD coverage, task acceptance coverage, round evidence schema enforcement, round count policy enforcement, coverage schema hardening, browser E2E stop input, local user acceptance, NewsCard summary text-only, exact default source list, default source parity, distinct dedupe positive case, fallback summary translation, ArticleView original link, no direct original-site navigation, ArticleView browser E2E, click-to-read readability, Sources page browser E2E, and refresh action browser E2E assertion IDs with traceability rows."
         - "Any PRD acceptance item without executed passing evidence appears in uncovered_acceptance_items and blocks STOP_ALLOWED."
         - "Any task acceptance criterion without executed passing evidence appears in uncovered_task_acceptance_items and blocks STOP_ALLOWED."
         - "Local user acceptance records local URL, port, database, checked surfaces, failed findings, and current status."
@@ -837,4 +1202,441 @@ dag:
         - "FAIL if task acceptance coverage is generated from prose only without executed structured evidence."
         - "FAIL if local user acceptance omits failed findings reported by the user."
         - "FAIL if workflow, acceptance, or tasks stop rules allow task_blocked, pending, in_progress, missing browser E2E, missing PRD coverage, missing task acceptance coverage, or failed local user acceptance to reach DONE."
+        - "FAIL if completed rounds can be counted without review/fix_optimize evidence, or if STOP_ALLOWED can be true before 10 rounds without round_count_policy proving all stop conditions passed."
         - "FAIL if browser E2E evidence is replaced by API-only tests, static string scans, screenshots without assertions, or manual visual judgment."
+
+    - id: TASK-027
+      name: "UI light gray theme"
+      layer: "UI Layer"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-027/e2e.json"
+      test_report: "reports/tasks/TASK-027/e2e.json"
+      plan_report: "reports/tasks/TASK-027/plan.json"
+      summary_report: "reports/tasks/TASK-027/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-020", "TASK-023", "TASK-024", "TASK-026"]
+      description: "Apply the requirement change that the UI uses a light gray page background, with documentation-first traceability and deterministic UI visual evidence."
+      inputs:
+        - "User requirement change: main interface style must use a light gray background."
+        - "Updated UI visual tokens in docs/03_ui_spec.md."
+        - "Updated UI visual regression rules in docs/07_test_spec.md and docs/08_acceptance.md."
+      outputs:
+        - "Root, body, app shell and all MVP pages use the documented light gray background contract."
+        - "Primary cards, ranking section container, ranking rows, forms, buttons and state surfaces use documented white or near-white surface tokens."
+        - "Harness UI/snapshot/E2E evidence proves the light gray visual contract and rejects old dark main backgrounds."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before CSS implementation."
+        - "Root, body and app shell backgrounds use #F3F4F6 and the frontend does not set color-scheme: dark."
+        - "NewsCard, HighScoreList overall card, HighScoreList rows, ArticleView state container, SourceForm controls and SourceRow use #FFFFFF or #F8FAFC surfaces with #D8DEE6 borders."
+        - "Old dark background tokens #0B0F14, #111820 and #151E28 are not used as page, card, form or primary content backgrounds."
+        - "Integration, snapshot and E2E UI evidence include and pass the light gray theme contract."
+      failure_criteria:
+        - "FAIL if implementation changes API behavior, data model fields, pipeline behavior, UI interactions, component inventory, or text rendering rules."
+        - "FAIL if the light gray theme is accepted only by manual screenshot review without structured assertions."
+
+    - id: TASK-028
+      name: "Top 30 Days overall card"
+      layer: "UI Layer"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-028/e2e.json"
+      test_report: "reports/tasks/TASK-028/e2e.json"
+      plan_report: "reports/tasks/TASK-028/plan.json"
+      summary_report: "reports/tasks/TASK-028/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-020", "TASK-023", "TASK-024", "TASK-027"]
+      description: "Apply the requirement change that Top 30 Days renders as one overall card in the Home right column, with documentation-first traceability and deterministic UI evidence."
+      inputs:
+        - "User requirement change: Top 30 Days needs one overall card."
+        - "Updated HighScoreList layout rules in docs/03_ui_spec.md."
+        - "Updated UI visual regression rules in docs/07_test_spec.md and docs/08_acceptance.md."
+      outputs:
+        - "HighScoreList uses a single outer card surface for the Top 30 Days section."
+        - "Ranked items render as rows inside the outer card rather than independent nested cards."
+        - "Harness UI/snapshot/E2E and deployed browser smoke evidence prove the Top 30 Days overall card contract."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before CSS implementation."
+        - "Top 30 Days / HighScoreList renders as one overall card surface with #FFFFFF background, #D8DEE6 border, 8px radius and 16px padding."
+        - "Ranked items inside Top 30 Days render as rows inside the overall card, separated by dividers and without independent card borders."
+        - "Integration, snapshot, E2E and deployed browser smoke evidence include and pass the HighScoreList overall card contract."
+        - "The change preserves the existing Home two-column layout, HighScoreList click-through behavior, API contract and light gray theme."
+      failure_criteria:
+        - "FAIL if implementation adds API behavior, data model fields, pipeline behavior, new UI components or new interactions."
+        - "FAIL if the Top 30 Days card is accepted only by manual screenshot review without structured assertions."
+
+    - id: TASK-029
+      name: "Translation fixture success coverage"
+      layer: "Pipeline/Test Harness"
+      type: ["docs", "fixture", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["unit", "integration", "api", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-029/e2e.json"
+      test_report: "reports/tasks/TASK-029/e2e.json"
+      plan_report: "reports/tasks/TASK-029/plan.json"
+      summary_report: "reports/tasks/TASK-029/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-008", "TASK-018", "TASK-024", "TASK-028"]
+      description: "Fix the acceptance gap where deterministic translation fixtures allowed most displayable news to become translation_failed while still passing."
+      inputs:
+        - "User-reported local acceptance finding: most news entries are translation_failed."
+        - "docs/01_prd.md closed loop 4.2 translation requirements."
+        - "Current fixtures/llm/translation.json only contains two valid translated records for the displayable fixture set."
+      outputs:
+        - "Translation fixture coverage produces a majority of translated selected news while retaining isolated failure and pending samples."
+        - "Tests and harness assertions reject the previous 2 translated / 8 failed internal fixture distribution."
+        - "TASK-033 and TASK-034 supersede the old Home/Top visible-surface distribution with article-quality translated-only reading evidence."
+      acceptance_criteria:
+        - "Relevant test and acceptance documents are updated before fixture or test implementation."
+        - "After deterministic refresh, the selected fixture dataset contains a majority of translated items while preserving one translation_failed item and one ready item for direct detail-state coverage."
+        - "This historical task no longer requires ready or translation_failed items to appear in latest_news or top_ranked_news; TASK-034 owns the translated-only Home and Top 30 Days surface contract."
+        - "The partial translation fixture remains translation_failed with no title_zh, summary_zh or content_zh written."
+        - "The pending translation fixture remains ready with no translate failure fact."
+        - "Unit and integration harness evidence include and pass the internal majority-translated fixture contract."
+      failure_criteria:
+        - "FAIL if the fix uses live RSS, live webpages, live LLM calls, production data, network time, or manual visual judgment."
+        - "FAIL if translation_failed is removed entirely or partial/pending translation edge cases are no longer proven."
+        - "FAIL if API contract, data model fields, status projection priority, or UI rendering rules are changed to mask failures."
+
+    - id: TASK-030
+      name: "Article click readability hardening"
+      layer: "UI/Test Harness"
+      type: ["frontend", "docs", "test"]
+      status: "passed"
+      source: ["docs/03_ui_spec.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-030/e2e.json"
+      test_report: "reports/tasks/TASK-030/e2e.json"
+      plan_report: "reports/tasks/TASK-030/plan.json"
+      summary_report: "reports/tasks/TASK-030/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-016", "TASK-020", "TASK-024", "TASK-029"]
+      description: "Fix the local acceptance regression where clicking a non-translated news item can enter an ArticleView that has neither Chinese summary/body nor an explicit unreadable-content explanation."
+      inputs:
+        - "User-reported local acceptance finding: clicking a news item enters ArticleView but no summary or body is visible."
+        - "API contract requires ready and translation_failed details to omit summary_zh and content_zh."
+        - "Updated UI/test/acceptance documents require explicit unreadable-content copy instead of an unexplained empty reading page."
+      outputs:
+        - "ArticleView explains ready and translation_failed detail states with 摘要和正文暂不可用 plus status-specific reason text."
+        - "Direct ready and translation_failed ArticleView routes expose 摘要和正文暂不可用 with status-specific reason text."
+        - "TASK-034 supersedes the old primary-list non-translated link behavior by removing ready and translation_failed from Home/Top ordinary news entries."
+      acceptance_criteria:
+        - "Relevant UI, test and acceptance documents are updated before frontend or harness implementation."
+        - "ArticleView translated detail still renders non-empty summary_zh and content_zh."
+        - "ArticleView ready detail does not render summary_zh/content_zh but renders 摘要和正文暂不可用 and 翻译完成后将自动显示中文摘要和正文。"
+        - "ArticleView translation_failed detail does not render summary_zh/content_zh but renders 摘要和正文暂不可用 and 翻译失败，当前无法显示中文摘要和正文。"
+        - "Ready and translation_failed direct detail routes remain explicit unreadable states with 摘要和正文暂不可用."
+        - "This historical task no longer requires ready or translation_failed NewsCard/HighScoreList links in the primary Home/Top reading path; TASK-034 owns the translated-only click-through contract."
+      failure_criteria:
+        - "FAIL if the fix changes API response shape, data model fields, status projection priority, or returns placeholder summary_zh/content_zh for non-translated items."
+        - "FAIL if the fix uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+        - "FAIL if NewsCard or HighScoreList starts navigating directly to original_url instead of the internal ArticleView route."
+
+    - id: TASK-031
+      name: "Local acceptance failure preservation"
+      layer: "Harness Layer"
+      type: ["docs", "test", "harness"]
+      status: "passed"
+      source: ["workflows.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-001", "ACC-STOP-010"]
+      priority: "acceptance_gate_failures"
+      test_scope: ["static", "unit"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 0
+      evidence: "reports/tasks/TASK-031/static.json"
+      test_report: "reports/tasks/TASK-031/unit.json"
+      plan_report: "reports/tasks/TASK-031/plan.json"
+      summary_report: "reports/tasks/TASK-031/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-026C", "TASK-030"]
+      description: "Fix the harness gap where a later user acceptance finding can be overwritten by automatic smoke evidence, allowing STOP_ALLOWED to remain true after a real user-reported failure."
+      inputs:
+        - "User-reported failed findings: no readable full text, incorrect summaries, and virtual original links."
+        - "docs/08_acceptance.md rule that failed local user acceptance must be preserved and force ITERATE."
+        - "Current ensure_local_user_acceptance_report rewrites local_user_acceptance.json from automated smoke evidence only."
+      outputs:
+        - "Local user acceptance report preserves manual/user-reported failed findings until mapped regression assertions pass."
+        - "Acceptance evaluation keeps local_user_acceptance_status = FAIL and STOP_ALLOWED = false while unresolved user findings exist."
+        - "New structured regression finding ids exist for full text readability, summary correctness, and original URL realism."
+      acceptance_criteria:
+        - "Relevant test and acceptance documents are updated before harness implementation."
+        - "A failed user finding in reports/acceptance/local_user_acceptance.json is not overwritten by a passing deployed browser smoke run."
+        - "Acceptance writes STOP_ALLOWED = false when unresolved failed_findings exist, even if all product stages pass."
+        - "The three current user findings are recorded with stable ids and mapped to planned regression assertion ids."
+        - "Static and unit harness evidence proves local user acceptance failures persist until the corresponding regression assertions pass."
+      failure_criteria:
+        - "FAIL if the harness drops manual failed findings, treats stale PASS reports as current, or restores STOP_ALLOWED before the mapped regression assertions pass."
+        - "FAIL if the fix depends on external CI, live RSS, live webpages, live LLM, network time, or manual-only judgment."
+
+    - id: TASK-032
+      name: "Original URL realism"
+      layer: "Pipeline/API/UI Test"
+      type: ["docs", "fixture", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "api_contract_failures"
+      test_scope: ["static", "unit", "api", "integration", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-032/api.json"
+      test_report: "reports/tasks/TASK-032/e2e.json"
+      plan_report: "reports/tasks/TASK-032/plan.json"
+      summary_report: "reports/tasks/TASK-032/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-004", "TASK-019", "TASK-024"]
+      description: "Replace product-facing placeholder original URLs with RSS-derived public article URLs and prove the ArticleView original-link button uses the API original_url."
+      inputs:
+        - "User-reported finding: 原文链接 is virtual and cannot access the original article."
+        - "Current acceptance fixtures use https://example.com/news/... links."
+        - "API contract requires original_url to come from the RSS item link while tests must still use local article fixtures."
+      outputs:
+        - "RSS acceptance fixtures use public, non-reserved article URLs for displayable news items."
+        - "Article fixture mapping remains local and keyed by canonicalized public URLs; tests do not fetch real webpages."
+        - "API and browser evidence prove original_url is non-placeholder and ArticleView link href equals API original_url."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before fixture or code implementation."
+        - "Every displayable fixture RSS item link uses public http/https and does not use example.com/example.org/example.net/.test/.invalid or local/private hosts."
+        - "The pipeline preserves RSS item link as news_item.original_url while canonical_url is used only for dedupe."
+        - "GET /api/home and GET /api/news/{id} expose original_url values that exactly match the RSS item link for translated items."
+        - "ArticleView original link href equals detail.original_url and opens in a new tab/window target without replacing internal NewsCard/HighScoreList navigation."
+        - "Static, unit, API, integration and E2E evidence prove no external webpage fetch occurs during tests."
+      failure_criteria:
+        - "FAIL if displayable original_url remains on reserved placeholder domains or is rewritten to a local fixture path."
+        - "FAIL if tests validate original links by fetching live webpages, real RSS, production data or network time."
+        - "FAIL if NewsCard or HighScoreList starts navigating directly to original_url instead of internal ArticleView."
+
+    - id: TASK-033
+      name: "Summary and full-text quality"
+      layer: "Pipeline/API/UI Test"
+      type: ["docs", "fixture", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-007", "ACC-STOP-010"]
+      priority: "critical_bugs"
+      test_scope: ["unit", "api", "integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-033/integration.json"
+      test_report: "reports/tasks/TASK-033/e2e.json"
+      plan_report: "reports/tasks/TASK-033/plan.json"
+      summary_report: "reports/tasks/TASK-033/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-032", "TASK-008", "TASK-018", "TASK-020"]
+      description: "Replace placeholder translated summaries and bodies with article-specific readable Chinese content, and add assertions that reject wrong summaries or short placeholder full text."
+      inputs:
+        - "User-reported finding: all news entries cannot show full text."
+        - "User-reported finding: summary content is wrong."
+        - "Current translation fixtures include generic placeholder strings such as 这是一篇来自 fixture 的中文正文。"
+      outputs:
+        - "Translated fixture content contains article-specific Chinese summaries and readable multi-paragraph Chinese bodies."
+        - "Translation validation and harness assertions reject fixture/mock/模拟/占位 placeholder text and unrelated summaries."
+        - "API, UI and browser E2E evidence prove translated ArticleView shows summary and readable full body."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before fixture or code implementation."
+        - "Every successful translation fixture has non-placeholder title_zh, summary_zh and content_zh, with content_zh long enough to read as article body and rendered as multiple paragraphs where appropriate."
+        - "Every translated summary_zh is tied to the same fixture article facts as content_zh; mismatched generic summaries fail structured tests."
+        - "GET /api/news/{id} for every translated fixture detail returns non-placeholder summary_zh and content_zh."
+        - "ArticleView renders the translated summary and full body without hiding, truncating, replacing, or collapsing the body to a short placeholder."
+        - "Unit, API, integration, snapshot and E2E evidence include and pass the translated content quality contract."
+      failure_criteria:
+        - "FAIL if non-empty alone is accepted as proof of readable full text."
+        - "FAIL if summary_zh can be unrelated to original_title/content_zh and still pass."
+        - "FAIL if the fix uses live LLM output, live RSS, live webpages, production data, network time, manual screenshots, or prose-only judgment."
+
+    - id: TASK-034
+      name: "Translated-only primary reading lists"
+      layer: "API/UI/Harness"
+      type: ["docs", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-006", "ACC-STOP-010"]
+      priority: "ui_failures"
+      test_scope: ["api", "integration", "snapshot", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-034/api.json"
+      test_report: "reports/tasks/TASK-034/e2e.json"
+      plan_report: "reports/tasks/TASK-034/plan.json"
+      summary_report: "reports/tasks/TASK-034/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-031", "TASK-032", "TASK-033", "TASK-019", "TASK-024", "TASK-030"]
+      description: "Change the Home News Feed and Top 30 Days primary user-click path so ordinary visible news entries are translated and always open to readable Chinese summary and full text."
+      inputs:
+        - "User-reported finding: ordinary news entries do not show full text after click."
+        - "Updated PRD/API/UI contract that Home and Top 30 Days primary lists are translated-only reading surfaces."
+        - "Ready and translation_failed states remain valid direct detail states but are no longer ordinary Home/Top news entries."
+      outputs:
+        - "GET /api/home.latest_news returns only translated NewsListItem rows with non-empty summary_zh."
+        - "GET /api/home.top_ranked_news returns only translated 30-day rows, sorted by score DESC and published_at DESC."
+        - "Browser E2E clicks every Home and Top 30 Days item and verifies translated ArticleView summary/body/original-link readability."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before backend or frontend implementation."
+        - "GET /api/home latest_news contains no ready or translation_failed items and each item includes status translated and non-empty summary_zh."
+        - "GET /api/home top_ranked_news contains no ready or translation_failed items and each item includes status translated."
+        - "Direct GET /api/news/{id} still returns ready and translation_failed detail states for fixture edge cases without summary_zh/content_zh."
+        - "NewsCard and HighScoreList click-through never land on 摘要和正文暂不可用 in the primary Home/Top reading path."
+        - "E2E and deployed browser smoke evidence prove every visible Home/Top news click opens a translated ArticleView with readable Chinese summary/body and real original_url href."
+      failure_criteria:
+        - "FAIL if Home or Top 30 Days still exposes ready or translation_failed as ordinary news entries."
+        - "FAIL if the fix removes direct ready/translation_failed detail-state coverage or masks translation failures by fabricating summary_zh/content_zh."
+        - "FAIL if the fix uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+
+    - id: TASK-035
+      name: "Home infinite news loading"
+      layer: "API/UI/Harness"
+      type: ["docs", "backend", "frontend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/03_ui_spec.md", "docs/05_api_contract.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-004", "ACC-STOP-006"]
+      priority: "prd_core_flow_gaps"
+      test_scope: ["static", "api", "integration", "e2e"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-035/api.json"
+      test_report: "reports/tasks/TASK-035/e2e.json"
+      plan_report: "reports/tasks/TASK-035/plan.json"
+      summary_report: "reports/tasks/TASK-035/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-034", "TASK-024"]
+      description: "Implement Home News Feed infinite loading so scrolling near the bottom loads the next latest_news page through GET /api/home cursor pagination."
+      inputs:
+        - "Updated PRD/UI/API/test/acceptance documents requiring Home News Feed infinite loading."
+        - "Existing HomeData contract with latest_news, top_ranked_news and optional next_cursor."
+        - "Existing translated-only Home primary reading list contract from TASK-034."
+      outputs:
+        - "GET /api/home supports deterministic latest_news cursor pagination with non-overlapping pages and next_cursor end detection."
+        - "Home News Feed scrolls at page level, automatically loads the next latest_news page, appends NewsCards and preserves already-loaded items."
+        - "Harness API, integration and browser E2E evidence proves pagination, append, no duplicates, retryable failure and end-of-list stop behavior."
+      acceptance_criteria:
+        - "Relevant PRD, UI, API, test and acceptance documents are updated before backend or frontend implementation."
+        - "GET /api/home respects limit and cursor for latest_news, returns next_cursor only when another latest_news page exists, and never applies cursor pagination to top_ranked_news."
+        - "Using a returned next_cursor fetches the next latest_news page without repeating previously returned item ids and preserves published_at DESC order across appended pages."
+        - "Home page scrolling near the News Feed bottom triggers the next GET /api/home cursor request and appends new NewsCard rows without replacing already-rendered NewsCards."
+        - "Home page loading-more failure keeps already-loaded NewsCards visible and allows the failed page to be retried successfully."
+        - "When next_cursor is absent, further scrolling does not issue additional pagination requests."
+        - "HighScoreList keeps the existing top_ranked_news behavior and does not gain an independent API, pagination, refresh action or scroll container."
+      failure_criteria:
+        - "FAIL if infinite loading uses live RSS, live webpages, live LLM, production data, network time, manual screenshots, or prose-only judgment."
+        - "FAIL if News Feed pagination exposes ready or translation_failed items, duplicates news cards, clears loaded cards on failure, or keeps requesting after the final page."
+        - "FAIL if the implementation adds a new public endpoint instead of using GET /api/home cursor pagination."
+
+    - id: TASK-036
+      name: "AI value news filtering"
+      layer: "Pipeline/API/Harness"
+      type: ["docs", "backend", "data", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/02_arch.md", "docs/04_data_model.md", "docs/05_api_contract.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-004", "ACC-STOP-005", "ACC-STOP-007", "ACC-STOP-009", "ACC-STOP-010"]
+      priority: "prd_core_flow_gaps"
+      test_scope: ["unit", "integration", "api"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-036/unit.json"
+      test_report: "reports/tasks/TASK-036/integration.json"
+      plan_report: "reports/tasks/TASK-036/plan.json"
+      summary_report: "reports/tasks/TASK-036/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-034", "TASK-035"]
+      description: "Upgrade scoring from a single value score into AI relevance plus AI value filtering so only high-value AI news enters fetch, translation, Home and Top 30 Days."
+      inputs:
+        - "Scoring LLM response with is_ai_news, ai_relevance_score, score and reason."
+        - "Balanced filter thresholds: is_ai_news = true, ai_relevance_score >= 70, score >= 75."
+        - "Fixture bait rows for low-value AI-adjacent content and non-AI high-score content."
+      outputs:
+        - "news_item stores internal is_ai_news and ai_relevance_score fields for filtering and audit."
+        - "is_selected is computed from AI news flag, AI relevance score and final AI value score."
+        - "Only selected high-value AI news enters fetch, translation, Home latest_news and top_ranked_news."
+        - "API continues to expose only final score and does not expose is_ai_news, ai_relevance_score or LLM reason."
+        - "Local reclassification command can re-score existing acceptance DB rows using .env live LLM settings."
+      acceptance_criteria:
+        - "Relevant PRD, architecture, data model, API, dev rules, test and acceptance documents are updated before or with implementation."
+        - "Scoring validator rejects responses missing is_ai_news, ai_relevance_score, score or reason."
+        - "ai_relevance_score = 69 is not selected; score = 74 is not selected; ai_relevance_score = 70 and score = 75 is selected when is_ai_news = true."
+        - "A non-AI high-score fixture is scored but remains is_selected = 0 and does not enter fetch, translate, Home or top ranked outputs."
+        - "GET /api/home.latest_news and top_ranked_news contain only translated high-value AI items and do not expose internal AI relevance fields."
+        - "scripts/reclassify_ai_value.py uses .env live LLM config for local acceptance reclassification and is not used as strict-mock evidence."
+      failure_criteria:
+        - "FAIL if low-value, non-AI or AI-adjacent bait content appears in Home, Top 30 Days or translation candidates."
+        - "FAIL if API/UI exposes is_ai_news, ai_relevance_score or LLM reason."
+        - "FAIL if strict-mock tests depend on live RSS, live webpages, live LLM, production DB, current system time or prose-only judgment."
+
+    - id: TASK-037
+      name: "AI value scoring rubric optimization"
+      layer: "Pipeline/Harness"
+      type: ["docs", "backend", "test"]
+      status: "passed"
+      source: ["docs/01_prd.md", "docs/02_arch.md", "docs/06_dev_rules.md", "docs/07_test_spec.md", "docs/08_acceptance.md"]
+      acceptance_gate: ["ACC-STOP-003", "ACC-STOP-007"]
+      priority: "prd_core_flow_gaps"
+      test_scope: ["unit", "integration"]
+      active_state: "none"
+      last_updated_state: "SUMMARIZE"
+      attempts: 1
+      evidence: "reports/tasks/TASK-037/unit.json"
+      test_report: "reports/tasks/TASK-037/integration.json"
+      plan_report: "reports/tasks/TASK-037/plan.json"
+      summary_report: "reports/tasks/TASK-037/summary.json"
+      intentionally_out_of_scope: false
+      blocker: "none"
+      depends_on: ["TASK-036"]
+      description: "Optimize the news value evaluator with a documented AI value rubric, hard score caps, and deterministic local fallback scoring."
+      inputs:
+        - "External research on newsworthiness, source authority, freshness, helpfulness, and originality."
+        - "Existing AI value scoring contract with is_ai_news, ai_relevance_score, score and reason."
+      outputs:
+        - "Live scoring prompt encodes impact, originality/information gain, source/evidence quality, specificity and timeliness."
+        - "Live scoring prompt encodes hard caps for non-AI, generic AI-adjacent, SEO/ads, rumor/funding-only and duplicate-summary content."
+        - "Local fallback scoring rejects non-AI and caps low-value AI instead of defaulting every raw item to selected AI."
+        - "Public API remains unchanged and exposes only final score."
+      acceptance_criteria:
+        - "Truth docs record the optimized AI value rubric and cap rules before or with implementation."
+        - "Unit tests prove the live scoring prompt contains the required rubric dimensions and score caps."
+        - "Unit tests prove local fallback selects a high-value AI item, rejects non-AI, and keeps low-value AI below the selection threshold."
+        - "Integration tests prove score_raw_news_live with live LLM disabled writes only the high-value AI fallback item as selected."
+        - "Strict-mock evidence for this task does not access live RSS, live webpages, live LLM, production DB, current system time or full prompt report content."
+      failure_criteria:
+        - "FAIL if the fallback path marks all raw news as is_ai_news = true or selected by default."
+        - "FAIL if prompt regression tests cannot detect removal of rubric dimensions or score caps."
+        - "FAIL if API/UI exposes internal scoring subdimensions or LLM reason."

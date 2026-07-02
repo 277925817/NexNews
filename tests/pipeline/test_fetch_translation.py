@@ -14,6 +14,7 @@ from backend.app.services.pipeline import (
     backfill_top_scored_translations,
     fallback_ai_value_record,
     fetch_selected_content,
+    fetched_news_for_translation,
     has_valid_translation_record,
     ingest_fixture_rss,
     ingest_live_rss,
@@ -27,6 +28,7 @@ from backend.app.services.pipeline import (
     score_raw_news_live,
     score_request_with_fixture,
     validate_scoring_response,
+    select_live_translation_rows,
     selected_fetch_candidates,
     score_is_selected,
     translate_fetched_content,
@@ -72,20 +74,19 @@ def test_fetch_selected_content_uses_article_fixtures_and_rss_fallback():
     ).fetchall()
     by_guid = {row["rss_guid"]: row for row in rows}
 
-    assert result["fetched_count"] == 13
-    assert result["content_full_count"] == 2
-    assert result["fallback_count"] == 11
+    assert result["fetched_count"] == 11
+    assert result["content_full_count"] == 1
+    assert result["fallback_count"] == 10
     assert result["failed_count"] == 0
-    assert by_guid["fixture-threshold-60"]["pipeline_state"] == "fetched"
-    assert by_guid["fixture-threshold-60"]["content_full"]
-    assert by_guid["fixture-translate-partial"]["pipeline_state"] == "fetched"
+    assert by_guid["fixture-threshold-60"]["pipeline_state"] == "scored"
+    assert by_guid["fixture-threshold-60"]["content_full"] is None
+    assert by_guid["fixture-translate-partial"]["pipeline_state"] == "scored"
     assert by_guid["fixture-translate-partial"]["content_full"] is None
-    assert by_guid["fixture-translate-partial"]["content_raw"]
     assert by_guid["fixture-low-59"]["pipeline_state"] == "scored"
     assert by_guid["fixture-low-59"]["content_full"] is None
-    assert len(fetch_logs) == 13
-    assert sum(log["success"] == 1 for log in fetch_logs) == 2
-    assert sum(log["success"] == 0 and log["error"] == "network" for log in fetch_logs) == 11
+    assert len(fetch_logs) == 11
+    assert sum(log["success"] == 1 for log in fetch_logs) == 1
+    assert sum(log["success"] == 0 and log["error"] == "network" for log in fetch_logs) == 10
     assert all(log["source_id"] is None and log["news_item_id"] is not None for log in fetch_logs)
 
 def test_fetch_selected_content_without_fallback_keeps_item_scored():
@@ -100,7 +101,7 @@ def test_fetch_selected_content_without_fallback_keeps_item_scored():
           published_at, score, is_ai_news, ai_relevance_score, pipeline_state,
           is_selected, content_raw, created_at, updated_at
         )
-        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 1, 90, 'scored', 1, '', ?, ?)
+        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 81, 1, 90, 'scored', 1, '', ?, ?)
         """,
         (
             source_id,
@@ -118,7 +119,7 @@ def test_fetch_selected_content_without_fallback_keeps_item_scored():
 
     assert result["failed_count"] == 1
     assert result["fetched_count"] == 0
-    assert row["score"] == 80
+    assert row["score"] == 81
     assert row["pipeline_state"] == "scored"
     assert row["content_full"] is None
     assert log == {"success": 0, "error": "network"}
@@ -207,6 +208,76 @@ def test_request_live_translation_posts_chat_completion_and_parses_json(monkeypa
     assert post_call["json"]["model"] == "glm-test"
     assert post_call["json"]["messages"][0]["role"] == "system"
     assert "original_title" in post_call["json"]["messages"][1]["content"]
+
+def test_live_translation_candidates_require_selected_high_value_ai_news():
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Candidate Source', 'https://candidate.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    source_id = conn.execute("SELECT id FROM source").fetchone()["id"]
+
+    def insert_fetched(
+        guid: str,
+        *,
+        score: int,
+        is_selected: int = 1,
+        is_ai_news: int = 1,
+        ai_relevance_score: int = 90,
+        translated: bool = False,
+        published_at: str = "2026-07-01T00:00:00Z",
+    ) -> None:
+        title_zh = "已完成翻译标题" if translated else None
+        summary_zh = "已完成翻译摘要，证明完整翻译不会再次进入 live rows。" if translated else None
+        content_zh = "已完成翻译正文第一段。\n\n已完成翻译正文第二段。" if translated else None
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url, original_title,
+              published_at, score, is_ai_news, ai_relevance_score, pipeline_state,
+              is_selected, content_raw, content_full, title_zh, summary_zh,
+              content_zh, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'fetched', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                guid,
+                f"https://candidate.example/{guid}",
+                f"https://candidate.example/{guid}",
+                guid,
+                published_at,
+                score,
+                is_ai_news,
+                ai_relevance_score,
+                is_selected,
+                f"{guid} RSS summary",
+                f"{guid} full article text",
+                title_zh,
+                summary_zh,
+                content_zh,
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:00Z",
+            ),
+        )
+
+    insert_fetched("eligible-81", score=81, published_at="2026-07-01T00:06:00Z")
+    insert_fetched("score-80", score=80, published_at="2026-07-01T00:05:00Z")
+    insert_fetched("non-ai", score=96, is_ai_news=0, published_at="2026-07-01T00:04:00Z")
+    insert_fetched("low-relevance", score=96, ai_relevance_score=69, published_at="2026-07-01T00:03:00Z")
+    insert_fetched("not-selected", score=96, is_selected=0, published_at="2026-07-01T00:02:00Z")
+    insert_fetched("complete-high", score=96, translated=True, published_at="2026-07-01T00:01:00Z")
+    conn.commit()
+
+    candidates = fetched_news_for_translation(conn)
+    live_rows, pending_count = select_live_translation_rows(candidates, max_items=10)
+
+    assert [row["rss_guid"] for row in candidates] == ["eligible-81", "complete-high"]
+    assert [row["rss_guid"] for row in live_rows] == ["eligible-81"]
+    assert pending_count == 0
 
 def test_request_live_llm_supports_anthropic_messages_format(monkeypatch):
     from backend.app.services import pipeline
@@ -741,11 +812,12 @@ def test_backfill_top_scored_translations_prioritizes_top_target(monkeypatch, tm
             """
             INSERT INTO news_item (
               source_id, rss_guid, original_url, canonical_url,
-              original_title, published_at, score, pipeline_state,
-              is_selected, content_raw, content_full, title_zh,
+              original_title, published_at, score, is_ai_news,
+              ai_relevance_score, pipeline_state, is_selected,
+              content_raw, content_full, title_zh,
               summary_zh, content_zh, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'fetched', 1, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 90, 'fetched', 1, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source_id,
@@ -868,8 +940,8 @@ def test_translate_fetched_content_writes_success_failure_and_fallback_translati
     by_guid = {row["rss_guid"]: row for row in rows}
 
     assert result["translated_count"] == 11
-    assert result["pending_count"] == 1
-    assert result["failed_count"] == 1
+    assert result["pending_count"] == 0
+    assert result["failed_count"] == 0
     assert by_guid["fixture-translated-96"]["title_zh"] == "OpenAI 发布 LifeSciBench 生命科学基准"
     assert by_guid["fixture-translated-96"]["pipeline_state"] == "fetched"
     assert by_guid["fixture-rank-95"]["content_full"] is None
@@ -883,11 +955,12 @@ def test_translate_fetched_content_writes_success_failure_and_fallback_translati
     assert by_guid["fixture-translate-partial"]["title_zh"] is None
     assert by_guid["fixture-translate-partial"]["summary_zh"] is None
     assert by_guid["fixture-translate-partial"]["content_zh"] is None
-    assert by_guid["fixture-translate-partial"]["has_translate_failed"] == 1
+    assert by_guid["fixture-translate-partial"]["has_translate_failed"] == 0
+    assert by_guid["fixture-translate-partial"]["pipeline_state"] == "scored"
     assert by_guid["fixture-threshold-60"]["has_translate_failed"] == 0
     assert by_guid["fixture-threshold-60"]["title_zh"] is None
     assert all(row["pipeline_state"] in {"scored", "fetched"} for row in rows)
-    assert len(logs) == 12
+    assert len(logs) == 11
     assert sum(log["success"] == 1 for log in logs) == 11
-    assert sum(log["success"] == 0 and log["error"] == "validation_llm_error" for log in logs) == 1
+    assert sum(log["success"] == 0 and log["error"] == "validation_llm_error" for log in logs) == 0
     assert all(log["source_id"] is None and log["news_item_id"] is not None for log in logs)

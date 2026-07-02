@@ -20,14 +20,14 @@
 - 本地长期服务必须用 `python3 scripts/local_service.py start` 启动；该脚本先构建 `frontend/dist`，再用 FastAPI `create_app` 在同一端口服务 SPA 和 `/api/*`。
 - 本地长期服务供人工验收时必须默认注入 live runtime：`RSS_RUNTIME_MODE=live`、`RSS_ALLOW_LIVE_NETWORK=1`、`RSS_FETCH_LIVE_ARTICLES=1`；不得在未显式说明的情况下使用 fixture RSS、article fixture、LLM mock 或 fixed clock。
 - 本地长期服务的 refresh 全流程必须使用真实数据源：真实 RSS 抓取、真实网页正文抓取、`.env` / 环境变量中的真实 LLM scoring、真实 LLM translation 和本地 SQLite 运行库。
-- 本地长期服务为保持人工验收响应性，默认只做小批量真实 LLM 工作：`RSS_LIVE_LLM_MAX_ITEMS=3`、`RSS_LIVE_LLM_MAX_SCORE_ITEMS=3`、`RSS_LIVE_LLM_TIMEOUT_SECONDS=20`、`RSS_LIVE_LLM_RETRY_COUNT=0`；需要批量追赶积压时可显式覆盖这些环境变量。
+- 本地长期服务为保持人工验收响应性，手动刷新默认只做小批量真实 LLM 工作：`RSS_LIVE_LLM_MAX_ITEMS=3`、`RSS_LIVE_LLM_MAX_SCORE_ITEMS=3`、`RSS_LIVE_LLM_TIMEOUT_SECONDS=20`、`RSS_LIVE_LLM_RETRY_COUNT=0`；raw backlog 由 live worker 默认每 5 分钟最多评分 10 条积压新闻。
 - 本地人工验收前必须运行 `python3 scripts/backfill_top_translations.py --target 100` 或等价命令，使用 `.env` / 环境变量中的真实 LLM，把当前本地 SQLite 中按 `score DESC, published_at DESC, id DESC` 排序的前 100 条已抓取可展示新闻补成真实中文翻译；该命令只属于 live local acceptance 预处理，不得作为 strict-mock gate 证据。
 - Vite dev server 只允许用于开发调试，不得作为本地长期验收服务；否则 shell/terminal 结束会导致 8010 失效。
 - 本地长期服务的 PID 和日志必须写入 `.local/rss-service/`，该目录不得进入版本控制。
 - live 运行时允许从进程环境或仓库根目录 `.env` 读取 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；密钥不得写入日志、报告、API 响应或前端产物。
 - live 运行时每次刷新最多翻译 `RSS_LIVE_LLM_MAX_ITEMS` 条待翻译新闻，默认 `20`；设为 `0` 或负数表示不限制。
 - live 运行时 LLM 翻译请求并发数由 `RSS_LIVE_LLM_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
-- live 运行时每次刷新最多评分 `RSS_LIVE_LLM_MAX_SCORE_ITEMS` 条 raw 新闻，默认 `20`；评分候选必须按 `published_at DESC, id DESC` 选择，超出上限的 raw 新闻保留到后续刷新。
+- live 运行时每次手动刷新最多评分 `RSS_LIVE_LLM_MAX_SCORE_ITEMS` 条 raw 新闻，默认 `20`；后台 raw backlog worker 由 `RSS_BACKLOG_WORKER_ENABLED` 控制，默认 live+LLM 可用时启用，`RSS_BACKLOG_WORKER_INTERVAL_SECONDS=300`，`RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS=10`。评分候选必须按 `published_at DESC, id DESC` 选择，超出上限的 raw 新闻保留到后续刷新或后台轮次。
 - live 运行时 LLM 评分请求并发数由 `RSS_LIVE_LLM_SCORE_CONCURRENCY` 控制，默认 `2`，最小值按 `1` 处理；并发只允许用于请求 LLM，数据库写入必须回到主流程顺序执行。
 - live 运行时 LLM 重试次数由 `RSS_LIVE_LLM_RETRY_COUNT` 控制，通用默认 `2`；本地长期服务默认 `0`，避免真实限流或配置错误把单次刷新拖成长时间阻塞。
 
@@ -84,12 +84,12 @@
 
 - `pipeline_state` 只允许 `raw`、`scored`、`fetched`，否则数据库写入必须失败。
 - `pipeline_state` transition independent of `is_selected`，否则流程状态会被业务判断污染。
-- `is_selected` 必须由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 75`。
+- `is_selected` 必须由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 81`。
 - 写入 `score` 后必须立即计算 `is_selected`，否则 fetch 条件会漂移。
 - 去重只能使用 `canonical_url`，否则同一新闻会重复入库。
 - 来源讨论页链接只能保存为 `discussion_url`，不得替代 `original_url`、`canonical_url` 或正文抓取目标。
 - Live RSS ingest 必须按本次 refresh/crawl 的 `now` 对 RSS `published_at` 应用最近 30 天窗口，不得把归档式 feed 中的历史文章全量写入 `news_item`。
-- 翻译触发条件必须是 `pipeline_state = fetched` 且存在可用内容。
+- 翻译触发条件必须是 `pipeline_state = fetched AND is_selected = 1 AND is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 81` 且存在可用内容。
 - 翻译成功必须写入 `title_zh`、`summary_zh`、`content_zh`。
 - 翻译失败不得写入部分中文字段，否则 API status 投影会错误。
 - Source 禁用只能停止未来抓取，不得删除历史新闻。

@@ -70,9 +70,9 @@ isolation: strict_mock
 - RSS parser：固定 RSS XML → 标准 item 列表。
 - URL normalizer：链接变体 → 同一 canonical URL。
 - Scoring parser：固定 LLM JSON → `is_ai_news`、`ai_relevance_score`、`0-100` final AI value `score`。
-- Selection rule：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75` → selected / not selected。
+- Selection rule：`is_ai_news = true AND ai_relevance_score >= 70 AND score > 80`（integer `score >= 81`）→ selected / not selected。
 - AI value rubric：live scoring prompt 必须包含影响范围、原创性 / 信息增量、来源权威性与证据可信度、技术 / 产品 / 政策具体性、时效性，以及非 AI、低价值 AI、SEO/广告/传闻/重复转述的分数封顶规则。
-- Local fallback scoring：禁用 live LLM 时必须仍然拒绝非 AI，并让低价值 AI 条目因 `score < 75` 不被选中。
+- Local fallback scoring：禁用 live LLM 时必须仍然拒绝非 AI，并让低价值 AI 条目因 `score <= 80` 不被选中。
 - Translation mapper：固定翻译 JSON → 中文字段。
 - API projector：内部对象 → `NewsListItem` / `NewsDetailItem`。
 - API status projector：`title_zh`、`summary_zh`、`content_zh`、`content_raw`、`content_full`、`has_translate_failed` → `ready | translated | untranslated | translation_failed`。
@@ -294,7 +294,7 @@ Mandatory catalog:
 | `A-api-ACC-STOP-002-default-source-crud-parity` | api | ACC-STOP-002 | public_surface | Default seeded sources and user-created sources have identical enable, disable, delete, tombstone and no-auto-restore behavior. |
 | `A-integration-ACC-STOP-002-source-ui-crud-parity` | integration | ACC-STOP-002 | public_surface | Sources UI renders identical controls and state transitions for default seeded and user-created sources. |
 | `A-integration-ACC-STOP-003-scheduler-fixed-clock` | integration | ACC-STOP-003 | internal_evidence | Fixed clock cases trigger scheduled refresh at 09:00 and 18:00 and do not trigger at non-scheduled times. |
-| `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold fixture proves `is_ai_news = true`, `ai_relevance_score = 70`, `score = 75` is selected; `score = 59` and non-AI high-score bait are not API/UI visible. |
+| `A-integration-ACC-STOP-003-threshold-selection` | integration | ACC-STOP-003 | internal_evidence | Threshold tests prove `score = 80` is rejected and `is_ai_news = true`, `ai_relevance_score = 70`, `score = 81` is selected; `score = 59` and non-AI high-score bait are not API/UI visible. |
 | `A-integration-ACC-STOP-003-dedupe-positive-distinct-items` | integration | ACC-STOP-003 | internal_evidence | Distinct high-score items with different canonical URLs or different domains remain separate fetch candidates. |
 | `A-integration-ACC-STOP-003-fetch-fallback` | integration | ACC-STOP-003 | internal_evidence | Fetch success, extraction failure with RSS fallback and no-content failure produce the documented displayability outcomes. |
 | `A-integration-ACC-STOP-003-fallback-summary-translation` | integration | ACC-STOP-003 | internal_evidence | A fetched item using RSS summary fallback produces non-empty Chinese summary and content through translation. |
@@ -302,7 +302,7 @@ Mandatory catalog:
 | `A-integration-ACC-STOP-003-translation-quality-fixtures` | integration | ACC-STOP-003 | public_surface | Deterministic translation fixtures produce article-specific summaries and readable Chinese bodies without placeholder text while preserving one failed and one ready detail sample. |
 | `A-static-ACC-STOP-010-ai-value-doc-sync` | static | ACC-STOP-010 | report_metadata | AI value filtering and rubric docs remain synchronized across PRD, architecture, data, API, dev, test and acceptance truth sources. |
 | `A-unit-ACC-STOP-007-ai-value-scoring-schema` | unit | ACC-STOP-007 | internal_evidence | AI scoring validation rejects missing `is_ai_news`, `ai_relevance_score`, `score` or `reason` fields. |
-| `A-unit-ACC-STOP-003-ai-value-selection-thresholds` | unit | ACC-STOP-003 | internal_evidence | AI value selection thresholds require `is_ai_news = true`, `ai_relevance_score >= 70` and `score >= 75`. |
+| `A-unit-ACC-STOP-003-ai-value-selection-thresholds` | unit | ACC-STOP-003 | internal_evidence | AI value selection thresholds require `is_ai_news = true`, `ai_relevance_score >= 70` and `score >= 81`. |
 | `A-integration-ACC-STOP-003-ai-value-filtering` | integration | ACC-STOP-003 | internal_evidence | Fixture pipeline selects only high-value AI items and excludes low-value AI-adjacent and non-AI bait from candidates. |
 | `A-api-ACC-STOP-004-ai-value-home-surface` | api | ACC-STOP-004 | public_surface | Home API exposes only translated high-value AI items after refresh. |
 | `A-api-ACC-STOP-009-ai-value-field-leak-scan` | api | ACC-STOP-009 | public_surface | Home API does not expose internal AI relevance fields or LLM scoring reasons. |
@@ -474,8 +474,8 @@ Rules:
 - Scoring response JSON 必须通过 schema validation；`is_ai_news` 必须为布尔值，`ai_relevance_score` 和 `score` 必须为 `0-100` 整数。
 - Scoring response JSON 必须包含非空 `reason`；缺失或空 `reason` 必须归类为 `validation_llm_error`。
 - score 和 ai_relevance_score 范围合法：小于 `0` 或大于 `100` 时拒绝写入。
-- 高价值 AI 过滤正确：`is_ai_news = true AND ai_relevance_score = 70 AND score = 75` 的新闻进入可展示链路。
-- 低价值过滤正确：`score = 74` 或 `ai_relevance_score = 69` 的新闻不进入 fetch/translate/home/top ranked。
+- 高价值 AI 过滤正确：`is_ai_news = true AND ai_relevance_score = 70 AND score = 81` 的新闻进入可展示链路。
+- 低价值过滤正确：`score = 80` 或 `ai_relevance_score = 69` 的新闻不进入 fetch/translate/home/top ranked。
 - 非 AI 过滤正确：`is_ai_news = false` 即使 `score` 很高也不进入 fetch/translate/home/top ranked。
 - 标题或原文链接缺失时评分为 `0`，且不得进入 fetch。
 - 摘要缺失时 scoring input 必须保留空字段，并断言最终 score 比同等完整摘要基准扣 `20` 分。

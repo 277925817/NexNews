@@ -19,6 +19,7 @@ from backend.app.services.pipeline import (
     ingest_live_rss,
     parse_rss_feed_text,
     read_json,
+    raw_news_for_live_scoring,
     request_live_scoring,
     request_live_translation,
     run_fixture_pipeline_summary,
@@ -140,8 +141,8 @@ def test_scoring_response_requires_ai_value_filter_contract():
     assert boolean_score_error == "validation_llm_error"
 
 def test_score_selection_requires_ai_relevance_and_value_thresholds():
-    assert score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True
-    assert score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False
+    assert score_is_selected(81, is_ai_news=True, ai_relevance_score=70) is True
+    assert score_is_selected(80, is_ai_news=True, ai_relevance_score=90) is False
     assert score_is_selected(95, is_ai_news=True, ai_relevance_score=69) is False
     assert score_is_selected(95, is_ai_news=False, ai_relevance_score=95) is False
 
@@ -233,12 +234,12 @@ def test_score_raw_news_transitions_raw_items_without_fetch_or_translation():
 
     assert result["scored_count"] == 15
     assert result["failed_count"] == 0
-    assert result["selected_count"] == 13
+    assert result["selected_count"] == 11
     assert {row["pipeline_state"] for row in rows} == {"scored"}
     assert by_guid["fixture-threshold-60"]["score"] == 75
     assert by_guid["fixture-threshold-60"]["is_ai_news"] == 1
     assert by_guid["fixture-threshold-60"]["ai_relevance_score"] == 70
-    assert by_guid["fixture-threshold-60"]["is_selected"] == 1
+    assert by_guid["fixture-threshold-60"]["is_selected"] == 0
     assert by_guid["fixture-low-59"]["score"] == 59
     assert by_guid["fixture-low-59"]["is_selected"] == 0
     assert by_guid["fixture-non-ai-high-score"]["score"] == 96
@@ -357,7 +358,7 @@ def test_score_raw_news_live_without_llm_uses_ai_value_fallback():
     assert result["selected_count"] == 1
     assert by_guid["fallback-high-ai"]["is_ai_news"] == 1
     assert by_guid["fallback-high-ai"]["ai_relevance_score"] >= 70
-    assert by_guid["fallback-high-ai"]["score"] >= 75
+    assert by_guid["fallback-high-ai"]["score"] >= 81
     assert by_guid["fallback-high-ai"]["is_selected"] == 1
     assert by_guid["fallback-low-ai"]["is_ai_news"] == 1
     assert by_guid["fallback-low-ai"]["score"] <= 55
@@ -378,11 +379,11 @@ def test_selected_fetch_candidates_filter_threshold_and_preserve_distinct_items(
     guids = [row["rss_guid"] for row in candidates]
     canonical_urls = [row["canonical_url"] for row in candidates]
 
-    assert score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True
-    assert score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False
-    assert len(candidates) == 13
+    assert score_is_selected(81, is_ai_news=True, ai_relevance_score=70) is True
+    assert score_is_selected(80, is_ai_news=True, ai_relevance_score=90) is False
+    assert len(candidates) == 11
     assert len(canonical_urls) == len(set(canonical_urls))
-    assert "fixture-threshold-60" in guids
+    assert "fixture-threshold-60" not in guids
     assert "fixture-low-59" not in guids
     assert "fixture-non-ai-high-score" not in guids
     assert {"fixture-rank-95", "fixture-rank-94", "fixture-rank-88", "fixture-rank-87"}.issubset(guids)
@@ -390,7 +391,7 @@ def test_selected_fetch_candidates_filter_threshold_and_preserve_distinct_items(
     assert all(row["is_selected"] == 1 for row in candidates)
     assert all(row["is_ai_news"] == 1 for row in candidates)
     assert all(row["ai_relevance_score"] >= 70 for row in candidates)
-    assert all(row["score"] >= 75 for row in candidates)
+    assert all(row["score"] >= 81 for row in candidates)
     assert all(row["content_full"] is None for row in candidates)
 
 def test_request_live_scoring_posts_chat_completion_and_parses_score(monkeypatch):
@@ -527,6 +528,71 @@ def test_live_scoring_limits_batch_and_prioritizes_newest_raw_items(monkeypatch)
         {"rss_guid": "new-raw", "pipeline_state": "scored", "score": 90},
         {"rss_guid": "old-raw", "pipeline_state": "raw", "score": None},
     ]
+
+def test_live_scoring_processes_raw_backlog_in_bounded_batches(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (id, name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES (1, 'Backlog Source', 'https://backlog.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    for index in range(12):
+        published_at = f"2026-07-01T00:{index:02d}:00Z"
+        conn.execute(
+            """
+            INSERT INTO news_item (
+              source_id, rss_guid, original_url, canonical_url, original_title,
+              published_at, pipeline_state, content_raw, created_at, updated_at
+            )
+            VALUES (1, ?, ?, ?, ?, ?, 'raw', 'summary', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')
+            """,
+            (
+                f"raw-{index:02d}",
+                f"https://backlog.example/{index}",
+                f"https://backlog.example/{index}",
+                f"Backlog item {index:02d}",
+                published_at,
+            ),
+        )
+
+    def fake_request_live_scoring(_request, **_kwargs):
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 91,
+            "score": 91,
+            "reason": "Backlog item selected by live scoring.",
+        }, None
+
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+
+    first_batch = raw_news_for_live_scoring(conn, max_items=10)
+    result = score_raw_news_live(
+        conn,
+        now="2026-07-01T00:20:00Z",
+        use_live_llm=True,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_max_score_items=10,
+        live_llm_score_concurrency=1,
+    )
+    remaining_raw = conn.execute(
+        """
+        SELECT rss_guid
+        FROM news_item
+        WHERE pipeline_state = 'raw'
+        ORDER BY published_at DESC
+        """
+    ).fetchall()
+
+    assert [row["rss_guid"] for row in first_batch] == [f"raw-{index:02d}" for index in range(11, 1, -1)]
+    assert result["scored_count"] == 10
+    assert result["selected_count"] == 10
+    assert [row["rss_guid"] for row in remaining_raw] == ["raw-01", "raw-00"]
 
 def test_live_pipeline_skips_translation_when_live_llm_is_rate_limited_during_scoring(monkeypatch):
     from backend.app.services import pipeline

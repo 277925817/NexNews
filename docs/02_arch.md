@@ -40,7 +40,7 @@ RSS → Crawl → Score → Filter → Fetch → Translate → UI
 1. RSS sources enter the system through the RSS Collector during scheduled crawling or manual refresh.
 2. The RSS Collector parses enabled RSS feeds and, in live runtime, writes only items whose RSS `published_at` is within the last 30 days relative to refresh time as raw news records.
 3. The News Scoring Service calls the LLM after a new raw item is available, using its title, summary, source, published time, and original link; live scoring applies the documented AI value rubric and score caps before selection.
-4. Items set `is_selected = 1` only when `is_ai_news = true`, `ai_relevance_score >= 70`, and final `score >= 75`; this does not change `pipeline_state`.
+4. Items set `is_selected = 1` only when `is_ai_news = true`, `ai_relevance_score >= 70`, and final `score > 80` (integer implementation `score >= 81`); this does not change `pipeline_state`.
 5. The Content Fetcher runs only for selected items and stores either extracted article content or RSS summary fallback content.
 6. When usable content exists, `pipeline_state` becomes `fetched`.
 7. The Translation Service calls the LLM after the item is fetched, using the original title, summary, content, source, and score.

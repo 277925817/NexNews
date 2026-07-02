@@ -42,6 +42,9 @@ class LiveRuntimeConfig:
     live_llm_concurrency: int
     live_llm_max_score_items: int
     live_llm_score_concurrency: int
+    backlog_worker_enabled: bool
+    backlog_worker_interval_seconds: int
+    backlog_worker_max_score_items: int
 
 
 def _read_env_file(root: Path) -> dict[str, str]:
@@ -172,6 +175,19 @@ def get_live_runtime_config(root: Path | None = None) -> LiveRuntimeConfig:
         1,
         _value_int(_config_value("RSS_LIVE_LLM_SCORE_CONCURRENCY", env_file_values), 2),
     )
+    backlog_worker_enabled = (
+        mode == "live"
+        and allow_live_llm
+        and _value_bool(_config_value("RSS_BACKLOG_WORKER_ENABLED", env_file_values), True)
+    )
+    backlog_worker_interval_seconds = max(
+        1,
+        _value_int(_config_value("RSS_BACKLOG_WORKER_INTERVAL_SECONDS", env_file_values), 300),
+    )
+    backlog_worker_max_score_items = max(
+        1,
+        _value_int(_config_value("RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS", env_file_values), 10),
+    )
     return LiveRuntimeConfig(
         mode=mode,
         allow_live_network=allow_live_network,
@@ -190,4 +206,7 @@ def get_live_runtime_config(root: Path | None = None) -> LiveRuntimeConfig:
         live_llm_concurrency=live_llm_concurrency,
         live_llm_max_score_items=live_llm_max_score_items,
         live_llm_score_concurrency=live_llm_score_concurrency,
+        backlog_worker_enabled=backlog_worker_enabled,
+        backlog_worker_interval_seconds=backlog_worker_interval_seconds,
+        backlog_worker_max_score_items=backlog_worker_max_score_items,
     )

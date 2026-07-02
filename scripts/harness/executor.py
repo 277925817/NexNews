@@ -2502,7 +2502,7 @@ def task_011_home_observations() -> dict[str, Any]:
         "top_size_ok": len(top) <= 10,
         "latest_density_ok": len(latest) >= 10,
         "layout_fields_present": sorted(set(data) & HOME_LAYOUT_FIELDS) if isinstance(data, dict) else [],
-        "all_scores_selected": all(int(item.get("score", -1)) >= 75 for item in latest + top if isinstance(item, dict)),
+        "all_scores_selected": all(int(item.get("score", -1)) >= 81 for item in latest + top if isinstance(item, dict)),
     }
     shape_issues = task_011_item_shape_issues("latest_news", latest)
     shape_issues += task_011_item_shape_issues("top_ranked_news", top)
@@ -2610,8 +2610,8 @@ def task_012_detail_observations() -> dict[str, Any]:
     }
     cases = {
         "translated": ("fixture-translated-96", 200),
-        "ready": ("fixture-threshold-60", 200),
-        "translation_failed": ("fixture-translate-partial", 200),
+        "low_threshold": ("fixture-threshold-60", 404),
+        "translate_partial_low_threshold": ("fixture-translate-partial", 404),
         "missing": ("missing", 404),
     }
     payloads: dict[str, Any] = {}
@@ -2632,16 +2632,14 @@ def task_012_detail_observations() -> dict[str, Any]:
             )
         )
     translated = payloads.get("translated", {}).get("data", {})
-    ready = payloads.get("ready", {}).get("data", {})
-    failed = payloads.get("translation_failed", {}).get("data", {})
     checks = {
         "translated_has_content_zh": bool(translated.get("content_zh")),
         "translated_has_summary_zh": bool(translated.get("summary_zh")),
         "translated_status": translated.get("status") == "translated",
-        "ready_status": ready.get("status") == "ready",
-        "ready_omits_zh": "summary_zh" not in ready and "content_zh" not in ready,
-        "failed_status": failed.get("status") == "translation_failed",
-        "failed_omits_zh": "summary_zh" not in failed and "content_zh" not in failed,
+        "low_threshold_error_code": payloads.get("low_threshold", {}).get("error", {}).get("code") == "NEWS_NOT_FOUND",
+        "translate_partial_low_threshold_error_code": (
+            payloads.get("translate_partial_low_threshold", {}).get("error", {}).get("code") == "NEWS_NOT_FOUND"
+        ),
         "missing_error_code": payloads.get("missing", {}).get("error", {}).get("code") == "NEWS_NOT_FOUND",
     }
     leak_scan = scan_public_payload(payloads)
@@ -3140,8 +3138,8 @@ def task_019_detail_checks(client: Any, latest_items: list[dict[str, Any]]) -> d
     }
     cases = {
         "translated": ("fixture-translated-96", "translated"),
-        "ready": ("fixture-threshold-60", "ready"),
-        "failed": ("fixture-translate-partial", "translation_failed"),
+        "low_threshold": ("fixture-threshold-60", "NEWS_NOT_FOUND"),
+        "translate_partial_low_threshold": ("fixture-translate-partial", "NEWS_NOT_FOUND"),
     }
     for label, (guid, expected_status) in cases.items():
         response, payload, parse_issues = task_019_public_response(
@@ -3150,7 +3148,20 @@ def task_019_detail_checks(client: Any, latest_items: list[dict[str, Any]]) -> d
             f"/api/news/{guid_ids.get(guid, 'missing')}",
         )
         issues.extend(parse_issues)
-        issues.extend(envelope_issue(name=f"detail_{label}", response=response, expected_status=200, expected_envelope="data"))
+        expected_http_status = 404 if expected_status == "NEWS_NOT_FOUND" else 200
+        expected_envelope = "error" if expected_status == "NEWS_NOT_FOUND" else "data"
+        issues.extend(
+            envelope_issue(
+                name=f"detail_{label}",
+                response=response,
+                expected_status=expected_http_status,
+                expected_envelope=expected_envelope,
+            )
+        )
+        if expected_status == "NEWS_NOT_FOUND":
+            error = payload.get("error") if isinstance(payload, dict) else {}
+            checks[f"{label}_status"] = error.get("code") == "NEWS_NOT_FOUND" if isinstance(error, dict) else False
+            continue
         data = payload.get("data") if isinstance(payload, dict) else {}
         checks[f"{label}_status"] = data.get("status") == expected_status if isinstance(data, dict) else False
         has_content = bool(data.get("content_zh")) if isinstance(data, dict) else False
@@ -4412,19 +4423,19 @@ def task_029_integration_observations() -> dict[str, Any]:
     issues: list[str] = []
     if observed["translated_count"] != 11:
         issues.append(f"integration:translated_count={observed['translated_count']}!=11")
-    if observed["failed_count"] != 1:
-        issues.append(f"integration:failed_count={observed['failed_count']}!=1")
-    if observed["pending_count"] != 1:
-        issues.append(f"integration:pending_count={observed['pending_count']}!=1")
+    if observed["failed_count"] != 0:
+        issues.append(f"integration:failed_count={observed['failed_count']}!=0")
+    if observed["pending_count"] != 0:
+        issues.append(f"integration:pending_count={observed['pending_count']}!=0")
     if observed["translate_success_count"] != 11:
         issues.append(f"integration:translate_success_count={observed['translate_success_count']}!=11")
-    if observed["translate_validation_failure_count"] != 1:
+    if observed["translate_validation_failure_count"] != 0:
         issues.append(
             "integration:translate_validation_failure_count="
-            f"{observed['translate_validation_failure_count']}!=1"
+            f"{observed['translate_validation_failure_count']}!=0"
         )
-    if observed["partial_zh_count"] != 0 or observed["partial_failed"] != 1:
-        issues.append("integration:partial_failure_not_isolated")
+    if observed["partial_zh_count"] != 0 or observed["partial_failed"] != 0:
+        issues.append("integration:low_threshold_partial_fixture_not_skipped")
     if observed["pending_title"] is not None or observed["pending_failed"] != 0:
         issues.append("integration:pending_fixture_not_ready")
     return {"checks": observed, "issues": issues}
@@ -4479,9 +4490,9 @@ def task_029_home_distribution_observations() -> dict[str, Any]:
         WHERE rss_guid = 'fixture-threshold-60'
         """
     ).fetchone()
-    partial_isolated = bool(
+    partial_skipped = bool(
         partial
-        and partial["has_translate_failed"] == 1
+        and partial["has_translate_failed"] == 0
         and not any(partial[field] for field in ("title_zh", "summary_zh", "content_zh"))
     )
     pending_ready = bool(
@@ -4489,8 +4500,8 @@ def task_029_home_distribution_observations() -> dict[str, Any]:
         and pending["has_translate_failed"] == 0
         and not any(pending[field] for field in ("title_zh", "summary_zh", "content_zh"))
     )
-    if not partial_isolated:
-        issues.append("home:partial_failure_not_isolated")
+    if not partial_skipped:
+        issues.append("home:low_threshold_partial_fixture_not_skipped")
     if not pending_ready:
         issues.append("home:pending_fixture_not_ready")
     return {
@@ -4499,7 +4510,7 @@ def task_029_home_distribution_observations() -> dict[str, Any]:
             "top_count": len(top),
             "latest_status_counts": latest_counts,
             "top_status_counts": top_counts,
-            "partial_isolated": partial_isolated,
+            "partial_skipped": partial_skipped,
             "pending_ready": pending_ready,
         },
         "issues": issues,
@@ -4512,7 +4523,7 @@ def run_task_029_stage(report_dir: Path, task_id: str, stage: str, assertion_id:
         expected = {"fixture_valid_translation_guids": 11, "partial_failure": True, "pending_guid": True}
     elif stage == "integration":
         observed = task_029_integration_observations()
-        expected = {"translated_count": 11, "failed_count": 1, "pending_count": 1}
+        expected = {"translated_count": 11, "failed_count": 0, "pending_count": 0}
     else:
         observed = task_029_home_distribution_observations()
         expected = {
@@ -4727,10 +4738,10 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         or threshold["score"] != 75
         or threshold["is_ai_news"] != 1
         or threshold["ai_relevance_score"] != 70
-        or threshold["pipeline_state"] != "fetched"
-        or threshold["is_selected"] != 1
+        or threshold["pipeline_state"] != "scored"
+        or threshold["is_selected"] != 0
     ):
-        issues.append("pipeline:ai_value_threshold_not_selected_and_fetched")
+        issues.append("pipeline:low_threshold_fixture_not_rejected_at_scored_state")
 
     low_score = by_guid.get("fixture-low-59")
     if (
@@ -4760,13 +4771,15 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
     failed_translation = by_guid.get("fixture-translate-partial")
     if (
         not failed_translation
-        or failed_translation["has_translate_failed"] != 1
+        or failed_translation["pipeline_state"] != "scored"
+        or failed_translation["is_selected"] != 0
+        or failed_translation["has_translate_failed"] != 0
         or any(
             failed_translation[field]
             for field in ("title_zh", "summary_zh", "content_zh")
         )
     ):
-        issues.append("pipeline:partial_translation_not_isolated")
+        issues.append("pipeline:low_threshold_partial_fixture_not_rejected_before_translation")
 
     log_counts = conn.execute(
         """
@@ -4784,10 +4797,10 @@ def pipeline_projection_snapshot() -> tuple[dict[str, Any], list[str]]:
         issues.append("pipeline:crawl_failure_fixture_not_logged")
     if log_summary.get("score:1", 0) < 15:
         issues.append("pipeline:score_success_count_less_than_15")
-    if log_summary.get("fetch:1", 0) < 2 or log_summary.get("fetch:0", 0) < 1:
+    if log_summary.get("fetch:1", 0) < 1 or log_summary.get("fetch:0", 0) < 1:
         issues.append("pipeline:fetch_success_and_fallback_not_logged")
-    if log_summary.get("translate:1", 0) < 1 or log_summary.get("translate:0", 0) < 1:
-        issues.append("pipeline:translation_success_and_failure_not_logged")
+    if log_summary.get("translate:1", 0) < 1 or log_summary.get("translate:0", 0) != 0:
+        issues.append("pipeline:translation_success_or_low_threshold_skip_not_logged")
 
     home_response = client.get("/api/home")
     issues.extend(
@@ -6633,11 +6646,11 @@ def run_task_005_integration(report_dir: Path, task_id: str) -> int:
     passed = (
         actual["scored_count"] == 15
         and actual["failed_count"] == 0
-        and actual["selected_count"] == 13
+        and actual["selected_count"] == 11
         and actual["states"] == ["scored"]
         and actual["threshold_score"] == 75
         and actual["threshold_ai_relevance"] == 70
-        and actual["threshold_selected"] == 1
+        and actual["threshold_selected"] == 0
         and actual["low_score"] == 59
         and actual["low_selected"] == 0
         and actual["non_ai_score"] == 96
@@ -6689,15 +6702,15 @@ def task_006_pipeline_imports() -> tuple[Any, ...]:
 def task_006_unit_observations() -> dict[str, Any]:
     *_, score_is_selected, _ = task_006_pipeline_imports()
     return {
-        "score_75_ai_relevance_70_selected": score_is_selected(
-            75,
+        "score_81_ai_relevance_70_selected": score_is_selected(
+            81,
             is_ai_news=True,
             ai_relevance_score=70,
         ),
-        "score_74_rejected": score_is_selected(74, is_ai_news=True, ai_relevance_score=90),
+        "score_80_rejected": score_is_selected(80, is_ai_news=True, ai_relevance_score=90),
         "relevance_69_rejected": score_is_selected(95, is_ai_news=True, ai_relevance_score=69),
         "non_ai_rejected": score_is_selected(100, is_ai_news=False, ai_relevance_score=100),
-        "score_threshold": 75,
+        "score_threshold": 81,
         "relevance_threshold": 70,
     }
 
@@ -6728,7 +6741,7 @@ def task_006_integration_observations() -> dict[str, Any]:
         "min_candidate_score": min(row["score"] for row in candidates),
         "low_59_absent": "fixture-low-59" not in guids,
         "non_ai_high_score_absent": "fixture-non-ai-high-score" not in guids,
-        "threshold_75_present": "fixture-threshold-60" in guids,
+        "threshold_75_absent": "fixture-threshold-60" not in guids,
         "distinct_rank_items_present": {"fixture-rank-95", "fixture-rank-94"}.issubset(guids),
         "content_full_null_count": sum(row["content_full"] is None for row in candidates),
         "news_item_canonical_count": len([row["canonical_url"] for row in rows]),
@@ -6739,11 +6752,11 @@ def task_006_integration_observations() -> dict[str, Any]:
 def run_task_006_unit(report_dir: Path, task_id: str) -> int:
     actual = task_006_unit_observations()
     passed = (
-        actual["score_75_ai_relevance_70_selected"]
-        and not actual["score_74_rejected"]
+        actual["score_81_ai_relevance_70_selected"]
+        and not actual["score_80_rejected"]
         and not actual["relevance_69_rejected"]
         and not actual["non_ai_rejected"]
-        and actual["score_threshold"] == 75
+        and actual["score_threshold"] == 81
         and actual["relevance_threshold"] == 70
     )
     report = test_report(
@@ -6751,7 +6764,7 @@ def run_task_006_unit(report_dir: Path, task_id: str) -> int:
         status="passed" if passed else "failed",
         test_id=f"{task_id.lower()}-filter-dedupe-unit",
         assertions=[assertion("task-006-unit-threshold-filter", "passed" if passed else "failed", {}, actual, {})],
-        expected={"threshold": "score_75_and_relevance_70_ai_news_required"},
+        expected={"threshold": "score_81_and_relevance_70_ai_news_required"},
         actual=actual,
         diff={},
         failure_type=None if passed else "contract",
@@ -6766,19 +6779,19 @@ def run_task_006_unit(report_dir: Path, task_id: str) -> int:
 def run_task_006_integration(report_dir: Path, task_id: str) -> int:
     actual = task_006_integration_observations()
     passed = (
-        actual["candidate_count"] == 13
+        actual["candidate_count"] == 11
         and actual["canonical_count"] == actual["unique_canonical_count"]
         and actual["news_item_canonical_count"] == actual["news_item_unique_canonical_count"]
         and actual["all_states_scored"]
         and actual["all_selected"]
         and actual["all_ai_news"]
         and actual["min_ai_relevance"] >= 70
-        and actual["min_candidate_score"] >= 75
+        and actual["min_candidate_score"] >= 81
         and actual["low_59_absent"]
         and actual["non_ai_high_score_absent"]
-        and actual["threshold_75_present"]
+        and actual["threshold_75_absent"]
         and actual["distinct_rank_items_present"]
-        and actual["content_full_null_count"] == 13
+        and actual["content_full_null_count"] == 11
     )
     report = test_report(
         stage="integration",
@@ -6839,7 +6852,7 @@ def task_007_insert_no_fallback(conn: Any, source_id: int) -> None:
           published_at, score, is_ai_news, ai_relevance_score, pipeline_state,
           is_selected, content_raw, created_at, updated_at
         )
-        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 80, 1, 90, 'scored', 1, '', ?, ?)
+        VALUES (?, 'fetch-no-fallback', ?, ?, 'No fallback', ?, 81, 1, 90, 'scored', 1, '', ?, ?)
         """,
         (
             source_id,
@@ -6933,20 +6946,20 @@ def run_task_007_unit(report_dir: Path, task_id: str) -> int:
 def run_task_007_integration(report_dir: Path, task_id: str) -> int:
     actual = task_007_integration_observations()
     passed = (
-        actual["fetched_count"] == 13
-        and actual["content_full_count"] == 2
-        and actual["fallback_count"] == 11
+        actual["fetched_count"] == 11
+        and actual["content_full_count"] == 1
+        and actual["fallback_count"] == 10
         and actual["failed_count"] == 0
-        and actual["threshold_state"] == "fetched"
-        and actual["threshold_content_full"]
-        and actual["partial_state"] == "fetched"
+        and actual["threshold_state"] == "scored"
+        and not actual["threshold_content_full"]
+        and actual["partial_state"] == "scored"
         and actual["partial_content_full"] is None
         and actual["partial_content_raw"]
         and actual["low_state"] == "scored"
         and actual["low_content_full"] is None
-        and actual["fetch_log_count"] == 13
-        and actual["fetch_success_count"] == 2
-        and actual["fetch_network_failure_count"] == 11
+        and actual["fetch_log_count"] == 11
+        and actual["fetch_success_count"] == 1
+        and actual["fetch_network_failure_count"] == 10
         and actual["all_fetch_logs_news_owned"]
         and actual["no_fallback_result"]["failed_count"] == 1
         and actual["no_fallback_state"] == "scored"
@@ -7086,20 +7099,20 @@ def run_task_008_integration(report_dir: Path, task_id: str) -> int:
     actual = task_008_integration_observations()
     passed = (
         actual["translated_count"] == 11
-        and actual["pending_count"] == 1
-        and actual["failed_count"] == 1
+        and actual["pending_count"] == 0
+        and actual["failed_count"] == 0
         and actual["translated_title"] == "OpenAI 发布 LifeSciBench 生命科学基准"
         and actual["fallback_content_full"] is None
         and bool(actual["fallback_summary_zh"])
         and bool(actual["fallback_content_zh"])
         and actual["partial_zh_count"] == 0
-        and actual["partial_failed"] == 1
+        and actual["partial_failed"] == 0
         and actual["pending_title"] is None
         and actual["pending_failed"] == 0
         and actual["states"] == ["fetched", "scored"]
-        and actual["translate_log_count"] == 12
+        and actual["translate_log_count"] == 11
         and actual["translate_success_count"] == 11
-        and actual["translate_validation_failure_count"] == 1
+        and actual["translate_validation_failure_count"] == 0
         and actual["all_translate_logs_news_owned"]
     )
     report = test_report(
@@ -7146,13 +7159,12 @@ def run_task_009_integration(report_dir: Path, task_id: str) -> int:
         and actual["rss_item_count"] == expected_counts["rss_item_count"]
         and actual["new_item_count"] == 15
         and actual["scored_item_count"] == 15
-        and actual["selected_item_count"] == 13
-        and actual["fetched_item_count"] == 13
+        and actual["selected_item_count"] == 11
+        and actual["fetched_item_count"] == 11
         and actual["translated_item_count"] == 11
         and actual["failure_details"] == {
             "crawl:parsing": 1,
-            "fetch:network": 11,
-            "translate:validation_llm_error": 1,
+            "fetch:network": 10,
         }
         and actual["processing_log_count"] >= 40
     )
@@ -7272,18 +7284,17 @@ def run_task_018_integration(report_dir: Path, task_id: str) -> int:
     actual = task_018_integration_observations()
     passed = (
         actual["displayable_count"] >= 1
-        and actual["threshold_state"] == "fetched"
-        and actual["threshold_selected"] == 1
+        and actual["threshold_state"] == "scored"
+        and actual["threshold_selected"] == 0
         and actual["low_state"] == "scored"
         and actual["low_selected"] == 0
         and actual["canonical_count"] == actual["unique_canonical_count"]
-        and {"crawl:0", "crawl:1", "score:1", "fetch:0", "fetch:1", "translate:0", "translate:1"}.issubset(
+        and {"crawl:0", "crawl:1", "score:1", "fetch:0", "fetch:1", "translate:1"}.issubset(
             set(actual["log_stage_success_pairs"])
         )
         and actual["failure_details"] == {
             "crawl:parsing": 1,
-            "fetch:network": 11,
-            "translate:validation_llm_error": 1,
+            "fetch:network": 10,
         }
     )
     report = test_report(
@@ -10841,9 +10852,9 @@ def task_033_db_quality_observations() -> dict[str, Any]:
     checks = {
         "translated_guid_set": observed_guids == expected_guids,
         "translated_records_readable": not any(result["issues"] for result in quality_results),
-        "partial_failure_isolated": bool(
+        "low_threshold_partial_skipped": bool(
             partial
-            and partial["has_translate_failed"] == 1
+            and partial["has_translate_failed"] == 0
             and not any(partial[field] for field in ("title_zh", "summary_zh", "content_zh"))
         ),
     }
@@ -11122,13 +11133,19 @@ def task_034_home_translated_observations() -> dict[str, Any]:
     failed_id = conn.execute(
         "SELECT id FROM news_item WHERE rss_guid = 'fixture-translate-partial'"
     ).fetchone()["id"]
-    ready_detail = client.get(f"/api/news/{ready_id}").json()["data"]
-    failed_detail = client.get(f"/api/news/{failed_id}").json()["data"]
+    ready_response = client.get(f"/api/news/{ready_id}")
+    failed_response = client.get(f"/api/news/{failed_id}")
+    ready_payload = ready_response.json()
+    failed_payload = failed_response.json()
     direct_checks = {
-        "ready_status_preserved": ready_detail.get("status") == "ready",
-        "ready_omits_summary": "summary_zh" not in ready_detail and "content_zh" not in ready_detail,
-        "failed_status_preserved": failed_detail.get("status") == "translation_failed",
-        "failed_omits_summary": "summary_zh" not in failed_detail and "content_zh" not in failed_detail,
+        "low_threshold_detail_hidden": (
+            ready_response.status_code == 404
+            and ready_payload.get("error", {}).get("code") == "NEWS_NOT_FOUND"
+        ),
+        "translate_partial_low_threshold_detail_hidden": (
+            failed_response.status_code == 404
+            and failed_payload.get("error", {}).get("code") == "NEWS_NOT_FOUND"
+        ),
     }
     issues.extend(f"task_034:direct:{name}=false" for name, passed in direct_checks.items() if not passed)
 
@@ -11140,7 +11157,7 @@ def task_034_home_translated_observations() -> dict[str, Any]:
         "latest_order": latest_titles[:10] == expected_latest_prefix,
         "top_order": top_scores == [96, 95, 94, 93, 92, 91, 90, 89, 88, 87],
         "all_click_details_readable": not any(result["issues"] for result in quality_results),
-        "direct_ready_failed_preserved": all(direct_checks.values()),
+        "direct_low_threshold_details_hidden": all(direct_checks.values()),
     }
     return {
         "checks": checks,
@@ -11581,9 +11598,9 @@ def task_036_unit_observations() -> dict[str, Any]:
         } and valid_error is None,
         "missing_ai_flag_rejected": missing_ai is None and missing_ai_error == "validation_llm_error",
         "missing_relevance_rejected": missing_relevance is None and missing_relevance_error == "validation_llm_error",
-        "score_74_rejected": score_is_selected(74, is_ai_news=True, ai_relevance_score=90) is False,
+        "score_80_rejected": score_is_selected(80, is_ai_news=True, ai_relevance_score=90) is False,
         "relevance_69_rejected": score_is_selected(95, is_ai_news=True, ai_relevance_score=69) is False,
-        "threshold_selected": score_is_selected(75, is_ai_news=True, ai_relevance_score=70) is True,
+        "threshold_selected": score_is_selected(81, is_ai_news=True, ai_relevance_score=70) is True,
         "non_ai_rejected": score_is_selected(96, is_ai_news=False, ai_relevance_score=96) is False,
     }
     issues = [f"ai_value_unit:{name}=false" for name, passed in checks.items() if not passed]
@@ -11613,12 +11630,12 @@ def task_036_integration_observations() -> dict[str, Any]:
     candidate_guids = {row["rss_guid"] for row in candidates}
     checks = {
         "scored_count": result["scored_count"] == 15,
-        "selected_count": result["selected_count"] == 13,
-        "threshold_selected": bool(
+        "selected_count": result["selected_count"] == 11,
+        "threshold_75_rejected": bool(
             by_guid["fixture-threshold-60"]["is_ai_news"] == 1
             and by_guid["fixture-threshold-60"]["ai_relevance_score"] == 70
             and by_guid["fixture-threshold-60"]["score"] == 75
-            and by_guid["fixture-threshold-60"]["is_selected"] == 1
+            and by_guid["fixture-threshold-60"]["is_selected"] == 0
         ),
         "low_value_rejected": bool(
             by_guid["fixture-low-59"]["score"] == 59
@@ -11631,11 +11648,13 @@ def task_036_integration_observations() -> dict[str, Any]:
             and by_guid["fixture-non-ai-high-score"]["is_selected"] == 0
             and by_guid["fixture-non-ai-high-score"]["pipeline_state"] == "scored"
         ),
-        "candidate_count": len(candidates) == 13,
-        "candidate_scores_high_enough": all(row["score"] >= 75 for row in candidates),
+        "candidate_count": len(candidates) == 11,
+        "candidate_scores_high_enough": all(row["score"] >= 81 for row in candidates),
         "candidate_relevance_high_enough": all(row["ai_relevance_score"] >= 70 for row in candidates),
         "candidate_all_ai": all(row["is_ai_news"] == 1 for row in candidates),
-        "bait_absent_from_candidates": not ({"fixture-low-59", "fixture-non-ai-high-score"} & candidate_guids),
+        "bait_absent_from_candidates": not (
+            {"fixture-threshold-60", "fixture-low-59", "fixture-non-ai-high-score"} & candidate_guids
+        ),
     }
     issues = [f"ai_value_integration:{name}=false" for name, passed in checks.items() if not passed]
     return {"checks": checks, "issues": issues, "candidate_guids": sorted(candidate_guids)}
@@ -11667,7 +11686,7 @@ def task_036_api_observations() -> dict[str, Any]:
         "home_contract": not home_issues,
         "low_value_hidden": "Low signal AI funding rumor" not in titles,
         "non_ai_hidden": "Developer conference travel discounts surge" not in titles,
-        "all_scores_high_enough": all(int(item.get("score", -1)) >= 75 for item in items),
+        "all_scores_high_enough": all(int(item.get("score", -1)) >= 81 for item in items),
         "translated_only": all(item.get("status") == "translated" for item in items),
         "no_internal_ai_fields": leak_scan["forbidden_field_count"] == 0,
     }

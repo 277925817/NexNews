@@ -38,13 +38,21 @@ LOCAL_ACCEPTANCE_ENV_DEFAULTS = {
     "RSS_LIVE_LLM_RETRY_COUNT": "0",
     "RSS_LIVE_LLM_MAX_SCORE_ITEMS": "3",
     "RSS_LIVE_LLM_SCORE_CONCURRENCY": "3",
+    "RSS_BACKLOG_WORKER_ENABLED": "1",
+    "RSS_BACKLOG_WORKER_INTERVAL_SECONDS": "300",
+    "RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS": "10",
 }
+UNSUPPORTED_HTTPX_PROXY_SCHEMES = ("socks://", "socks4://", "socks5://", "socks5h://")
 
 
 def local_acceptance_environment(base_env: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(base_env or os.environ)
     for key, value in LOCAL_ACCEPTANCE_ENV_DEFAULTS.items():
         env.setdefault(key, value)
+    for key in ("ALL_PROXY", "all_proxy"):
+        value = env.get(key)
+        if value and value.strip().lower().startswith(UNSUPPORTED_HTTPX_PROXY_SCHEMES):
+            env.pop(key, None)
     return env
 
 

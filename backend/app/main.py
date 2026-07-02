@@ -7,6 +7,9 @@ import binascii
 import ipaddress
 import sqlite3
 import json
+import logging
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.core.config import get_live_runtime_config
 from backend.app.db import connect, initialize_database, seed_default_sources
+from backend.app.services.pipeline import run_live_backlog_pipeline_summary
 from backend.app.services.trigger import run_manual_refresh
 
 
@@ -32,6 +36,7 @@ FRONTEND_DIST_INDEX_HTML = FRONTEND_DIST_DIR / "index.html"
 FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 DEFAULT_DB_PATH = ROOT_DIR / "rss.sqlite3"
 TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
+LOGGER = logging.getLogger(__name__)
 
 
 class CreateSourceRequest(BaseModel):
@@ -273,7 +278,15 @@ def validate_source_request(
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
-    app = FastAPI(title="rss-aggregator")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        start_backlog_worker()
+        try:
+            yield
+        finally:
+            stop_backlog_worker()
+
+    app = FastAPI(title="rss-aggregator", lifespan=lifespan)
     mount_frontend_static_assets(app)
     conn = connect(db_path or str(DEFAULT_DB_PATH))
     initialize_database(conn)
@@ -281,11 +294,85 @@ def create_app(db_path: str | None = None) -> FastAPI:
     app.state.db = conn
     app.state.last_successful_refresh_at = None
     app.state.refresh_running = False
+    app.state.refresh_lock = threading.Lock()
+    app.state.backlog_worker_stop = threading.Event()
+    app.state.backlog_worker_thread = None
     app.state.live_runtime = get_live_runtime_config()
     app.state.hidden_api_rss_guids = hidden_api_rss_guids()
 
     def db() -> sqlite3.Connection:
         return app.state.db
+
+    def utc_now() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def run_backlog_worker_once() -> dict[str, object] | None:
+        runtime = app.state.live_runtime
+        if not runtime.backlog_worker_enabled:
+            return None
+        if not app.state.refresh_lock.acquire(blocking=False):
+            return None
+        app.state.refresh_running = True
+        try:
+            return run_live_backlog_pipeline_summary(
+                db(),
+                now=utc_now(),
+                allow_live_llm=runtime.allow_live_llm,
+                allow_live_article_fetch=runtime.allow_live_article_fetch,
+                request_timeout_seconds=runtime.request_timeout_seconds,
+                request_retry_count=runtime.request_retry_count,
+                request_retry_backoff_seconds=runtime.request_retry_backoff_seconds,
+                live_llm_base_url=runtime.llm_base_url,
+                live_llm_api_key=runtime.llm_api_key,
+                live_llm_model=runtime.llm_model,
+                live_llm_timeout_seconds=runtime.llm_request_timeout_seconds,
+                live_llm_retry_count=runtime.live_llm_retry_count,
+                live_llm_max_items=runtime.live_llm_max_items,
+                live_llm_concurrency=runtime.live_llm_concurrency,
+                live_llm_max_score_items=runtime.backlog_worker_max_score_items,
+                live_llm_score_concurrency=runtime.live_llm_score_concurrency,
+            )
+        finally:
+            app.state.refresh_running = False
+            app.state.refresh_lock.release()
+
+    def backlog_worker_loop() -> None:
+        runtime = app.state.live_runtime
+        interval = runtime.backlog_worker_interval_seconds
+        stop_event = app.state.backlog_worker_stop
+        if stop_event.wait(interval):
+            return
+        while not stop_event.is_set():
+            try:
+                run_backlog_worker_once()
+            except Exception:
+                LOGGER.exception("raw backlog worker failed")
+            if stop_event.wait(interval):
+                return
+
+    app.state.run_backlog_worker_once = run_backlog_worker_once
+
+    def start_backlog_worker() -> None:
+        runtime = app.state.live_runtime
+        if not runtime.backlog_worker_enabled:
+            return
+        existing_thread = app.state.backlog_worker_thread
+        if existing_thread is not None and existing_thread.is_alive():
+            return
+        app.state.backlog_worker_stop.clear()
+        thread = threading.Thread(
+            target=backlog_worker_loop,
+            name="rss-raw-backlog-worker",
+            daemon=True,
+        )
+        app.state.backlog_worker_thread = thread
+        thread.start()
+
+    def stop_backlog_worker() -> None:
+        app.state.backlog_worker_stop.set()
+        thread = app.state.backlog_worker_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -376,11 +463,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def refresh() -> JSONResponse:
         if app.state.refresh_running:
             return data_response({"refreshed_at": app.state.last_successful_refresh_at})
+        if not app.state.refresh_lock.acquire(blocking=False):
+            return data_response({"refreshed_at": app.state.last_successful_refresh_at})
         app.state.refresh_running = True
         try:
             runtime = app.state.live_runtime
             now = (
-                datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                utc_now()
                 if runtime.mode == "live"
                 else FIXED_NOW
             )
@@ -409,6 +498,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 app.state.last_successful_refresh_at = result["summary"]["finished_at"]
         finally:
             app.state.refresh_running = False
+            app.state.refresh_lock.release()
         return data_response({"refreshed_at": app.state.last_successful_refresh_at})
 
     @app.get("/api/sources")

@@ -22,6 +22,7 @@ from backend.app.services.pipeline import (
     request_live_scoring,
     request_live_translation,
     run_fixture_pipeline_summary,
+    run_live_backlog_pipeline_summary,
     run_live_pipeline_summary,
     score_raw_news,
     score_raw_news_live,
@@ -64,11 +65,11 @@ def test_live_refresh_can_use_rss_summary_without_fetching_article_pages(monkeyp
             return """
             <rss><channel>
               <item>
-                <title>Live AI agents reach useful production workflows</title>
+                <title>OpenAI releases multimodal AI benchmark for production agents</title>
                 <link>https://live.example/articles/agents-production</link>
                 <guid>live-agents-production</guid>
                 <pubDate>Mon, 29 Jun 2026 00:00:00 GMT</pubDate>
-                <description>Teams report that AI agents are now handling repeatable production workflows with better evaluation and observability.</description>
+                <description>The release includes model evaluations, latency traces, safety results and infrastructure evidence for enterprise AI agent workflows.</description>
               </item>
             </channel></rss>
             """, None
@@ -100,8 +101,8 @@ def test_live_refresh_can_use_rss_summary_without_fetching_article_pages(monkeyp
     assert row["is_selected"] == 1
     assert row["pipeline_state"] == "fetched"
     assert row["title_zh"] == row["original_title"]
-    assert "production workflows" in row["summary_zh"]
-    assert "production workflows" in row["content_zh"]
+    assert "model evaluations" in row["summary_zh"]
+    assert "AI agent workflows" in row["content_zh"]
 
 def test_live_pipeline_uses_configured_live_llm_concurrency(monkeypatch):
     from backend.app.services import pipeline
@@ -201,6 +202,94 @@ def test_live_pipeline_uses_configured_live_llm_concurrency(monkeypatch):
     assert len(scoring_requests) == 3
     assert executor_workers[-1] == 2
 
+def test_live_backlog_pipeline_consumes_existing_raw_without_rss_crawl(monkeypatch):
+    from backend.app.services import pipeline
+
+    conn = connect(":memory:")
+    initialize_database(conn)
+    conn.execute(
+        """
+        INSERT INTO source (name, rss_url, is_enabled, fetch_frequency, created_at)
+        VALUES ('Backlog Source', 'https://backlog.example/rss.xml', 1, 'twice_daily', '2026-07-01T00:00:00Z')
+        """
+    )
+    source_id = conn.execute("SELECT id FROM source").fetchone()["id"]
+    conn.execute(
+        """
+        INSERT INTO news_item (
+          source_id, rss_guid, original_url, canonical_url, original_title,
+          published_at, pipeline_state, content_raw, created_at, updated_at
+        )
+        VALUES (?, 'backlog-high-ai', ?, ?, 'Backlog high AI item', ?, 'raw', ?, ?, ?)
+        """,
+        (
+            source_id,
+            "https://backlog.example/high-ai",
+            "https://backlog.example/high-ai",
+            "2026-07-01T00:00:00Z",
+            "AI agents improve production workflows with better evaluation.",
+            "2026-07-01T00:00:00Z",
+            "2026-07-01T00:00:00Z",
+        ),
+    )
+
+    def fail_if_rss_crawl_runs(*_args, **_kwargs):
+        raise AssertionError("backlog worker must not crawl RSS")
+
+    def fake_request_live_scoring(_request, **_kwargs):
+        return {
+            "is_ai_news": True,
+            "ai_relevance_score": 90,
+            "score": 90,
+            "reason": "Backlog item is high-value AI news.",
+        }, None
+
+    def fake_request_live_translation(request, **_kwargs):
+        return {
+            "title_zh": f"{request['original_title']} 中文标题",
+            "summary_zh": "Backlog worker 翻译中文摘要，证明合格 fetched 新闻会继续进入翻译。",
+            "content_zh": "Backlog worker 翻译中文正文第一段。\n\nBacklog worker 翻译中文正文第二段。",
+            "category_zh": "产品",
+        }, None
+
+    monkeypatch.setattr(pipeline, "ingest_live_rss", fail_if_rss_crawl_runs)
+    monkeypatch.setattr(pipeline, "request_live_scoring", fake_request_live_scoring)
+    monkeypatch.setattr(pipeline, "request_live_translation", fake_request_live_translation)
+
+    summary = run_live_backlog_pipeline_summary(
+        conn,
+        now="2026-07-01T00:05:00Z",
+        allow_live_llm=True,
+        allow_live_article_fetch=False,
+        request_timeout_seconds=1,
+        request_retry_count=0,
+        live_llm_base_url="https://llm.example.test/api/v4",
+        live_llm_api_key="secret-token",
+        live_llm_model="glm-test",
+        live_llm_max_score_items=10,
+        live_llm_score_concurrency=1,
+        live_llm_max_items=3,
+        live_llm_concurrency=1,
+    )
+    row = conn.execute(
+        """
+        SELECT pipeline_state, is_selected, title_zh
+        FROM news_item
+        WHERE rss_guid = 'backlog-high-ai'
+        """
+    ).fetchone()
+
+    assert summary["source_success_count"] == 0
+    assert summary["rss_item_count"] == 0
+    assert summary["new_item_count"] == 0
+    assert summary["scored_item_count"] == 1
+    assert summary["selected_item_count"] == 1
+    assert summary["fetched_item_count"] == 1
+    assert summary["translated_item_count"] == 1
+    assert row["pipeline_state"] == "fetched"
+    assert row["is_selected"] == 1
+    assert row["title_zh"] == "Backlog high AI item 中文标题"
+
 def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
     conn = connect(":memory:")
     initialize_database(conn)
@@ -215,13 +304,12 @@ def test_fixture_pipeline_run_summary_reports_core_counts_and_failures():
     assert summary["rss_item_count"] == 16
     assert summary["new_item_count"] == 15
     assert summary["scored_item_count"] == 15
-    assert summary["selected_item_count"] == 13
-    assert summary["fetched_item_count"] == 13
+    assert summary["selected_item_count"] == 11
+    assert summary["fetched_item_count"] == 11
     assert summary["translated_item_count"] == 11
     assert summary["failure_details"] == {
         "crawl:parsing": 1,
-        "fetch:network": 11,
-        "translate:validation_llm_error": 1,
+        "fetch:network": 10,
     }
 
 def test_refresh_trigger_signal_manual_schedule_and_concurrency():
@@ -302,9 +390,9 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     assert threshold["score"] == 75
     assert threshold["is_ai_news"] == 1
     assert threshold["ai_relevance_score"] == 70
-    assert threshold["is_selected"] == 1
-    assert threshold["pipeline_state"] == "fetched"
-    assert threshold["content_full"]
+    assert threshold["is_selected"] == 0
+    assert threshold["pipeline_state"] == "scored"
+    assert threshold["content_full"] is None
     assert threshold["has_translate_failed"] == 0
     assert threshold["title_zh"] is None
     assert threshold["summary_zh"] is None
@@ -334,14 +422,14 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     assert translated["has_translate_failed"] == 0
 
     failed_translation = by_guid["fixture-translate-partial"]
-    assert failed_translation["pipeline_state"] == "fetched"
-    assert failed_translation["is_selected"] == 1
+    assert failed_translation["pipeline_state"] == "scored"
+    assert failed_translation["is_selected"] == 0
     assert failed_translation["content_full"] is None
     assert failed_translation["content_raw"]
     assert failed_translation["title_zh"] is None
     assert failed_translation["summary_zh"] is None
     assert failed_translation["content_zh"] is None
-    assert failed_translation["has_translate_failed"] == 1
+    assert failed_translation["has_translate_failed"] == 0
 
     log_rows = conn.execute(
         """
@@ -352,13 +440,8 @@ def test_refresh_runs_fixture_pipeline_with_dedupe_threshold_fetch_and_translati
     ).fetchall()
     assert any(row["stage"] == "crawl" and row["success"] == 0 for row in log_rows)
     assert sum(1 for row in log_rows if row["stage"] == "score" and row["success"] == 1) == 15
-    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 13
-    assert any(
-        row["stage"] == "translate"
-        and row["success"] == 0
-        and row["error"] == "validation_llm_error"
-        for row in log_rows
-    )
+    assert sum(1 for row in log_rows if row["stage"] == "fetch") == 11
+    assert not any(row["stage"] == "translate" and row["success"] == 0 for row in log_rows)
 
     client.post("/api/refresh")
     repeated_count = conn.execute("SELECT COUNT(*) AS count FROM news_item").fetchone()[
@@ -423,7 +506,5 @@ def test_pipeline_output_is_projected_through_api_without_internal_leaks(tmp_pat
     failed_id = conn.execute(
         "SELECT id FROM news_item WHERE rss_guid = 'fixture-translate-partial'"
     ).fetchone()["id"]
-    failed_detail = client.get(f"/api/news/{failed_id}").json()["data"]
-    assert failed_detail["status"] == "translation_failed"
-    assert "summary_zh" not in failed_detail
-    assert "content_zh" not in failed_detail
+    failed_response = client.get(f"/api/news/{failed_id}")
+    assert failed_response.status_code == 404

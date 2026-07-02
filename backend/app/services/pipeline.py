@@ -23,7 +23,7 @@ ARTICLE_MAP_PATH = ROOT_DIR / "fixtures" / "articles" / "article_map.json"
 SCORING_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "scoring.json"
 TRANSLATION_FIXTURE_PATH = ROOT_DIR / "fixtures" / "llm" / "translation.json"
 TRACE_ID = "refresh-fixture-20260628T090000Z"
-AI_VALUE_SCORE_THRESHOLD = 75
+AI_VALUE_SCORE_THRESHOLD = 81
 AI_RELEVANCE_THRESHOLD = 70
 SCORING_RETRY_MAX = 2
 LIVE_LLM_RETRY_MAX = 2
@@ -57,8 +57,8 @@ LIVE_SCORING_SYSTEM_PROMPT = (
     "SEO 软文、广告导流、标题党、普通工具清单、会议/折扣/招聘、加密或财经噪声最高不得超过 50；"
     "只有融资、合作、营销或传闻而没有实质技术/产品/政策变化最高不得超过 60；"
     "重复转述、二手汇总或缺少清晰来源最高不得超过 70。"
-    "90-100 只给重大且可信的一手 AI 进展；75-89 给具体且有决策价值的 AI 新闻；"
-    "60-74 是相关但增量有限，不应被选入后续流程。"
+    "90-100 只给重大且可信的一手 AI 进展；81-89 给具体且有决策价值的 AI 新闻；"
+    "60-80 是相关但增量有限，不应被选入后续流程。"
     "只返回 JSON 对象，不要 Markdown，不要解释。"
     "必须包含字段：is_ai_news、ai_relevance_score、score、reason。"
     "is_ai_news 必须是布尔值；ai_relevance_score 和 score 必须是 0 到 100 的整数；"
@@ -1439,9 +1439,14 @@ def fetched_news_for_translation(conn: sqlite3.Connection) -> list[dict[str, obj
         FROM news_item
         JOIN source ON source.id = news_item.source_id
         WHERE news_item.pipeline_state = 'fetched'
+          AND news_item.is_selected = 1
+          AND news_item.is_ai_news = 1
+          AND news_item.ai_relevance_score >= ?
+          AND news_item.score >= ?
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
         ORDER BY news_item.published_at DESC, news_item.id DESC
-        """
+        """,
+        (AI_RELEVANCE_THRESHOLD, AI_VALUE_SCORE_THRESHOLD),
     ).fetchall()
 
 
@@ -1452,6 +1457,11 @@ def top_scored_fetched_news_for_translation(
 ) -> list[dict[str, object]]:
     limit_clause = "LIMIT ?" if target_count > 0 else ""
     params: tuple[object, ...] = (target_count,) if target_count > 0 else ()
+    params = (
+        AI_VALUE_SCORE_THRESHOLD,
+        AI_RELEVANCE_THRESHOLD,
+        *params,
+    )
     return conn.execute(
         f"""
         SELECT
@@ -1465,7 +1475,9 @@ def top_scored_fetched_news_for_translation(
         JOIN source ON source.id = news_item.source_id
         WHERE news_item.pipeline_state = 'fetched'
           AND news_item.is_selected = 1
-          AND news_item.score IS NOT NULL
+          AND news_item.score >= ?
+          AND news_item.is_ai_news = 1
+          AND news_item.ai_relevance_score >= ?
           AND (news_item.content_full IS NOT NULL OR news_item.content_raw IS NOT NULL)
         ORDER BY news_item.score DESC, news_item.published_at DESC, news_item.id DESC
         {limit_clause}
@@ -2008,6 +2020,82 @@ def run_live_pipeline_summary(
         "llm_unavailable_count": score_result.get("llm_unavailable_count", 0),
         "failure_details": processing_failure_details(conn),
         "runtime_mode": "live",
+    }
+
+
+def run_live_backlog_pipeline_summary(
+    conn: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    allow_live_llm: bool = False,
+    allow_live_article_fetch: bool = False,
+    request_timeout_seconds: float = 12,
+    request_retry_count: int = 3,
+    request_retry_backoff_seconds: float = 0.5,
+    live_llm_base_url: str | None = None,
+    live_llm_api_key: str | None = None,
+    live_llm_model: str | None = None,
+    live_llm_timeout_seconds: float = 30,
+    live_llm_retry_count: int = LIVE_LLM_RETRY_MAX,
+    live_llm_max_items: int = 20,
+    live_llm_concurrency: int = 2,
+    live_llm_max_score_items: int = 10,
+    live_llm_score_concurrency: int = 2,
+) -> dict[str, object]:
+    now_value = now or utcnow_iso()
+    score_result = {"scored_count": 0, "failed_count": 0, "selected_count": 0, "llm_unavailable_count": 0}
+    fetch_result = {"fetched_count": 0, "content_full_count": 0, "fallback_count": 0, "failed_count": 0}
+    translate_result = {"translated_count": 0, "failed_count": 0, "pending_count": 0, "fallback_count": 0}
+
+    if allow_live_llm:
+        score_result = score_raw_news_live(
+            conn,
+            now=now_value,
+            use_live_llm=True,
+            live_llm_base_url=live_llm_base_url,
+            live_llm_api_key=live_llm_api_key,
+            live_llm_model=live_llm_model,
+            live_llm_timeout_seconds=live_llm_timeout_seconds,
+            live_llm_retry_count=live_llm_retry_count,
+            live_llm_max_score_items=live_llm_max_score_items,
+            live_llm_score_concurrency=live_llm_score_concurrency,
+        )
+        fetch_result = fetch_selected_content(
+            conn,
+            now=now_value,
+            allow_live_network=allow_live_article_fetch,
+            live_timeout_seconds=request_timeout_seconds,
+            live_retry_count=request_retry_count,
+            live_retry_backoff_seconds=request_retry_backoff_seconds,
+        )
+        if int(score_result.get("llm_unavailable_count", 0)) == 0:
+            translate_result = translate_fetched_content(
+                conn,
+                now=now_value,
+                use_live_llm=True,
+                live_llm_base_url=live_llm_base_url,
+                live_llm_api_key=live_llm_api_key,
+                live_llm_model=live_llm_model,
+                live_llm_timeout_seconds=live_llm_timeout_seconds,
+                live_llm_retry_count=live_llm_retry_count,
+                live_llm_max_items=live_llm_max_items,
+                live_llm_concurrency=live_llm_concurrency,
+            )
+
+    return {
+        "started_at": now_value,
+        "finished_at": now_value,
+        "source_success_count": 0,
+        "source_failure_count": 0,
+        "rss_item_count": 0,
+        "new_item_count": 0,
+        "scored_item_count": score_result["scored_count"],
+        "selected_item_count": score_result["selected_count"],
+        "fetched_item_count": fetch_result["fetched_count"],
+        "translated_item_count": translate_result["translated_count"],
+        "llm_unavailable_count": score_result.get("llm_unavailable_count", 0),
+        "failure_details": processing_failure_details(conn),
+        "runtime_mode": "live_backlog",
     }
 
 

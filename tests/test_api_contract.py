@@ -154,10 +154,8 @@ def test_refresh_populates_news_items_idempotently_and_home_reads_database(tmp_p
     assert all("is_ai_news" not in item for item in home["latest_news"] + home["top_ranked_news"])
     assert all("ai_relevance_score" not in item for item in home["latest_news"] + home["top_ranked_news"])
 
-    ready_detail = assert_json_response(client.get("/api/news/1"), 200)["data"]
-    assert ready_detail["status"] == "ready"
-    assert "summary_zh" not in ready_detail
-    assert "content_zh" not in ready_detail
+    low_threshold_response = assert_json_response(client.get("/api/news/1"), 404)
+    assert low_threshold_response["error"]["code"] == "NEWS_NOT_FOUND"
 
     translated_detail = assert_json_response(client.get("/api/news/3"), 200)["data"]
     assert translated_detail["status"] == "translated"
@@ -369,6 +367,20 @@ def test_refresh_concurrent_rejection_before_success_returns_null(tmp_path):
     client.app.state.refresh_running = True
     response = assert_json_response(client.post("/api/refresh"), 200)
     client.app.state.refresh_running = False
+
+    assert response == {"data": {"refreshed_at": None}}
+    assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] == 0
+
+
+def test_refresh_rejects_when_shared_refresh_lock_is_held(tmp_path):
+    client = make_client(tmp_path)
+    conn = client.app.state.db
+
+    assert client.app.state.refresh_lock.acquire(blocking=False) is True
+    try:
+        response = assert_json_response(client.post("/api/refresh"), 200)
+    finally:
+        client.app.state.refresh_lock.release()
 
     assert response == {"data": {"refreshed_at": None}}
     assert conn.execute("SELECT COUNT(*) AS count FROM processing_log").fetchone()["count"] == 0

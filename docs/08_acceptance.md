@@ -288,8 +288,8 @@ Correctness:
 Policy validation:
 
 - mock scoring 输出稳定 `is_ai_news`、`ai_relevance_score` 和 `0-100` 最终 AI 价值分。
-- AI 价值筛选规则固定为 `is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75`。
-- threshold fixture 中 `is_ai_news = true`、`ai_relevance_score = 70`、`score = 75` 的 item 进入 fetch 链路。
+- AI 价值筛选规则固定为 `is_ai_news = true AND ai_relevance_score >= 70 AND score > 80`（整数实现为 `score >= 81`）。
+- threshold tests 必须证明 `score = 80` 不进入 fetch/translate/home/top ranked，且 `is_ai_news = true`、`ai_relevance_score = 70`、`score = 81` 的 item 可进入后续链路。
 - `score = 59` 的低价值 item 和 `is_ai_news = false` 的高分诱饵都不出现在 `GET /api/home` 或排行榜。
 
 ✘ Fail:
@@ -339,7 +339,7 @@ Policy validation:
 - `processing_log` 是必需核心表。
 - `news_item.pipeline_state` 只允许 `raw`、`scored`、`fetched`。
 - `pipeline_state` transition 只允许 `raw -> scored -> fetched`。
-- `is_selected` 由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 75`。
+- `is_selected` 由 AI 价值筛选计算：`is_ai_news = 1 AND ai_relevance_score >= 70 AND score >= 81`。
 - `canonical_url` 唯一约束阻止重复新闻。
 - API `status` 只由 API 层投影，不写入数据库。
 - 翻译完成事实只由 `title_zh`、`summary_zh`、`content_zh` 判断。

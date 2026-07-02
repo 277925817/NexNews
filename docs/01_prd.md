@@ -201,7 +201,7 @@ MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研
 4. `score` 必须按 AI 新闻价值 rubric 计算，而不是按热度或点击诱惑计算：影响范围占 30%，原创性 / 信息增量占 20%，来源权威性与证据可信度占 20%，技术 / 产品 / 政策具体性占 20%，时效性占 10%。
 5. 评分必须执行封顶规则：非 AI 新闻最高 `20`；AI 相关但没有具体新信息最高 `45`；SEO 软文、广告导流、标题党、普通工具清单、会议 / 折扣 / 招聘、加密或财经噪声最高 `50`；只有融资、合作、营销或传闻且没有实质技术 / 产品 / 政策变化最高 `60`；重复转述、二手汇总或缺少清晰来源最高 `70`。
 6. 系统保存评分，并将 `pipeline_state` 更新为 `scored`。
-7. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
+7. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的条目写入 `is_selected = 1` 并进入全文抓取候选；`is_selected` 不改变 `pipeline_state`。
 8. 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不抓取全文。
 9. 标题或原文链接缺少任意一个，直接评分为 `0`。
 10. 缺少摘要时，评分扣 `20` 分。
@@ -210,7 +210,7 @@ MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研
 
 - 每条新 RSS 条目都有完整 AI 价值筛选结果：`is_ai_news`、`ai_relevance_score`、`score`。
 - `score` 必须可追溯到文档化 AI 价值 rubric 和封顶规则；泛 AI 噪声、广告、传闻、重复转述不得因标题含 AI 关键词而进入高分段。
-- 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的条目被标记为待抓取全文。
+- 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的条目被标记为待抓取全文。
 - 非 AI、AI 相关性不足或最终 AI 价值分不足的条目不会触发全文抓取。
 - 标题或原文链接缺失的条目评分为 `0`，且不会触发全文抓取。
 - 评分成功后，`pipeline_state` 必须从 `raw` 更新为 `scored`；高价值新闻必须写入 `is_selected = 1`。
@@ -221,7 +221,7 @@ MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研
 
 **输入**
 
-- 通过 AI 价值筛选的 RSS 条目：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 75`
+- 通过 AI 价值筛选的 RSS 条目：`is_ai_news = true AND ai_relevance_score >= 70 AND score >= 81`
 
 **输出**
 
@@ -578,7 +578,7 @@ MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研
 
 1. RSS 条目首次入库时，`pipeline_state = raw`。
 2. 评分完成后，`pipeline_state` 从 `raw` 更新为 `scored`。
-3. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
+3. 同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）时，系统写入 `is_selected = 1`，但不改变 `pipeline_state`。
 4. 全文抓取或 RSS 摘要兜底内容可用后，`pipeline_state` 从 `scored` 更新为 `fetched`。
 5. API/UI status 只由 API 层根据字段事实投影：`ready`、`translated`、`untranslated`、`translation_failed`。
 6. 翻译成功由 `title_zh`、`summary_zh`、`content_zh` 全部存在表达。
@@ -618,11 +618,12 @@ MVP 默认信源采用 feed-first 覆盖策略，通过一线 AI 实验室、研
 3. 系统使用 `processing_log` 记录 crawl、score、fetch、translate 的最小处理结果。
 4. 每次定时抓取或手动刷新都为每个处理阶段写入可追踪的 `processing_log`。
 5. crawl 处理读取所有启用信息源、请求 RSS XML、解析 RSS 条目；live RSS 路径只为信息源发布时间位于本次抓取最近 30 天窗口内的条目创建或更新 `raw` 状态的 `news_item`，fixture 路径可保留窗口外样本。
-6. score 处理对新条目执行 AI 新闻判定、AI 相关性评分和最终 AI 价值评分，并为同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score >= 75` 的非重复新闻写入 `is_selected = 1`。
+6. score 处理对新条目执行 AI 新闻判定、AI 相关性评分和最终 AI 价值评分，并为同时满足 `is_ai_news = true`、`ai_relevance_score >= 70`、`score > 80`（整数实现为 `score >= 81`）的非重复新闻写入 `is_selected = 1`。
 7. fetch 处理只读取 `is_selected = 1` 的新闻并抓取正文。
-8. translate 处理只读取 `pipeline_state = fetched` 且存在可用内容的新闻。
-9. 每个处理阶段都不得绕过 `raw -> scored -> fetched` 状态机。
-10. 处理失败后，系统记录阶段、对象 ID、trace_id、时间和错误信息。
+8. translate 处理只读取 `pipeline_state = fetched`、`is_selected = 1`、`is_ai_news = 1`、`ai_relevance_score >= 70`、`score >= 81` 且存在可用内容的新闻。
+9. live runtime 中 raw backlog worker 启用时，启动后延迟 5 分钟首次运行，之后每 5 分钟处理最多 10 条 `pipeline_state = raw` 的积压新闻；该 worker 不重新抓 RSS，只执行 `score raw -> fetch selected -> translate eligible fetched`。
+10. 每个处理阶段都不得绕过 `raw -> scored -> fetched` 状态机。
+11. 处理失败后，系统记录阶段、对象 ID、trace_id、时间和错误信息。
 
 **验收标准**
 

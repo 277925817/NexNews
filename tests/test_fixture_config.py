@@ -91,6 +91,9 @@ def test_live_runtime_config_loads_llm_settings_from_env_file(monkeypatch, tmp_p
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("RSS_BACKLOG_WORKER_ENABLED", raising=False)
+    monkeypatch.delenv("RSS_BACKLOG_WORKER_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS", raising=False)
 
     config = get_live_runtime_config(tmp_path)
 
@@ -105,6 +108,9 @@ def test_live_runtime_config_loads_llm_settings_from_env_file(monkeypatch, tmp_p
     assert config.live_llm_max_score_items == 9
     assert config.live_llm_score_concurrency == 4
     assert config.live_rss_concurrency == 33
+    assert config.backlog_worker_enabled is True
+    assert config.backlog_worker_interval_seconds == 300
+    assert config.backlog_worker_max_score_items == 10
 
 
 def test_live_runtime_config_accepts_current_llm_env_aliases(monkeypatch, tmp_path):
@@ -136,6 +142,31 @@ def test_live_runtime_config_accepts_current_llm_env_aliases(monkeypatch, tmp_pa
     assert config.llm_model == "agnes-2.0-flash"
 
 
+def test_live_runtime_config_does_not_start_backlog_worker_in_fixture_mode(monkeypatch, tmp_path):
+    from backend.app.core.config import get_live_runtime_config
+
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "LLM_API_KEY=env-file-secret",
+                "LLM_BASE_URL=https://llm.example.test/api/v4",
+                "LLM_MODEL=glm-test",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("RSS_RUNTIME_MODE", raising=False)
+    monkeypatch.delenv("RSS_BACKLOG_WORKER_ENABLED", raising=False)
+
+    config = get_live_runtime_config(tmp_path)
+
+    assert config.mode == "fixture"
+    assert config.allow_live_llm is False
+    assert config.backlog_worker_enabled is False
+    assert config.backlog_worker_interval_seconds == 300
+    assert config.backlog_worker_max_score_items == 10
+
+
 def test_local_service_defaults_to_live_real_dependency_runtime():
     from scripts.local_service import local_acceptance_environment
 
@@ -159,6 +190,27 @@ def test_local_service_defaults_to_live_real_dependency_runtime():
     assert env["RSS_LIVE_LLM_RETRY_COUNT"] == "0"
     assert env["RSS_LIVE_LLM_MAX_SCORE_ITEMS"] == "3"
     assert env["RSS_LIVE_LLM_SCORE_CONCURRENCY"] == "3"
+    assert env["RSS_BACKLOG_WORKER_ENABLED"] == "1"
+    assert env["RSS_BACKLOG_WORKER_INTERVAL_SECONDS"] == "300"
+    assert env["RSS_BACKLOG_WORKER_MAX_SCORE_ITEMS"] == "10"
+
+
+def test_local_service_drops_unsupported_socks_all_proxy_for_httpx():
+    from scripts.local_service import local_acceptance_environment
+
+    env = local_acceptance_environment(
+        {
+            "HTTPS_PROXY": "http://127.0.0.1:7897/",
+            "HTTP_PROXY": "http://127.0.0.1:7897/",
+            "ALL_PROXY": "socks://127.0.0.1:7897/",
+            "all_proxy": "socks://127.0.0.1:7897/",
+        }
+    )
+
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:7897/"
+    assert env["HTTP_PROXY"] == "http://127.0.0.1:7897/"
+    assert "ALL_PROXY" not in env
+    assert "all_proxy" not in env
 
 
 def test_fixture_and_mock_inputs_are_versioned_and_cover_task_cases():
